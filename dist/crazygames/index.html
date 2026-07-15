@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>HiVE SWARM</title>
+<style>
+  html,body{margin:0;padding:0;background:#07030f;overflow:hidden;touch-action:none;
+    font-family:'Segoe UI',system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+  #game{display:block;margin:0 auto;background:#0a0518}
+  #hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#9ff;
+    font-weight:700;font-size:18px;text-shadow:0 0 8px #0ff;pointer-events:none;z-index:5}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud"></div>
+<script src="psdk_adapter.js"></script>
+<script>
+'use strict';
+// ============================================================ HiVE SWARM M0
+// Single-file core. Canvas2D + strict pooling. Vector art placeholder pass
+// (sprites land in M1). Conventions: ?test=1 bot, window.__dbg().
+// ============================================================
+
+const CFG = {
+  W: 540, H: 960,                 // logical portrait playfield
+  laneMargin: 60,
+  scrollSpd: 170,                 // px/s world scroll
+  squadCapVisible: 160,
+  bloodColor: 'green',            // 'green' | 'red' (red hidden from UI; xenos always green)
+  levelSeconds: 100,
+  levels: 10,
+};
+
+// ---------- canvas / scaling ----------
+const cv = document.getElementById('game'), cx = cv.getContext('2d');
+let scale = 1;
+function fit() {
+  const a = innerWidth / innerHeight, ga = CFG.W / CFG.H;
+  if (a > ga) { cv.height = innerHeight; cv.width = innerHeight * ga; }
+  else { cv.width = innerWidth; cv.height = innerWidth / ga; }
+  scale = cv.width / CFG.W;
+}
+addEventListener('resize', fit); fit();
+
+// ---------- seeded rng ----------
+let seed = 1234567;
+function rng() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+function rr(a, b) { return a + rng() * (b - a); }
+
+// ---------- pools ----------
+function makePool(n, factory) {
+  const items = new Array(n), free = new Array(n);
+  for (let i = 0; i < n; i++) { items[i] = factory(); items[i]._pi = i; free[i] = n - 1 - i; }
+  let top = n;
+  return {
+    items,
+    alloc() { if (!top) return null; const it = items[free[--top]]; it.live = true; return it; },
+    release(it) { if (!it.live) return; it.live = false; free[top++] = it._pi; },
+    each(fn) { for (let i = 0; i < n; i++) if (items[i].live) fn(items[i]); },
+    count() { return n - top; }
+  };
+}
+const bullets  = makePool(900,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,live:false}));
+const enemies  = makePool(1600, () => ({x:0,y:0,vx:0,vy:0,hp:1,maxhp:1,r:10,kind:0,t:0,live:false}));
+const splats   = makePool(500,  () => ({x:0,y:0,vx:0,vy:0,r:2,a:1,red:false,live:false}));
+const dmgnums  = makePool(120,  () => ({x:0,y:0,v:0,val:0,a:1,live:false}));
+const pickups  = makePool(200,  () => ({x:0,y:0,kind:0,live:false}));   // 0 biomatter 1 chip
+const gates    = [];                                                     // few at a time; plain array
+
+// ---------- game state ----------
+const G = {
+  state: 'title',          // title | play | perk | boss | shop | win | dead
+  level: 1, t: 0, levelT: 0,
+  squad: 10, weapon: 0,    // weapon tier 0..4
+  px: CFG.W / 2,           // squad leader x
+  credits: 0, bio: 0, bioNeed: 25,
+  kills: 0, shake: 0,
+  perks: {},               // name -> stacks
+  boss: null,
+  meta: load(),
+};
+const WEAPONS = [
+  {name:'Blaster',     rof: 6, dmg: 1, n:1, spread:0,    col:'#5ef'},
+  {name:'Twin Plasma', rof: 7, dmg: 1, n:2, spread:0.06, col:'#4cf'},
+  {name:'Scatter Rail',rof: 6, dmg: 1, n:4, spread:0.22, col:'#c6f'},
+  {name:'Heavy Plasma',rof: 8, dmg: 2, n:3, spread:0.10, col:'#f80'},
+  {name:'Orbital Link',rof:10, dmg: 3, n:5, spread:0.18, col:'#ff4'},
+];
+const PERKS = ['Chain Lightning','Drone Escort','Acid Rounds','Magnet','Overclock','Shield Matrix'];
+const EKIND = [ // fodder biomorph, eldritch sponge, cyber-mutant exploder
+  {hp:2,  r:11, spd:70,  col:'#3f6', credits:1},
+  {hp:26, r:26, spd:26,  col:'#a3e', credits:6},
+  {hp:7,  r:15, spd:48,  col:'#f55', credits:3},
+];
+
+function load() {
+  try { return Object.assign({dmg:0, squad:0, weapon:0, credits:0},
+    JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
+  catch(e) { return {dmg:0, squad:0, weapon:0, credits:0}; }
+}
+function save() {
+  G.meta.credits = G.credits;
+  try { localStorage.setItem('hiveswarm_v1', JSON.stringify(G.meta)); } catch(e) {}
+}
+
+// ---------- input ----------
+let dragX = null, testBot = /[?&]test=1/.test(location.search);
+function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / scale; }
+function down(e) { botOff(e); dragX = px2game(e.touches ? e.touches[0] : e);
+  if (G.state === 'title') startRun();
+  else if (G.state === 'perk') pickPerk(px2game(e.touches ? e.touches[0] : e), (e.touches?e.touches[0].clientY:e.clientY));
+  else if (G.state === 'shop') shopTap(e);
+  else if (G.state === 'win' || G.state === 'dead') { G.state = 'title'; }
+}
+function move(e) { if (dragX === null) return; const x = px2game(e.touches ? e.touches[0] : e);
+  if (G.state === 'play' || G.state === 'boss') G.px = Math.max(CFG.laneMargin, Math.min(CFG.W - CFG.laneMargin, x));
+}
+function up() { dragX = null; }
+function botOff(e) { if (testBot && e.isTrusted) testBot = false; }
+addEventListener('mousedown', down); addEventListener('mousemove', move); addEventListener('mouseup', up);
+addEventListener('touchstart', down, {passive:true}); addEventListener('touchmove', move, {passive:true});
+addEventListener('touchend', up);
+
+// ---------- run flow ----------
+function startRun() {
+  G.state = 'play'; G.level = 1; G.levelT = 0;
+  G.squad = 10 + G.meta.squad * 5; G.weapon = Math.min(G.meta.weapon, 4);
+  G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;
+  seed = 1000 + G.level * 777;
+  bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
+  gates.length = 0;
+}
+function nextLevel() {
+  G.level++;
+  if (G.level > CFG.levels) { G.state = 'win'; save(); return; }
+  G.state = 'shop'; save();
+}
+function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; }
+
+// ---------- gates ----------
+function spawnGatePair() {
+  const y = -60, w = (CFG.W - 2 * CFG.laneMargin) / 2 - 10;
+  const mk = (x, i) => {
+    const roll = rng();
+    let kind, val;
+    if (roll < 0.42) { kind = 'add'; val = (5 + (G.level * 3) + Math.floor(rng() * 15)) * (rng() < 0.25 ? -1 : 1); }
+    else if (roll < 0.6) { kind = 'mul'; val = rng() < 0.3 ? 0.5 : 2; }
+    else if (roll < 0.78) { kind = 'wpn'; val = 0; }
+    else { kind = 'add'; val = -(10 + G.level * 4); }
+    return { x, y, w, h: 46, kind, val, shot: 0, need: 6 + G.level * 2, live: true };
+  };
+  gates.push(mk(CFG.laneMargin + 5, 0), mk(CFG.W / 2 + 5, 1));
+}
+function gateHit(g, dmg) {           // shooting a gate improves it
+  g.shot += dmg;
+  while (g.shot >= g.need) {
+    g.shot -= g.need;
+    if (g.kind === 'add') g.val += 5;
+    else if (g.kind === 'mul') g.val = Math.min(3, g.val + 0.5);
+    else if (g.kind === 'wpn') g.val = Math.min(2, g.val + 1);
+  }
+}
+function gatePass(g) {
+  if (g.kind === 'add') G.squad = Math.max(0, G.squad + g.val);
+  else if (g.kind === 'mul') G.squad = Math.max(0, Math.round(G.squad * g.val));
+  else if (g.kind === 'wpn') G.weapon = Math.min(4, G.weapon + 1 + g.val);
+  fx(g.x + g.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44');
+  if (G.squad <= 0) die();
+}
+
+// ---------- combat ----------
+let fireT = 0;
+function fire(dt) {
+  const w = WEAPONS[G.weapon];
+  const rof = w.rof * (1 + 0.15 * (G.perks['Overclock'] || 0));
+  fireT -= dt;
+  if (fireT > 0) return;
+  fireT = 1 / rof;
+  const cols = Math.min(G.squad, 14);                 // firing columns
+  for (let c = 0; c < cols; c++) {
+    for (let i = 0; i < w.n; i++) {
+      const b = bullets.alloc(); if (!b) return;
+      const off = (c - (cols - 1) / 2) * 16;
+      b.x = G.px + off; b.y = CFG.H - 130; b.tier = G.weapon;
+      const sp = (i - (w.n - 1) / 2) * w.spread;
+      b.vx = Math.sin(sp) * 640; b.vy = -Math.cos(sp) * 640;
+      b.dmg = (w.dmg + G.meta.dmg * 0.5) * (1 + 0.06 * Math.log2(1 + G.squad));
+      b.r = 3 + w.dmg;
+    }
+  }
+}
+function spawnWave(dt) {
+  const rate = 2.2 + G.level * 1.5;                   // enemies/sec
+  if (rng() < rate * dt) {
+    const e = enemies.alloc(); if (!e) return;
+    const roll = rng(), lvl = G.level;
+    e.kind = roll < 0.72 ? 0 : (roll < 0.72 + Math.min(0.18, 0.05 * lvl) ? 2 : 1);
+    const K = EKIND[e.kind];
+    e.x = rr(CFG.laneMargin, CFG.W - CFG.laneMargin); e.y = -30;
+    e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
+    e.maxhp = e.hp = K.hp * (1 + (lvl - 1) * 0.55); e.r = K.r; e.t = 0;
+  }
+}
+function spawnBoss() {
+  G.state = 'boss';
+  G.boss = { x: CFG.W/2, y: -140, hp: 260 * G.level * (G.level === CFG.levels ? 3 : 1),
+             maxhp: 0, phase: 0, t: 0, queen: G.level === CFG.levels, eggs: [] };
+  G.boss.maxhp = G.boss.hp;
+}
+function damageEnemy(e, dmg, x, y) {
+  e.hp -= dmg;
+  dmgnum(x, y, Math.round(dmg));
+  if (e.hp <= 0) {
+    G.kills++;
+    const K = EKIND[e.kind];
+    G.credits += K.credits;
+    gore(e.x, e.y, e.kind);
+    if (e.kind === 2) aoe(e.x, e.y, 55, 6);           // cyber-mutant explodes
+    if (rng() < 0.35) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.8 ? 0 : 1; } }
+    enemies.release(e);
+  }
+}
+function aoe(x, y, r, dmg) {
+  fx(x, y, '#fa0');
+  enemies.each(e => { const dx = e.x - x, dy = e.y - y; if (dx*dx + dy*dy < r*r) damageEnemy(e, dmg, e.x, e.y); });
+}
+function die() { G.state = 'dead'; save(); }
+
+// ---------- fx ----------
+function gore(x, y, kind) {
+  const red = CFG.bloodColor === 'red' && kind !== 0;  // xenos (kind 0) always green
+  for (let i = 0; i < 6; i++) {
+    const s = splats.alloc(); if (!s) return;
+    s.x = x; s.y = y; s.vx = rr(-90, 90); s.vy = rr(-140, 40); s.r = rr(2, 5); s.a = 1; s.red = red;
+  }
+  G.shake = Math.min(8, G.shake + 0.7);
+}
+function fx(x, y, col) { for (let i = 0; i < 10; i++) { const s = splats.alloc(); if (!s) return;
+  s.x = x; s.y = y; s.vx = rr(-160,160); s.vy = rr(-160,160); s.r = rr(1.5,3.5); s.a = 1; s.red = false; s._col = col; } }
+function dmgnum(x, y, v) { const d = dmgnums.alloc(); if (!d) return; d.x = x; d.y = y; d.v = 40; d.val = v; d.a = 1; }
+
+// ---------- perks / shop ----------
+let perkChoices = [];
+function offerPerks() { G.state = 'perk';
+  perkChoices = []; const pool = PERKS.slice();
+  for (let i = 0; i < 3; i++) perkChoices.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+}
+function pickPerk(gx, clientY) {
+  const r = cv.getBoundingClientRect(), gy = (clientY - r.top) / scale;
+  const i = Math.floor((gy - 330) / 110);
+  if (i >= 0 && i < 3 && gy > 330) {
+    const p = perkChoices[i]; G.perks[p] = (G.perks[p] || 0) + 1;
+    G.state = G.boss ? 'boss' : 'play';
+  }
+}
+const SHOP = [
+  {k:'dmg',   name:'Base Damage +',   cost: l => Math.round(50  * Math.pow(1.6, l))},
+  {k:'squad', name:'Start Squad +5',  cost: l => Math.round(80  * Math.pow(1.6, l))},
+  {k:'weapon',name:'Start Weapon +',  cost: l => Math.round(200 * Math.pow(1.6, l))},
+];
+function shopTap(e) {
+  const r = cv.getBoundingClientRect();
+  const gy = ((e.touches ? e.touches[0].clientY : e.clientY) - r.top) / scale;
+  const i = Math.floor((gy - 300) / 100);
+  if (i >= 0 && i < 3) {
+    const it = SHOP[i], c = it.cost(G.meta[it.k]);
+    if (G.credits >= c) { G.credits -= c; G.meta[it.k]++; save(); }
+  } else if (gy > 640) levelStart();
+}
+
+// ---------- update ----------
+let gateT = 0, last = 0;
+function update(dt) {
+  if (G.state !== 'play' && G.state !== 'boss') return;
+  G.t += dt; G.levelT += dt;
+  if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 12);
+
+  if (testBot) {                                      // auto-play: chase best gate / dodge
+    let tx = CFG.W / 2;
+    let best = null;
+    for (const g of gates) if (g.live && g.y > 200 && g.y < 800 && (g.kind !== 'add' || g.val > 0)) { best = g; break; }
+    if (best) tx = best.x + best.w / 2;
+    G.px += Math.sign(tx - G.px) * Math.min(Math.abs(tx - G.px), 320 * dt);
+  }
+
+  fire(dt);
+
+  if (G.state === 'play') {
+    spawnWave(dt);
+    gateT -= dt; if (gateT <= 0) { spawnGatePair(); gateT = 5.2 - Math.min(2, G.level * 0.15); }
+    if (G.levelT >= CFG.levelSeconds) spawnBoss();
+  } else bossUpdate(dt);
+
+  // bullets
+  bullets.each(b => {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    if (b.y < -20 || b.x < -20 || b.x > CFG.W + 20) { bullets.release(b); return; }
+    for (const g of gates) if (g.live && b.x > g.x && b.x < g.x + g.w && b.y > g.y && b.y < g.y + g.h) {
+      gateHit(g, b.dmg); bullets.release(b); return;
+    }
+    if (G.boss && b.y < G.boss.y + 90 && Math.abs(b.x - G.boss.x) < 110) {
+      G.boss.hp -= b.dmg; dmgnum(b.x, b.y, Math.round(b.dmg)); bullets.release(b);
+      if (G.boss.hp <= 0) bossKill();
+      return;
+    }
+  });
+  // enemy grid-lite: brute segmented (fine at M0 counts)
+  enemies.each(e => {
+    e.x += e.vx * dt; e.y += e.vy * dt; e.t += dt;
+    if (e.y > CFG.H + 40) { enemies.release(e); return; }
+    // contact with squad zone
+    if (e.y > CFG.H - 150 && Math.abs(e.x - G.px) < 60) {
+      const loss = e.kind === 1 ? 6 : 2;
+      const shield = G.perks['Shield Matrix'] || 0;
+      G.squad -= Math.max(1, loss - shield); gore(e.x, e.y, e.kind); enemies.release(e);
+      if (G.squad <= 0) { die(); return; }
+      return;
+    }
+    bullets.each(b => {
+      const dx = e.x - b.x, dy = e.y - b.y, rr2 = (e.r + b.r) * (e.r + b.r);
+      if (dx*dx + dy*dy < rr2) {
+        bullets.release(b);
+        damageEnemy(e, b.dmg, b.x, b.y);
+        if (G.perks['Chain Lightning'] && rng() < 0.12 * G.perks['Chain Lightning']) aoe(e.x, e.y, 60, b.dmg);
+        if (G.perks['Acid Rounds']) e.hp -= b.dmg * 0.2 * G.perks['Acid Rounds'];
+      }
+    });
+  });
+  // gates scroll
+  for (const g of gates) { g.y += CFG.scrollSpd * dt;
+    if (g.live && g.y + g.h > CFG.H - 150 && Math.abs((g.x + g.w/2) - G.px) < g.w/2 + 30) { g.live = false; gatePass(g); }
+    }
+  for (let i = gates.length - 1; i >= 0; i--) if (gates[i].y > CFG.H) gates.splice(i, 1);
+  // pickups
+  const magR = 60 + 40 * (G.perks['Magnet'] || 0);
+  pickups.each(p => { p.y += CFG.scrollSpd * dt;
+    const dx = p.x - G.px, dy = p.y - (CFG.H - 110);
+    if (dx*dx + dy*dy < magR*magR) {
+      if (p.kind === 0) { G.bio++; if (G.bio >= G.bioNeed) { G.bio = 0; G.bioNeed = Math.round(G.bioNeed * 1.5); offerPerks(); } }
+      else G.credits += 5;
+      pickups.release(p);
+    } else if (p.y > CFG.H + 20) pickups.release(p);
+  });
+  // fx decay
+  splats.each(s => { s.x += s.vx * dt; s.y += s.vy * dt + CFG.scrollSpd * dt * 0.4; s.vy += 300 * dt;
+    s.a -= dt * 1.4; if (s.a <= 0) splats.release(s); });
+  dmgnums.each(d => { d.y -= d.v * dt; d.a -= dt * 1.2; if (d.a <= 0) dmgnums.release(d); });
+}
+
+function bossUpdate(dt) {
+  const B = G.boss; if (!B) return;
+  B.t += dt;
+  if (B.y < 140) B.y += 60 * dt;
+  B.x = CFG.W/2 + Math.sin(B.t * 0.7) * (CFG.W/2 - 150);
+  const hpFrac = B.hp / B.maxhp;
+  // minion pressure
+  if (rng() < (B.queen ? 2.2 : 1.1) * dt) {
+    const e = enemies.alloc();
+    if (e) { e.kind = 0; const K = EKIND[0];
+      e.x = B.x + rr(-90, 90); e.y = B.y + 80; e.vx = rr(-30,30); e.vy = K.spd + 90;
+      e.maxhp = e.hp = K.hp * (1 + G.level * 0.5); e.r = K.r; e.t = 0; }
+  }
+  if (B.queen) {          // egg phases
+    if (hpFrac < 0.66 && B.phase === 0) { B.phase = 1; G.shake = 8; }
+    if (hpFrac < 0.33 && B.phase === 1) { B.phase = 2; G.shake = 8; }
+  }
+}
+function bossKill() {
+  G.shake = 10; fx(G.boss.x, G.boss.y, '#ff0'); gore(G.boss.x, G.boss.y, 0);
+  G.credits += 40 * G.level;
+  G.boss = null;
+  nextLevel();
+}
+
+// ---------- render ----------
+function draw() {
+  const s = scale;
+  cx.setTransform(s, 0, 0, s, 0, 0);
+  const shx = G.shake ? rr(-G.shake, G.shake) : 0, shy = G.shake ? rr(-G.shake, G.shake) : 0;
+  cx.save(); cx.translate(shx, shy);
+  // bg: neon city parallax bands
+  cx.fillStyle = '#0a0518'; cx.fillRect(-10, -10, CFG.W + 20, CFG.H + 20);
+  const off = (G.t * CFG.scrollSpd) % 120;
+  cx.strokeStyle = '#1a0f3a'; cx.lineWidth = 2;
+  for (let y = -120 + off; y < CFG.H; y += 120) { cx.beginPath(); cx.moveTo(0, y); cx.lineTo(CFG.W, y); cx.stroke(); }
+  cx.strokeStyle = '#231352';
+  cx.strokeRect(CFG.laneMargin - 18, -10, CFG.W - 2 * (CFG.laneMargin - 18), CFG.H + 20);
+
+  if (G.state === 'title') { screenText('HiVE SWARM', 'tap to deploy', '#4ff'); cx.restore(); return; }
+  if (G.state === 'win')   { screenText('HIVE PURGED', 'the queen is dead — tap for title', '#8f8'); cx.restore(); return; }
+  if (G.state === 'dead')  { screenText('SWARM LOST', 'tap for title', '#f66'); cx.restore(); return; }
+  if (G.state === 'shop')  { drawShop(); cx.restore(); return; }
+
+  // gates
+  for (const g of gates) if (g.live) {
+    const good = (g.kind === 'add' && g.val >= 0) || (g.kind === 'mul' && g.val >= 1) || g.kind === 'wpn';
+    cx.fillStyle = good ? 'rgba(40,255,220,0.16)' : 'rgba(255,60,60,0.16)';
+    cx.strokeStyle = good ? '#2fd' : '#f44';
+    cx.lineWidth = 2; cx.fillRect(g.x, g.y, g.w, g.h); cx.strokeRect(g.x, g.y, g.w, g.h);
+    cx.fillStyle = good ? '#bff' : '#fbb'; cx.font = 'bold 22px Segoe UI'; cx.textAlign = 'center';
+    const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
+                : g.kind === 'mul' ? 'x' + g.val
+                : 'WPN+' + (1 + g.val);
+    cx.fillText(label, g.x + g.w / 2, g.y + 31);
+  }
+  // pickups
+  pickups.each(p => { cx.fillStyle = p.kind === 0 ? '#3f6' : '#0cf';
+    cx.beginPath(); cx.arc(p.x, p.y, 6, 0, 7); cx.fill(); });
+  // enemies
+  enemies.each(e => {
+    const K = EKIND[e.kind];
+    cx.fillStyle = K.col;
+    cx.beginPath();
+    if (e.kind === 0) {          // biomorph: sleek wedge
+      cx.moveTo(e.x, e.y + e.r); cx.lineTo(e.x - e.r * 0.8, e.y - e.r); cx.lineTo(e.x + e.r * 0.8, e.y - e.r);
+    } else if (e.kind === 1) {   // eldritch: lumpy blob
+      for (let i = 0; i < 7; i++) { const a = i / 7 * 6.28 + e.t;
+        const rr_ = e.r * (0.8 + 0.25 * Math.sin(a * 3 + e.t * 2));
+        cx.lineTo(e.x + Math.cos(a) * rr_, e.y + Math.sin(a) * rr_); }
+    } else {                     // cyber-mutant: jagged
+      for (let i = 0; i < 8; i++) { const a = i / 8 * 6.28;
+        cx.lineTo(e.x + Math.cos(a) * e.r * (i % 2 ? 0.55 : 1), e.y + Math.sin(a) * e.r * (i % 2 ? 0.55 : 1)); }
+    }
+    cx.closePath(); cx.fill();
+    if (e.kind === 1) { cx.fillStyle = '#ff0'; cx.beginPath(); cx.arc(e.x + 4, e.y - 3, 3, 0, 7); cx.fill(); }
+    if (e.hp < e.maxhp) { cx.fillStyle = '#300'; cx.fillRect(e.x - e.r, e.y - e.r - 7, e.r * 2, 3);
+      cx.fillStyle = '#f44'; cx.fillRect(e.x - e.r, e.y - e.r - 7, e.r * 2 * (e.hp / e.maxhp), 3); }
+  });
+  // boss
+  if (G.boss) drawBoss();
+  // bullets
+  bullets.each(b => { cx.fillStyle = WEAPONS[b.tier].col;
+    cx.fillRect(b.x - b.r / 2, b.y - 8, b.r, 12); });
+  // squad
+  drawSquad();
+  // fx
+  splats.each(sp => { cx.globalAlpha = Math.max(0, sp.a);
+    cx.fillStyle = sp._col || (sp.red ? '#e33' : '#4f5'); sp._col = null;
+    cx.beginPath(); cx.arc(sp.x, sp.y, sp.r, 0, 7); cx.fill(); cx.globalAlpha = 1; });
+  dmgnums.each(d => { cx.globalAlpha = Math.max(0, d.a); cx.fillStyle = '#ffd75e';
+    cx.font = 'bold 16px Segoe UI'; cx.textAlign = 'center'; cx.fillText(d.val, d.x, d.y); cx.globalAlpha = 1; });
+
+  if (G.state === 'perk') drawPerks();
+  cx.restore();
+
+  document.getElementById('hud').textContent =
+    `⬡ ${G.squad}  ·  ${WEAPONS[G.weapon].name}  ·  L${G.level}  ·  ₵${G.credits}`;
+}
+function drawSquad() {
+  const n = Math.min(G.squad, CFG.squadCapVisible);
+  const y0 = CFG.H - 110;
+  for (let i = 0; i < n; i++) {
+    const ring = Math.floor(Math.sqrt(i)), idx = i - ring * ring;
+    const a = idx / Math.max(1, ring * 2 + 1) * 6.28 + ring;
+    const x = G.px + Math.cos(a) * ring * 13, y = y0 + Math.sin(a) * ring * 9;
+    cx.fillStyle = i === 0 ? '#fff' : '#6df';
+    cx.beginPath(); cx.arc(x, y, i === 0 ? 7 : 5, 0, 7); cx.fill();
+  }
+  if (G.squad > CFG.squadCapVisible) { cx.fillStyle = '#9ff'; cx.font = 'bold 15px Segoe UI';
+    cx.textAlign = 'center'; cx.fillText('x' + G.squad, G.px, y0 + 60); }
+}
+function drawBoss() {
+  const B = G.boss;
+  cx.fillStyle = B.queen ? '#c3f' : '#93e';
+  cx.beginPath();
+  for (let i = 0; i < 12; i++) { const a = i / 12 * 6.28;
+    const r = 95 * (1 + 0.12 * Math.sin(a * 4 + B.t * 2));
+    cx.lineTo(B.x + Math.cos(a) * r, B.y + Math.sin(a) * r * 0.75); }
+  cx.closePath(); cx.fill();
+  cx.fillStyle = '#ff0';
+  for (let i = 0; i < 3; i++) { cx.beginPath();
+    cx.arc(B.x - 40 + i * 40, B.y - 10, 8 + 2 * Math.sin(B.t * 3 + i), 0, 7); cx.fill(); }
+  if (B.queen && B.phase < 2) { cx.fillStyle = '#8f4';   // eggs
+    for (let i = 0; i < 4; i++) { cx.beginPath();
+      cx.ellipse(B.x - 75 + i * 50, B.y + 75, 12, 16, 0, 0, 7); cx.fill(); } }
+  cx.fillStyle = '#111'; cx.fillRect(70, 30, CFG.W - 140, 12);
+  cx.fillStyle = B.queen ? '#f3c' : '#a5f';
+  cx.fillRect(70, 30, (CFG.W - 140) * Math.max(0, B.hp / B.maxhp), 12);
+  cx.strokeStyle = '#fff'; cx.strokeRect(70, 30, CFG.W - 140, 12);
+  cx.fillStyle = '#fff'; cx.font = 'bold 14px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText(B.queen ? '👑 ALIEN QUEEN' : 'HIVE GUARDIAN L' + G.level, CFG.W / 2, 26);
+}
+function drawPerks() {
+  cx.fillStyle = 'rgba(5,2,15,0.86)'; cx.fillRect(0, 0, CFG.W, CFG.H);
+  cx.fillStyle = '#4ff'; cx.font = 'bold 30px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText('MUTATION READY', CFG.W / 2, 280);
+  perkChoices.forEach((p, i) => {
+    const y = 330 + i * 110;
+    cx.fillStyle = 'rgba(40,255,220,0.1)'; cx.fillRect(60, y, CFG.W - 120, 90);
+    cx.strokeStyle = '#2fd'; cx.strokeRect(60, y, CFG.W - 120, 90);
+    cx.fillStyle = '#cff'; cx.font = 'bold 22px Segoe UI';
+    cx.fillText(p + (G.perks[p] ? ' ' + '★'.repeat(G.perks[p]) : ''), CFG.W / 2, y + 52);
+  });
+}
+function drawShop() {
+  cx.fillStyle = '#4ff'; cx.font = 'bold 32px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR', CFG.W / 2, 180);
+  cx.font = '20px Segoe UI'; cx.fillStyle = '#9ff';
+  cx.fillText('₵ ' + G.credits, CFG.W / 2, 230);
+  SHOP.forEach((it, i) => {
+    const y = 300 + i * 100, c = it.cost(G.meta[it.k]), can = G.credits >= c;
+    cx.fillStyle = can ? 'rgba(40,255,220,0.12)' : 'rgba(120,120,120,0.1)';
+    cx.fillRect(60, y, CFG.W - 120, 80);
+    cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, 80);
+    cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 20px Segoe UI';
+    cx.fillText(`${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + 47);
+  });
+  cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 660, CFG.W - 120, 80);
+  cx.strokeStyle = '#fd4'; cx.strokeRect(60, 660, CFG.W - 120, 80);
+  cx.fillStyle = '#ffd'; cx.font = 'bold 24px Segoe UI';
+  cx.fillText('▶ DEPLOY — LEVEL ' + G.level, CFG.W / 2, 710);
+}
+function screenText(big, small, col) {
+  cx.fillStyle = col; cx.font = 'bold 52px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText(big, CFG.W / 2, CFG.H / 2 - 30);
+  cx.fillStyle = '#aac'; cx.font = '22px Segoe UI';
+  cx.fillText(small, CFG.W / 2, CFG.H / 2 + 30);
+}
+
+// ---------- loop ----------
+function frame(ts) {
+  const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
+  update(dt); draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+if (testBot) { G.state = 'title'; setTimeout(() => { if (testBot) startRun(); }, 600); }
+
+// ---------- debug ----------
+window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: G.weapon,
+  credits: G.credits, kills: G.kills, enemies: enemies.count(), bullets: bullets.count(),
+  boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, testBot });
+</script>
+</body>
+</html>
