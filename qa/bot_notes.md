@@ -36,3 +36,7 @@ Verified in headless Chromium at level 6 with seeded spawning:
 ## Round-3 verification
 
 Headless seeded boss verification confirmed an active Queen acid-lane telegraph, a 10-unit collision loss, an eight-second rank-2 tank deployment firing from the shared bullet pool, and the 0.4-second boss-kill sequence. Core syntax and packaging tests remained green.
+
+## Round-4 verification
+
+Headless campaign completion persisted the Endless Hive unlock, then started an Endless run at loop 3 with a live score. A stubbed successful rewarded-ad response revived the dead run at 50% of its recorded maximum squad. The rebuilt CrazyGames `index.html` is 39,124 bytes raw and 13,247 bytes gzipped, far below the 5 MB limit.
