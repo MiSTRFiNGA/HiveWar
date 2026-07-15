@@ -329,8 +329,7 @@ function spawnBoss() {
   G.boss.maxhp = G.boss.hp;
 }
 function damageEnemy(e, dmg, x, y) {
-  e.hp -= dmg;
-  if (e.kind >= 3 || e.kind === 1) dmgnum(x, y, Math.round(dmg));   // elites/tanks only — no fodder spam
+  e.hp -= dmg;   // no per-hit numbers on regular enemies — kill-streak counter is the big number (reference style); bosses keep theirs
   if (e.hp <= 0) {
     G.kills++;
     G.streak++; G.streakT=1.15; G.streakPeak=Math.max(G.streakPeak,G.streak);
