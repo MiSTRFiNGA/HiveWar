@@ -62,7 +62,7 @@ function makePool(n, factory) {
     count() { return n - top; }
   };
 }
-const bullets  = makePool(900,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,aoe:0,live:false}));
+const bullets  = makePool(900,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,aoe:0,vis:false,live:false}));
 const enemies  = makePool(1600, () => ({x:0,y:0,vx:0,vy:0,hp:1,maxhp:1,r:10,kind:0,t:0,
   baseX:0,phase:0,mode:0,laserMark:0,live:false}));
 const splats   = makePool(500,  () => ({x:0,y:0,vx:0,vy:0,r:2,a:1,red:false,live:false}));
@@ -257,10 +257,12 @@ function fire(dt) {
       const b = bullets.alloc(); if (!b) return;
       const off = (c - (cols - 1) / 2) * Math.min(16, 340 / Math.max(1, cols));   // firing line stays inside the road
       b.x = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-      b.y = CFG.H - 130 - hash01(c * 7.3 + G.t * 13) * 56;                        // per-column stagger → continuous streams, not rows
+      b.y = CFG.H - 130 - hash01(c * 7.3) * 56;                                   // fixed per-column stagger → steady streams
       b.tier = G.weapon;
-      const sp = (i - (w.n - 1) / 2) * w.spread;
-      b.vx = Math.sin(sp) * 640; b.vy = -Math.cos(sp) * 640;
+      // streams converge toward the vanishing point (reference look); slight jitter per shot
+      b.vx = (CFG.W / 2 - b.x) * 0.55 + (i - (w.n - 1) / 2) * w.spread * 60;
+      b.vy = -640;
+      b.vis = c % Math.max(1, Math.ceil(cols / 7)) === 0 && i === 0;   // render ~7 streams; rest are sim-only
       b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg) * (1 + 0.06 * Math.log2(1 + G.squad));
       b.r = 3 + w.dmg; b.aoe = 0;
     }
@@ -788,8 +790,14 @@ function draw() {
   if (G.laserT > 0) { cx.globalAlpha = 0.25; cx.fillStyle = '#9ff'; cx.fillRect(G.laserX - 16, 0, 32, CFG.H);
     cx.globalAlpha = 0.9; cx.fillStyle = '#fff'; cx.fillRect(G.laserX - 3, 0, 6, CFG.H); cx.globalAlpha = 1; }
   // bullets
-  bullets.each(b => { const col=WEAPONS[b.tier].col;cx.save();cx.globalCompositeOperation='lighter';cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=9;cx.lineWidth=Math.max(2,b.r*.7);
-    cx.beginPath();cx.moveTo(b.x,b.y+22);cx.lineTo(b.x-b.vx*.045,b.y-b.vy*.045);cx.stroke();cx.restore(); });
+  cx.save();cx.globalCompositeOperation='lighter';
+  bullets.each(b => { if(!b.vis) return; const col=WEAPONS[b.tier].col;
+    const len=42, nx=b.vx/700, ny=b.vy/700;
+    cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=10;cx.lineWidth=4;
+    cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+    cx.strokeStyle='rgba(255,255,255,.9)';cx.lineWidth=1.6;
+    cx.beginPath();cx.moveTo(b.x,b.y+len*.25);cx.lineTo(b.x+nx*len*.8,b.y+ny*len*.8);cx.stroke(); });
+  cx.restore();
   // squad
   drawSquad();
   if(G.vehicleT>0)drawVehicles();
