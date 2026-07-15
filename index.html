@@ -62,7 +62,8 @@ function makePool(n, factory) {
   };
 }
 const bullets  = makePool(900,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,live:false}));
-const enemies  = makePool(1600, () => ({x:0,y:0,vx:0,vy:0,hp:1,maxhp:1,r:10,kind:0,t:0,live:false}));
+const enemies  = makePool(1600, () => ({x:0,y:0,vx:0,vy:0,hp:1,maxhp:1,r:10,kind:0,t:0,
+  baseX:0,phase:0,mode:0,laserMark:0,live:false}));
 const splats   = makePool(500,  () => ({x:0,y:0,vx:0,vy:0,r:2,a:1,red:false,live:false}));
 const dmgnums  = makePool(120,  () => ({x:0,y:0,v:0,val:0,a:1,live:false}));
 const pickups  = makePool(200,  () => ({x:0,y:0,kind:0,live:false}));   // 0 biomatter 1 chip
@@ -77,6 +78,7 @@ const G = {
   credits: 0, bio: 0, bioNeed: 25,
   kills: 0, shake: 0,
   perks: {},               // name -> stacks
+  droneT: 0, orbitalT: 0, laserT: 0, laserX: 0, laserSeq: 0,
   boss: null,
   meta: load(),
 };
@@ -109,20 +111,23 @@ const BAL = {
     hpStepWpn:  L => Math.round(18 + 2.0*(L-1)),
     stepDelta:  L => L <= 3 ? 1 : L <= 7 ? 2 : 3,
   },
-  eco: { kill: [1,4,3], boss: L => 40 + 25*L, level: L => 80 + 40*L, queen: 2500 },
+  eco: { kill: [1,4,3,6,6], boss: L => 40 + 25*L, level: L => 80 + 40*L, queen: 2500 },
+  perks: { maxRank: 3, baseKinds: 3, maxExtraSlots: 2 },
   start: { squad: 8, weapon: 0 },
 };
-const PERKS = ['Chain Lightning','Drone Escort','Acid Rounds','Magnet','Overclock','Shield Matrix'];
-const EKIND = [ // fodder biomorph, eldritch sponge, cyber-mutant exploder
+const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
+const EKIND = [ // fodder, eldritch, cyber-mutant, winged diver, burrower
   {hp:2,  r:11, spd:70,  col:'#3f6', credits:1},
   {hp:26, r:26, spd:26,  col:'#a3e', credits:4},
   {hp:7,  r:15, spd:48,  col:'#f55', credits:3},
+  {hp:12, r:14, spd:105, col:'#5ff', credits:6},
+  {hp:20, r:18, spd:38,  col:'#fb5', credits:6},
 ];
 
 function load() {
-  try { return Object.assign({dmg:0, squad:0, weapon:0, credits:0},
+  try { return Object.assign({dmg:0, squad:0, weapon:0, credits:0, perkSlot:0},
     JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
-  catch(e) { return {dmg:0, squad:0, weapon:0, credits:0}; }
+  catch(e) { return {dmg:0, squad:0, weapon:0, credits:0, perkSlot:0}; }
 }
 function save() {
   G.meta.credits = G.credits;
@@ -147,11 +152,34 @@ addEventListener('mousedown', down); addEventListener('mousemove', move); addEve
 addEventListener('touchstart', down, {passive:true}); addEventListener('touchmove', move, {passive:true});
 addEventListener('touchend', up);
 
+// ---------- audio (pooled channel stub; real samples land in the audio pass) ----------
+const AUDIO = (() => {
+  let ctx = null, muted = false, cursor = 0;
+  const channels = new Array(8).fill(null);
+  const tones = { gate:520, perk:700, elite:180, boss:95, laser:880, drone:640 };
+  function ensure() { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); return ctx; }
+  function play(name) {
+    if (muted) return;
+    try {
+      const ac = ensure(), ch = channels[cursor] || (channels[cursor] = ac.createGain());
+      cursor = (cursor + 1) % channels.length; ch.disconnect(); ch.connect(ac.destination);
+      const osc = ac.createOscillator(), now = ac.currentTime;
+      osc.frequency.value = tones[name] || 320; ch.gain.setValueAtTime(0.035, now);
+      ch.gain.exponentialRampToValueAtTime(0.001, now + 0.09); osc.connect(ch); osc.start(now); osc.stop(now + 0.1);
+    } catch (_) {}
+  }
+  addEventListener('psdk:adstart', () => { muted = true; });
+  addEventListener('psdk:adend', () => { muted = false; });
+  return { play, setMuted(v) { muted = !!v; } };
+})();
+function sfx(name) { AUDIO.play(name); }
+
 // ---------- run flow ----------
 function startRun() {
   G.state = 'play'; G.level = 1; G.levelT = 0;
   G.squad = BAL.start.squad + G.meta.squad * 2; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;
+  G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   seed = 1000 + G.level * 777;
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
   gates.length = 0;
@@ -193,6 +221,7 @@ function gatePass(g) {
   else if (g.kind === 'mul') G.squad = Math.max(0, Math.round(G.squad * g.val));
   else if (g.kind === 'wpn') G.weapon = Math.min(4, G.weapon + 1 + g.val);
   fx(g.x + g.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44');
+  sfx('gate');
   if (G.squad <= 0) die();
 }
 
@@ -217,6 +246,32 @@ function fire(dt) {
     }
   }
 }
+function perkWeapons(dt) {
+  const drones = 2 * (G.perks['Drone Escort'] || 0);
+  if (drones) {
+    G.droneT -= dt;
+    if (G.droneT <= 0) {
+      G.droneT = Math.max(0.18, 0.42 - drones * 0.025);
+      for (let i = 0; i < drones; i++) {
+        const b = bullets.alloc(); if (!b) break;
+        const a = G.t * 2.4 + i * 6.283 / drones;
+        b.x = G.px + Math.cos(a) * 54; b.y = CFG.H - 120 + Math.sin(a) * 25;
+        b.vx = Math.sin(a) * 45; b.vy = -720; b.dmg = 1.5 + 0.5 * (G.perks['Drone Escort'] || 0);
+        b.r = 4; b.tier = Math.min(4, G.weapon + 1);
+      }
+    }
+  }
+  const orbital = G.perks['Orbital Laser'] || 0;
+  if (!orbital) return;
+  if (G.laserT > 0) {
+    G.laserT -= dt; G.laserX = CFG.laneMargin + (CFG.W - 2 * CFG.laneMargin) * (1 - G.laserT / 0.7);
+    enemies.each(e => { if (e.mode !== 1 && e.laserMark !== G.laserSeq && Math.abs(e.x - G.laserX) < 20) {
+      e.laserMark = G.laserSeq; damageEnemy(e, 10 + orbital * 7, e.x, e.y); } });
+    return;
+  }
+  G.orbitalT -= dt;
+  if (G.orbitalT <= 0) { G.orbitalT = Math.max(4.5, 9 - orbital * 1.2); G.laserT = 0.7; G.laserSeq++; sfx('laser'); }
+}
 let spawnAcc = 0;
 function spawnWave(dt) {
   const lvl = G.level, li = lvl - 1;
@@ -225,11 +280,15 @@ function spawnWave(dt) {
     spawnAcc--;
     const e = enemies.alloc(); if (!e) return;
     const roll = rng() * 100;
-    e.kind = roll < BAL.mixCyb[li] ? 2 : (roll < BAL.mixCyb[li] + BAL.mixEld[li] ? 1 : 0);
+    const eliteRoll = rng();
+    e.kind = lvl >= 6 && eliteRoll < 0.035 ? 4 : lvl >= 4 && eliteRoll < 0.095 ? 3
+      : roll < BAL.mixCyb[li] ? 2 : (roll < BAL.mixCyb[li] + BAL.mixEld[li] ? 1 : 0);
     const K = EKIND[e.kind];
-    e.x = rr(CFG.laneMargin, CFG.W - CFG.laneMargin); e.y = -30;
+    e.x = e.kind === 4 ? G.px : rr(CFG.laneMargin, CFG.W - CFG.laneMargin);
+    e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = e.x; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
-    e.maxhp = e.hp = [BAL.hp.bio, BAL.hp.eld, BAL.hp.cyb][e.kind](lvl);
+    e.maxhp = e.hp = e.kind < 3 ? [BAL.hp.bio, BAL.hp.eld, BAL.hp.cyb][e.kind](lvl)
+      : (e.kind === 3 ? 30 + 7 * lvl : 45 + 10 * lvl);
     e.r = K.r; e.t = 0;
   }
 }
@@ -248,6 +307,7 @@ function damageEnemy(e, dmg, x, y) {
     G.kills++;
     const K = EKIND[e.kind];
     G.credits += K.credits;
+    if (e.kind >= 3) sfx('elite');
     gore(e.x, e.y, e.kind);
     if (e.kind === 2) aoe(e.x, e.y, 55, 6);           // cyber-mutant explodes
     if (rng() < 0.35) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.8 ? 0 : 1; } }
@@ -276,14 +336,17 @@ function dmgnum(x, y, v) { const d = dmgnums.alloc(); if (!d) return; d.x = x; d
 // ---------- perks / shop ----------
 let perkChoices = [];
 function offerPerks() { G.state = 'perk';
-  perkChoices = []; const pool = PERKS.slice();
-  for (let i = 0; i < 3; i++) perkChoices.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+  perkChoices = [];
+  const owned = Object.keys(G.perks), cap = BAL.perks.baseKinds + Math.min(BAL.perks.maxExtraSlots, G.meta.perkSlot || 0);
+  const pool = PERKS.filter(p => (G.perks[p] || 0) < BAL.perks.maxRank && (owned.length < cap || G.perks[p]));
+  while (perkChoices.length < 3 && pool.length) perkChoices.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
 }
 function pickPerk(gx, clientY) {
   const r = cv.getBoundingClientRect(), gy = (clientY - r.top) / scale;
   const i = Math.floor((gy - 330) / 110);
   if (i >= 0 && i < 3 && gy > 330) {
-    const p = perkChoices[i]; G.perks[p] = (G.perks[p] || 0) + 1;
+    const p = perkChoices[i]; if (!p) return;
+    G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1); sfx('perk');
     G.state = G.boss ? 'boss' : 'play';
   }
 }
@@ -291,15 +354,17 @@ const SHOP = [
   {k:'dmg',   name:'Base Damage +',   cost: l => Math.round(50  * Math.pow(1.6, l))},
   {k:'squad', name:'Start Squad +5',  cost: l => Math.round(80  * Math.pow(1.6, l))},
   {k:'weapon',name:'Start Weapon +',  cost: l => Math.round(200 * Math.pow(1.6, l))},
+  {k:'perkSlot',name:'Perk Kind Slot +', cost: l => Math.round(500 * Math.pow(1.6, l))},
 ];
 function shopTap(e) {
   const r = cv.getBoundingClientRect();
   const gy = ((e.touches ? e.touches[0].clientY : e.clientY) - r.top) / scale;
   const i = Math.floor((gy - 300) / 100);
-  if (i >= 0 && i < 3) {
+  if (i >= 0 && i < SHOP.length) {
     const it = SHOP[i], c = it.cost(G.meta[it.k]);
-    if (G.credits >= c) { G.credits -= c; G.meta[it.k]++; save(); }
-  } else if (gy > 640) levelStart();
+    const maxed = it.k === 'perkSlot' && G.meta.perkSlot >= BAL.perks.maxExtraSlots;
+    if (!maxed && G.credits >= c) { G.credits -= c; G.meta[it.k]++; save(); }
+  } else if (gy > 720) levelStart();
 }
 
 // ---------- update ----------
@@ -318,6 +383,7 @@ function update(dt) {
   }
 
   fire(dt);
+  perkWeapons(dt);
 
   if (G.state === 'play') {
     spawnWave(dt);
@@ -340,7 +406,11 @@ function update(dt) {
   });
   // enemy grid-lite: brute segmented (fine at M0 counts)
   enemies.each(e => {
-    e.x += e.vx * dt; e.y += e.vy * dt; e.t += dt;
+    e.t += dt;
+    if (e.mode === 1) { if (e.t >= 0.8) { e.mode = 0; e.t = 0; sfx('elite'); } else return; }
+    if (e.kind === 3) e.x = e.baseX + Math.sin(e.t * 5 + e.phase) * 78;
+    else e.x += e.vx * dt;
+    e.y += e.vy * dt;
     if (e.y > CFG.H + 40) { enemies.release(e); return; }
     // contact with squad zone
     if (e.y > CFG.H - 150 && Math.abs(e.x - G.px) < 60) {
@@ -452,6 +522,8 @@ function draw() {
   // enemies
   enemies.each(e => {
     const K = EKIND[e.kind];
+    if (e.mode === 1) { cx.strokeStyle = '#fb5'; cx.lineWidth = 3; cx.globalAlpha = 0.35 + 0.45 * Math.sin(e.t * 18) ** 2;
+      cx.beginPath(); cx.ellipse(e.x, e.y, 34, 15, 0, 0, 7); cx.stroke(); cx.globalAlpha = 1; return; }
     cx.fillStyle = K.col;
     cx.beginPath();
     if (e.kind === 0) {          // biomorph: sleek wedge
@@ -460,9 +532,14 @@ function draw() {
       for (let i = 0; i < 7; i++) { const a = i / 7 * 6.28 + e.t;
         const rr_ = e.r * (0.8 + 0.25 * Math.sin(a * 3 + e.t * 2));
         cx.lineTo(e.x + Math.cos(a) * rr_, e.y + Math.sin(a) * rr_); }
-    } else {                     // cyber-mutant: jagged
+    } else if (e.kind === 2) {   // cyber-mutant: jagged
       for (let i = 0; i < 8; i++) { const a = i / 8 * 6.28;
         cx.lineTo(e.x + Math.cos(a) * e.r * (i % 2 ? 0.55 : 1), e.y + Math.sin(a) * e.r * (i % 2 ? 0.55 : 1)); }
+    } else if (e.kind === 3) {   // winged diver
+      cx.moveTo(e.x, e.y + e.r); cx.lineTo(e.x - e.r * 1.8, e.y - 5); cx.lineTo(e.x - 5, e.y - e.r);
+      cx.lineTo(e.x + 5, e.y - e.r); cx.lineTo(e.x + e.r * 1.8, e.y - 5);
+    } else {                     // emerged burrower
+      cx.arc(e.x, e.y, e.r, 0, 7); cx.moveTo(e.x - e.r, e.y); cx.lineTo(e.x - e.r * 1.5, e.y + 12);
     }
     cx.closePath(); cx.fill();
     if (e.kind === 1) { cx.fillStyle = '#ff0'; cx.beginPath(); cx.arc(e.x + 4, e.y - 3, 3, 0, 7); cx.fill(); }
@@ -471,6 +548,8 @@ function draw() {
   });
   // boss
   if (G.boss) drawBoss();
+  if (G.laserT > 0) { cx.globalAlpha = 0.25; cx.fillStyle = '#9ff'; cx.fillRect(G.laserX - 16, 0, 32, CFG.H);
+    cx.globalAlpha = 0.9; cx.fillStyle = '#fff'; cx.fillRect(G.laserX - 3, 0, 6, CFG.H); cx.globalAlpha = 1; }
   // bullets
   bullets.each(b => { cx.fillStyle = WEAPONS[b.tier].col;
     cx.fillRect(b.x - b.r / 2, b.y - 8, b.r, 12); });
@@ -501,6 +580,9 @@ function drawSquad() {
   }
   if (G.squad > CFG.squadCapVisible) { cx.fillStyle = '#9ff'; cx.font = 'bold 15px Segoe UI';
     cx.textAlign = 'center'; cx.fillText('x' + G.squad, G.px, y0 + 60); }
+  const drones = 2 * (G.perks['Drone Escort'] || 0);
+  for (let i = 0; i < drones; i++) { const a = G.t * 2.4 + i * 6.283 / drones;
+    cx.fillStyle = '#7ff'; cx.fillRect(G.px + Math.cos(a) * 54 - 5, y0 + Math.sin(a) * 25 - 5, 10, 10); }
 }
 function drawBoss() {
   const B = G.boss;
@@ -548,10 +630,10 @@ function drawShop() {
     cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 20px Segoe UI';
     cx.fillText(`${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + 47);
   });
-  cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 660, CFG.W - 120, 80);
-  cx.strokeStyle = '#fd4'; cx.strokeRect(60, 660, CFG.W - 120, 80);
+  cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 740, CFG.W - 120, 80);
+  cx.strokeStyle = '#fd4'; cx.strokeRect(60, 740, CFG.W - 120, 80);
   cx.fillStyle = '#ffd'; cx.font = 'bold 24px Segoe UI';
-  cx.fillText('▶ DEPLOY — LEVEL ' + G.level, CFG.W / 2, 710);
+  cx.fillText('▶ DEPLOY — LEVEL ' + G.level, CFG.W / 2, 790);
 }
 function screenText(big, small, col) {
   cx.fillStyle = col; cx.font = 'bold 52px Segoe UI'; cx.textAlign = 'center';
@@ -572,6 +654,7 @@ if (testBot) { G.state = 'title'; setTimeout(() => { if (testBot) startRun(); },
 // ---------- debug ----------
 window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: G.weapon,
   credits: G.credits, kills: G.kills, enemies: enemies.count(), bullets: bullets.count(),
+  perks: Object.assign({}, G.perks), laserActive: G.laserT > 0,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, testBot });
 </script>
 </body>

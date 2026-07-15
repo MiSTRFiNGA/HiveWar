@@ -23,3 +23,12 @@ Verified headlessly through Chromium DevTools Protocol on 2026-07-15:
 - The live dump reported active enemies and bullets with `testBot: true`.
 - A browser-dispatched trusted mouse press changed `testBot` to `false` while play continued.
 - The source `index.html` was observed only and was not edited by Codex.
+
+## Round-2 verification
+
+Verified in headless Chromium at level 6 with seeded spawning:
+
+- Enemy pool contained all five kinds, including 11 winged divers and 7 telegraphing burrowers in the bounded sample.
+- One Drone Escort stack created two drone shots through the shared bullet pool.
+- One Orbital Laser stack entered an active 0.7-second sweep and exposed `laserActive: true` through `window.__dbg()`.
+- Packaging tests remained 3/3 green after rebuilding both portal distributions.
