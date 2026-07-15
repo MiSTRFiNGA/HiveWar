@@ -35,7 +35,16 @@ def inline_assets(html: str) -> str:
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
         return f"data:image/png;base64,{b64}"
 
-    return re.sub(r"assets/([A-Za-z0-9_\-]+\.png)", repl, html)
+    html = re.sub(r"assets/([A-Za-z0-9_\-]+\.png)", repl, html)
+
+    def repl_snd(match: re.Match) -> str:
+        path = ROOT / "sounds" / match.group(1)
+        if not path.is_file():
+            return match.group(0)
+        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:audio/mpeg;base64,{b64}"
+
+    return re.sub(r"sounds/([A-Za-z0-9_\-]+\.mp3)", repl_snd, html)
 
 
 def adapter_for(platform: str) -> str:

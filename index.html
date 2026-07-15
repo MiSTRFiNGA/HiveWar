@@ -86,7 +86,7 @@ const G = {
 };
 // Weapon DPS ratios follow balance/balance.json dpsMult [1,1.55,2.3,3.4,5]
 const WEAPONS = [
-  {name:'Blaster',     rof: 8, dmg: 1.00, n:1, spread:0,    col:'#5ef'},
+  {name:'Blaster',     rof: 3.5, dmg: 2.3, n:1, spread:0,  col:'#5ef'},   // slow single shots until powerups
   {name:'Twin Plasma', rof:10, dmg: 0.62, n:2, spread:0.06, col:'#4cf'},
   {name:'Scatter Rail',rof:12, dmg: 0.38, n:4, spread:0.22, col:'#c6f'},
   {name:'Heavy Plasma',rof:11, dmg: 0.82, n:3, spread:0.10, col:'#f80'},
@@ -94,7 +94,7 @@ const WEAPONS = [
 ];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
-  spawnRate: [8,11,14,18,22,27,32,34,39,44],            // enemies/sec by level (R2)
+  spawnRate: [6,8,10,13,16,20,24,26,29,33],             // R2 x0.75 — Eric: fewer enemies
   waveSec:   [70,74,78,82,86,90,94,98,102,55],
   mixEld:    [10,12,15,18,22,25,28,30,32,33],           // % eldritch
   mixCyb:    [0,3,7,12,16,20,22,25,26,27],              // % cyber-mutant
@@ -120,9 +120,9 @@ const BAL = {
 };
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
 const EKIND = [ // fodder, eldritch, cyber-mutant, winged diver, burrower
-  {hp:2,  r:11, spd:70,  col:'#3f6', credits:1},
+  {hp:2,  r:15, spd:70,  col:'#3f6', credits:1},
   {hp:26, r:26, spd:26,  col:'#a3e', credits:4},
-  {hp:7,  r:15, spd:48,  col:'#f55', credits:3},
+  {hp:7,  r:18, spd:48,  col:'#f55', credits:3},
   {hp:12, r:14, spd:105, col:'#5ff', credits:6},
   {hp:20, r:18, spd:38,  col:'#fb5', credits:6},
 ];
@@ -174,9 +174,19 @@ const AUDIO = (() => {
       ch.gain.exponentialRampToValueAtTime(0.001, now + 0.09); osc.connect(ch); osc.start(now); osc.stop(now + 0.1);
     } catch (_) {}
   }
+  const SAMPLES={explosion:'sounds/explosion.mp3',explosion2:'sounds/explosion-05.mp3',
+                 zap:'sounds/electric-explosive.mp3',squish:'sounds/hit-flesh-01.mp3'};
+  const pool={};
+  function sample(name){
+    if(muted||!SAMPLES[name])return;
+    try{
+      const arr=pool[name]||(pool[name]=[0,0,0].map(()=>{const a=new Audio(SAMPLES[name]);a.volume=.5;return a;}));
+      const a=arr.find(x=>x.paused)||arr[0];a.currentTime=0;a.play().catch(()=>{});
+    }catch(_){}
+  }
   addEventListener('psdk:adstart', () => { muted = true; });
   addEventListener('psdk:adend', () => { muted = false; });
-  return { play, setMuted(v) { muted = !!v; } };
+  return { play, sample, setMuted(v) { muted = !!v; } };
 })();
 function sfx(name) { AUDIO.play(name); }
 AUDIO.setMuted(!G.meta.sfx);
@@ -232,8 +242,8 @@ function gateHit(g, dmg) {           // shooting a gate improves it
   }
 }
 function gatePass(g) {
-  if (g.kind === 'add') G.squad = Math.min(999, Math.max(0, G.squad + g.val));
-  else if (g.kind === 'mul') G.squad = Math.min(999, Math.max(0, Math.round(G.squad * g.val)));
+  if (g.kind === 'add') G.squad = Math.min(1100, Math.max(0, G.squad + g.val));
+  else if (g.kind === 'mul') G.squad = Math.min(1100, Math.max(0, Math.round(G.squad * g.val)));
   else if (g.kind === 'wpn') G.weapon = Math.min(4, G.weapon + 1 + g.val);
   fx(g.x + g.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44');
   G.flashT = 0.16;
@@ -350,6 +360,7 @@ function damageEnemy(e, dmg, x, y) {
 }
 function aoe(x, y, r, dmg) {
   fx(x, y, '#fa0');
+  AUDIO.sample('explosion');
   enemies.each(e => { const dx = e.x - x, dy = e.y - y; if (dx*dx + dy*dy < r*r) damageEnemy(e, dmg, e.x, e.y); });
 }
 function die() { G.state='dead';if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
@@ -550,7 +561,7 @@ function bossAttackUpdate(B, dt) {
 }
 function bossKill() {
   if(!G.boss||G.boss.dead)return;G.boss.dead=true;G.shake=16;G.bossKillT=.4;G.flashT=.3;
-  fx(G.boss.x,G.boss.y,'#ff0');fx(G.boss.x,G.boss.y,'#f4f');gore(G.boss.x,G.boss.y,0);sfx('boss');
+  fx(G.boss.x,G.boss.y,'#ff0');fx(G.boss.x,G.boss.y,'#f4f');gore(G.boss.x,G.boss.y,0);sfx('boss');AUDIO.sample('explosion2');
   G.credits += BAL.eco.boss(G.level) + BAL.eco.level(G.level) + (G.boss.queen ? BAL.eco.queen : 0);
   G.runBosses++;if(G.mode==='campaign'&&G.boss.queen){G.meta.endless=true;save();}
 }
@@ -851,10 +862,12 @@ function drawDebugCanvas(){
   lines.forEach((line,i)=>cx.fillText(line,17,78+i*19));cx.restore();
 }
 function drawSquad() {
-  const n = Math.min(G.squad, CFG.squadCapVisible);
+  const n = G.squad <= 5 ? G.squad : Math.min(20, 5 + Math.round((G.squad - 5) / 64));  // 1-5 normal, 20 = huge army
   const y0 = CFG.H - 110;
   for (let i = 0; i < n; i++) {
-    const x=G.px+(i-(n-1)/2)*42, y=y0+Math.abs(i-(n-1)/2)*9;
+    const perRow=7,row=Math.floor(i/perRow),inRow=i-row*perRow,rowN=Math.min(perRow,n-row*perRow);
+    const sp=n>10?34:42;
+    const x=G.px+(inRow-(rowN-1)/2)*sp, y=y0+row*26+Math.abs(inRow-(rowN-1)/2)*6;
     const bob=Math.sin(G.t*9+i*1.7)*2;
     cx.save();
     // glow ring + soft shadow (reference style)
