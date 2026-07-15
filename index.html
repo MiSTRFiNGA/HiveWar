@@ -661,10 +661,12 @@ const ART={};
 // build.py inlines these as data URIs for the single-file portal builds
 const IMGS={};
 (function(){
-  const files={bio:'biomorph_a',bio2:'biomorph_b',eld:'eldritch',cyb:'cyber_a',cyb2:'cyber_b',
-               div:'winged',bur:'burrower',praet:'praetorian',soldier:'soldier_front',tank:'tank_front'};
+  const files={bio:'assets/biomorph_a.png',bio2:'assets/biomorph_b.png',eld:'assets/eldritch.png',
+               cyb:'assets/cyber_a.png',cyb2:'assets/cyber_b.png',div:'assets/winged.png',
+               bur:'assets/burrower.png',praet:'assets/praetorian.png',
+               soldier:'assets/soldier_front.png',tank:'assets/tank_front.png'};
   for(const k in files){const im=new Image();im.onload=()=>{im.ok=true;};im.onerror=()=>{im.ok=false;};
-    im.src='assets/'+files[k]+'.png';IMGS[k]=im;}
+    im.src=files[k];IMGS[k]=im;}
 })();
 function enemyImg(kind,pi){
   if(kind===0)return (pi%2?IMGS.bio2:IMGS.bio);
