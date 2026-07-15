@@ -32,3 +32,7 @@ Verified in headless Chromium at level 6 with seeded spawning:
 - One Drone Escort stack created two drone shots through the shared bullet pool.
 - One Orbital Laser stack entered an active 0.7-second sweep and exposed `laserActive: true` through `window.__dbg()`.
 - Packaging tests remained 3/3 green after rebuilding both portal distributions.
+
+## Round-3 verification
+
+Headless seeded boss verification confirmed an active Queen acid-lane telegraph, a 10-unit collision loss, an eight-second rank-2 tank deployment firing from the shared bullet pool, and the 0.4-second boss-kill sequence. Core syntax and packaging tests remained green.
