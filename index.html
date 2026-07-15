@@ -86,7 +86,7 @@ const G = {
 };
 // Weapon DPS ratios follow balance/balance.json dpsMult [1,1.55,2.3,3.4,5]
 const WEAPONS = [
-  {name:'Blaster',     rof: 3.5, dmg: 2.3, n:1, spread:0,  col:'#5ef'},   // slow single shots until powerups
+  {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,  col:'#5ef'},   // slow single shots until powerups
   {name:'Twin Plasma', rof:10, dmg: 0.62, n:2, spread:0.06, col:'#4cf'},
   {name:'Scatter Rail',rof:12, dmg: 0.38, n:4, spread:0.22, col:'#c6f'},
   {name:'Heavy Plasma',rof:11, dmg: 0.82, n:3, spread:0.10, col:'#f80'},
@@ -94,7 +94,7 @@ const WEAPONS = [
 ];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
-  spawnRate: [6,8,10,13,16,20,24,26,29,33],             // R2 x0.75 — Eric: fewer enemies
+  spawnRate: [4,6,8,11,14,18,22,24,27,31],              // eased L1-3 for slow-growth start
   waveSec:   [70,74,78,82,86,90,94,98,102,55],
   mixEld:    [10,12,15,18,22,25,28,30,32,33],           // % eldritch
   mixCyb:    [0,3,7,12,16,20,22,25,26,27],              // % cyber-mutant
