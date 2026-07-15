@@ -657,6 +657,22 @@ const ART={};
     }
   }));
 })();
+// ---------- photoreal sprites (Gemini renders, sliced by art_src/slice_gemini.py) ----------
+// build.py inlines these as data URIs for the single-file portal builds
+const IMGS={};
+(function(){
+  const files={bio:'biomorph_a',bio2:'biomorph_b',eld:'eldritch',cyb:'cyber_a',cyb2:'cyber_b',
+               div:'winged',bur:'burrower',praet:'praetorian',soldier:'soldier_front',tank:'tank_front'};
+  for(const k in files){const im=new Image();im.onload=()=>{im.ok=true;};im.onerror=()=>{im.ok=false;};
+    im.src='assets/'+files[k]+'.png';IMGS[k]=im;}
+})();
+function enemyImg(kind,pi){
+  if(kind===0)return (pi%2?IMGS.bio2:IMGS.bio);
+  if(kind===1)return IMGS.eld;
+  if(kind===2)return (pi%2?IMGS.cyb2:IMGS.cyb);
+  if(kind===3)return IMGS.div;
+  return IMGS.bur;
+}
 function roadClip(){
   const top=roadHalfWidth(0),bot=roadHalfWidth(1);
   cx.beginPath();cx.moveTo(CFG.W/2-top-6,HORIZON_Y-2);cx.lineTo(CFG.W/2+top+6,HORIZON_Y-2);
@@ -703,7 +719,9 @@ function drawHorizonBoss(){
   cx.fillStyle='rgba(225,210,255,.75)';cx.font='bold 12px Segoe UI';cx.textAlign='center';cx.fillText(G.level===CFG.levels?'ALIEN QUEEN APPROACHING':'HIVE GUARDIAN SIGNAL',CFG.W/2,HORIZON_Y-10);
 }
 function drawVehicles(){
-  const count=Math.min(8,3+(G.meta.vehicleDrop||0));for(let i=0;i<count;i++){const row=Math.floor(i/2),side=i%2?1:-1,x=G.px+side*(58+row*38),y=CFG.H-170-row*52;cx.save();cx.translate(x,y);cx.fillStyle='#df9c35';cx.shadowColor='#f80';cx.shadowBlur=10;cx.fillRect(-20,-12,40,25);cx.fillStyle='#ffe3a5';cx.fillRect(-5,-22,10,24);cx.fillRect(-3,-40,6,22);cx.strokeStyle='#8ff';cx.beginPath();cx.ellipse(0,15,24,8,0,0,7);cx.stroke();cx.restore();}
+  const count=Math.min(8,3+(G.meta.vehicleDrop||0));for(let i=0;i<count;i++){const row=Math.floor(i/2),side=i%2?1:-1,x=G.px+side*(58+row*38),y=CFG.H-170-row*52;cx.save();cx.translate(x,y);
+    if(IMGS.tank&&IMGS.tank.ok){const th=64,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
+    cx.fillStyle='#df9c35';cx.shadowColor='#f80';cx.shadowBlur=10;cx.fillRect(-20,-12,40,25);cx.fillStyle='#ffe3a5';cx.fillRect(-5,-22,10,24);cx.fillRect(-3,-40,6,22);cx.strokeStyle='#8ff';cx.beginPath();cx.ellipse(0,15,24,8,0,0,7);cx.stroke();cx.restore();}
 }
 function draw() {
   const s = scale;
@@ -771,12 +789,18 @@ function draw() {
   enemies.each(e => {
     if (e.mode === 1) { cx.strokeStyle = '#fb5'; cx.lineWidth = 3; cx.globalAlpha = 0.35 + 0.45 * Math.sin(e.t * 18) ** 2;
       cx.beginPath(); cx.ellipse(e.x, e.y, 34, 15, 0, 0, 7); cx.stroke(); cx.globalAlpha = 1; return; }
-    const sp = ART.enemies[e.kind], sc = (e.r / 22) * 1.55, sz = 72 * sc;
     // ground shadow
     cx.fillStyle = 'rgba(0,0,10,.35)'; cx.beginPath(); cx.ellipse(e.x, e.y + e.r * 0.8, e.r * 0.9, e.r * 0.32, 0, 0, 7); cx.fill();
     // slight scuttle bob
     const bob = Math.sin(e.t * 11 + e._pi) * e.r * 0.06;
-    cx.drawImage(sp, e.x - sz / 2, e.y - sz / 2 + bob, sz, sz);
+    const pic = enemyImg(e.kind, e._pi);
+    if (pic && pic.ok) {                              // photoreal render, aspect-correct, height = 2.6r
+      const ph = e.r * 2.6, pw = ph * (pic.width / pic.height);
+      cx.drawImage(pic, e.x - pw / 2, e.y - ph / 2 + bob, pw, ph);
+    } else {
+      const sp = ART.enemies[e.kind], sc = (e.r / 22) * 1.55, sz = 72 * sc;
+      cx.drawImage(sp, e.x - sz / 2, e.y - sz / 2 + bob, sz, sz);
+    }
     if (e.kind !== 0 && e.hp < e.maxhp) {           // hp bars: tanks/elites only
       cx.fillStyle = '#300'; cx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2, 3);
       cx.fillStyle = '#f44'; cx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2 * (e.hp / e.maxhp), 3);
@@ -852,8 +876,24 @@ function drawBossAttack(B){const tele=B.attack==='acid'?.9:.75,active=B.attack==
   cx.save();cx.globalAlpha=B.attackClock<tele?.3:.78;if(B.attack==='acid'){cx.fillStyle='#7f3';cx.fillRect(B.attackX-42,0,84,CFG.H);}
   else{const p=Math.max(0,Math.min(1,(B.attackClock-tele)/active)),x=B.attackSide<0?CFG.W-p*CFG.W:p*CFG.W;
     cx.fillStyle=B.attack==='rush'?'#f55':'#d5f';cx.fillRect(x-32,CFG.H-190,64,120);}cx.restore();}
+function drawBossHud(B){
+  cx.fillStyle = '#111'; cx.fillRect(70, 30, CFG.W - 140, 12);
+  cx.fillStyle = B.queen ? '#f3c' : '#a5f';
+  cx.fillRect(70, 30, (CFG.W - 140) * Math.max(0, B.hp / B.maxhp), 12);
+  cx.strokeStyle = '#fff'; cx.strokeRect(70, 30, CFG.W - 140, 12);
+  cx.fillStyle = '#fff'; cx.font = 'bold 14px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText(B.queen ? '👑 ALIEN QUEEN' : 'HIVE GUARDIAN L' + G.level, CFG.W / 2, 26);
+
+}
 function drawBoss() {
   const B = G.boss;
+  if (IMGS.praet && IMGS.praet.ok && !B.queen) {      // photoreal guardian render
+    const breathe = 1 + 0.03 * Math.sin(B.t * 2);
+    const ph = 300 * breathe, pw = ph * (IMGS.praet.width / IMGS.praet.height);
+    cx.save(); cx.shadowColor = '#a4f'; cx.shadowBlur = 30;
+    cx.drawImage(IMGS.praet, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
+    drawBossHud(B); return;
+  }
   cx.fillStyle = B.queen ? '#c3f' : '#93e';
   cx.beginPath();
   for (let i = 0; i < 12; i++) { const a = i / 12 * 6.28;
@@ -866,12 +906,7 @@ function drawBoss() {
   if (B.queen && B.phase < 2) { cx.fillStyle = '#8f4';   // eggs
     for (let i = 0; i < 4; i++) { cx.beginPath();
       cx.ellipse(B.x - 75 + i * 50, B.y + 75, 12, 16, 0, 0, 7); cx.fill(); } }
-  cx.fillStyle = '#111'; cx.fillRect(70, 30, CFG.W - 140, 12);
-  cx.fillStyle = B.queen ? '#f3c' : '#a5f';
-  cx.fillRect(70, 30, (CFG.W - 140) * Math.max(0, B.hp / B.maxhp), 12);
-  cx.strokeStyle = '#fff'; cx.strokeRect(70, 30, CFG.W - 140, 12);
-  cx.fillStyle = '#fff'; cx.font = 'bold 14px Segoe UI'; cx.textAlign = 'center';
-  cx.fillText(B.queen ? '👑 ALIEN QUEEN' : 'HIVE GUARDIAN L' + G.level, CFG.W / 2, 26);
+  drawBossHud(B);
 }
 function drawPerks() {
   cx.fillStyle = 'rgba(5,2,15,0.86)'; cx.fillRect(0, 0, CFG.W, CFG.H);

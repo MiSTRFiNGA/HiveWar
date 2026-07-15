@@ -23,6 +23,21 @@ def inject_adapter(html: str) -> str:
     return html.replace(marker, SCRIPT_TAG + marker, 1)
 
 
+def inline_assets(html: str) -> str:
+    """Replace assets/*.png references with base64 data URIs (single-file portal builds)."""
+    import base64
+    import re
+
+    def repl(match: re.Match) -> str:
+        path = ROOT / "assets" / match.group(1)
+        if not path.is_file():
+            return match.group(0)
+        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
+
+    return re.sub(r"assets/([A-Za-z0-9_\-]+\.png)", repl, html)
+
+
 def adapter_for(platform: str) -> str:
     source = ADAPTER.read_text(encoding="utf-8")
     token = "__HIVESWARM_PLATFORM__"
@@ -43,7 +58,7 @@ def build() -> list[Path]:
     if not SOURCE_HTML.is_file() or not ADAPTER.is_file():
         raise FileNotFoundError("index.html and psdk_adapter.js are required")
     shutil.rmtree(DIST, ignore_errors=True)
-    html = inject_adapter(SOURCE_HTML.read_text(encoding="utf-8"))
+    html = inline_assets(inject_adapter(SOURCE_HTML.read_text(encoding="utf-8")))
     crazygames = write_platform("crazygames", html)
     poki = write_platform("poki", html)
     archive = poki / "hiveswarm-poki.zip"
