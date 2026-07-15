@@ -493,7 +493,7 @@ function update(dt) {
     if (e.y > CFG.H + 40) { enemies.release(e); return; }
     // contact with squad zone
     if (e.y > CFG.H - 150 && Math.abs(e.x - G.px) < 60) {
-      const loss = e.kind === 1 ? 6 : 2;
+      const loss = [1,4,2,3,3][e.kind] || 1;   // gentler contact losses to match slow-growth economy
       loseUnits(loss, e.x, e.y); enemies.release(e);
       if (G.squad <= 0) return;
       return;
