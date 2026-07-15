@@ -230,7 +230,14 @@ function spawnGatePair() {
     else { kind = 'add'; const r = GB.minus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
     return { x, y, w, h: 46, kind, val, shot: 0, need, live: true };
   };
-  gates.push(mk(CFG.laneMargin + 5, 0), mk(CFG.W / 2 + 5, 1));
+  const g1 = mk(CFG.laneMargin + 5, 0);
+  let g2 = mk(CFG.W / 2 + 5, 1);
+  const isNeg = g => g.kind === 'add' && g.val < 0;
+  if (isNeg(g1) && isNeg(g2)) {                     // never force a double-negative: reroll right side positive
+    const r = GB.plus[li];
+    g2 = { x: CFG.W / 2 + 5, y, w, h: 46, kind: 'add', val: Math.round(rr(r[0], r[1])), shot: 0, need: GB.hpStepPlus(G.level), live: true };
+  }
+  gates.push(g1, g2);
 }
 function gateHit(g, dmg) {           // shooting a gate improves it
   g.shot += dmg;
@@ -243,8 +250,8 @@ function gateHit(g, dmg) {           // shooting a gate improves it
   }
 }
 function gatePass(g) {
-  if (g.kind === 'add') G.squad = Math.min(1100, Math.max(0, G.squad + g.val));
-  else if (g.kind === 'mul') G.squad = Math.min(1100, Math.max(0, Math.round(G.squad * g.val)));
+  if (g.kind === 'add') G.squad = Math.min(1100, Math.max(g.val < 0 ? 1 : 0, G.squad + g.val));
+  else if (g.kind === 'mul') G.squad = Math.min(1100, Math.max(g.val < 1 ? 1 : 0, Math.round(G.squad * g.val)));
   else if (g.kind === 'wpn') G.weapon = Math.min(4, G.weapon + 1 + g.val);
   fx(g.x + g.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44');
   G.flashT = 0.16;
