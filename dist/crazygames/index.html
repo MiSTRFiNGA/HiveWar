@@ -237,7 +237,8 @@ function fire(dt) {
   fireT -= dt;
   if (fireT > 0) return;
   fireT = 1 / rof;
-  const cols = Math.min(G.squad, 14);                 // firing columns
+  // R3 power-scaled columns (fixes late-game DPS flatline past 14 squad)
+  const cols = Math.min(G.squad, Math.min(48, Math.max(1, Math.floor(14 * Math.pow(Math.max(G.squad, 1) / 14, 0.45)))));
   for (let c = 0; c < cols; c++) {
     for (let i = 0; i < w.n; i++) {
       const b = bullets.alloc(); if (!b) return;
@@ -245,7 +246,7 @@ function fire(dt) {
       b.x = G.px + off; b.y = CFG.H - 130; b.tier = G.weapon;
       const sp = (i - (w.n - 1) / 2) * w.spread;
       b.vx = Math.sin(sp) * 640; b.vy = -Math.cos(sp) * 640;
-      b.dmg = (w.dmg + G.meta.dmg * 0.5) * (1 + 0.06 * Math.log2(1 + G.squad));
+      b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg) * (1 + 0.06 * Math.log2(1 + G.squad));
       b.r = 3 + w.dmg; b.aoe = 0;
     }
   }
@@ -369,11 +370,12 @@ function pickPerk(gx, clientY) {
   }
 }
 const SHOP = [
-  {k:'dmg',   name:'Base Damage +',   cost: l => Math.round(50  * Math.pow(1.6, l))},
-  {k:'squad', name:'Start Squad +5',  cost: l => Math.round(80  * Math.pow(1.6, l))},
-  {k:'weapon',name:'Start Weapon +',  cost: l => Math.round(200 * Math.pow(1.6, l))},
-  {k:'perkSlot',name:'Perk Kind Slot +', cost: l => Math.round(500 * Math.pow(1.6, l))},
-  {k:'vehicleDrop',name:'Tank Drop +', cost: l => Math.round(300 * Math.pow(1.6, l))},
+  // R3 economy: combat growth 1.5, utility 1.6, rank caps (balance.json v3.0)
+  {k:'dmg',   name:'Base Damage +',   max:15, cost: l => Math.round(45  * Math.pow(1.5, l))},
+  {k:'squad', name:'Start Squad +2',  max:12, cost: l => Math.round(80  * Math.pow(1.5, l))},
+  {k:'weapon',name:'Start Weapon +',  max:4,  cost: l => Math.round(200 * Math.pow(1.5, l))},
+  {k:'perkSlot',name:'Perk Kind Slot +', max:2, cost: l => Math.round(500 * Math.pow(1.6, l))},
+  {k:'vehicleDrop',name:'Tank Drop +', max:5, cost: l => Math.round(300 * Math.pow(1.6, l))},
 ];
 function shopTap(e) {
   const r = cv.getBoundingClientRect();
@@ -381,8 +383,7 @@ function shopTap(e) {
   const i = Math.floor((gy - 300) / 100);
   if (i >= 0 && i < SHOP.length) {
     const it = SHOP[i], c = it.cost(G.meta[it.k]);
-    const maxed = (it.k === 'perkSlot' && G.meta.perkSlot >= BAL.perks.maxExtraSlots)
-      || (it.k === 'vehicleDrop' && G.meta.vehicleDrop >= 5);
+    const maxed = G.meta[it.k] >= it.max;
     if (!maxed && G.credits >= c) { G.credits -= c; G.meta[it.k]++; save(); }
   } else if (gy > 820) levelStart();
 }
@@ -671,12 +672,13 @@ function drawShop() {
   cx.font = '20px Segoe UI'; cx.fillStyle = '#9ff';
   cx.fillText('₵ ' + G.credits, CFG.W / 2, 230);
   SHOP.forEach((it, i) => {
-    const y = 300 + i * 100, c = it.cost(G.meta[it.k]), can = G.credits >= c;
+    const y = 300 + i * 100, c = it.cost(G.meta[it.k]),
+          maxed = G.meta[it.k] >= it.max, can = !maxed && G.credits >= c;
     cx.fillStyle = can ? 'rgba(40,255,220,0.12)' : 'rgba(120,120,120,0.1)';
     cx.fillRect(60, y, CFG.W - 120, 80);
     cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, 80);
     cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 20px Segoe UI';
-    cx.fillText(`${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + 47);
+    cx.fillText(maxed ? `${it.name}${G.meta[it.k]}  —  MAX` : `${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + 47);
   });
   cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 840, CFG.W - 120, 70);
   cx.strokeStyle = '#fd4'; cx.strokeRect(60, 840, CFG.W - 120, 70);
