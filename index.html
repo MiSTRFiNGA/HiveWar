@@ -256,10 +256,11 @@ function fire(dt) {
       const b = bullets.alloc(); if (!b) return;
       const off = (c - (cols - 1) / 2) * Math.min(16, 340 / Math.max(1, cols));   // firing line stays inside the road
       b.x = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-      b.y = CFG.H - 130 - hash01(c * 7.3 + G.t * 13) * 56;                        // per-column stagger → continuous streams, not rows
+      b.y = CFG.H - 130 - hash01(c * 7.3) * 56;                                   // fixed per-column stagger → steady streams
       b.tier = G.weapon;
-      const sp = (i - (w.n - 1) / 2) * w.spread;
-      b.vx = Math.sin(sp) * 640; b.vy = -Math.cos(sp) * 640;
+      // streams converge toward the vanishing point (reference look); slight jitter per shot
+      b.vx = (CFG.W / 2 - b.x) * 0.55 + (i - (w.n - 1) / 2) * w.spread * 60;
+      b.vy = -640;
       b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg) * (1 + 0.06 * Math.log2(1 + G.squad));
       b.r = 3 + w.dmg; b.aoe = 0;
     }
