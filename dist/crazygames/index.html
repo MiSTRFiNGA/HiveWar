@@ -104,20 +104,21 @@ const BAL = {
   queen:     { p1:28000, p2:36000, p3:22000, eggInt:1.8, eggHp:120, hatch:6 },
   gates: {
     interval: L => Math.max(3.0, 4.2 - 0.12*(L-1)),
-    plus:  [[3,12],[5,16],[8,22],[10,28],[12,35],[15,42],[18,50],[22,58],[26,68],[30,80]],
-    plusCap: [28,40,55,70,90,110,135,160,190,220],
-    minus: [[-8,-2],[-12,-4],[-16,-6],[-20,-8],[-28,-10],[-35,-12],[-42,-15],[-50,-18],[-60,-22],[-70,-25]],
-    mult:  [[1.2,1.5],[1.3,1.6],[1.4,1.7],[1.5,1.8],[1.5,2.0],[1.6,2.0],[1.7,2.2],[1.8,2.3],[2.0,2.5],[2.0,2.6]],
-    multCap: [2.0,2.2,2.4,2.6,2.8,2.8,2.9,3.0,3.1,3.2],  // R2 soft L6-10
-    hpStepPlus: L => Math.round(6 + 0.9*(L-1)),
-    hpStepMult: L => Math.round(10 + 1.3*(L-1)),
-    hpStepWpn:  L => Math.round(18 + 2.0*(L-1)),
+    // Eric growth pass: +1..5 at L1, big negatives, slow shoot-to-upgrade
+    plus:  [[1,5],[2,8],[4,12],[6,16],[8,22],[10,28],[13,34],[16,42],[20,52],[24,64]],
+    plusCap: [8,14,22,32,45,60,80,105,135,170],
+    minus: [[-15,-6],[-20,-9],[-26,-12],[-33,-15],[-40,-18],[-48,-22],[-56,-26],[-65,-30],[-75,-35],[-85,-40]],
+    mult:  [[1.1,1.3],[1.2,1.4],[1.2,1.5],[1.3,1.6],[1.4,1.7],[1.4,1.8],[1.5,1.9],[1.6,2.0],[1.7,2.2],[1.8,2.4]],
+    multCap: [1.5,1.6,1.8,2.0,2.2,2.4,2.6,2.8,3.0,3.2],
+    hpStepPlus: L => Math.round(24 + 4*(L-1)),
+    hpStepMult: L => Math.round(34 + 5*(L-1)),
+    hpStepWpn:  L => Math.round(45 + 6*(L-1)),
     stepDelta:  L => L <= 3 ? 1 : L <= 7 ? 2 : 3,
   },
   eco: { kill: [1,4,3,6,6], boss: L => 40 + 25*L, level: L => 80 + 40*L, queen: 2500 },
   perks: { maxRank: 3, baseKinds: 3, maxExtraSlots: 2 },
   ads: { headStart: [12,20,28], reviveFrac:.5, reviveMin:20 },
-  start: { squad: 8, weapon: 0 },
+  start: { squad: 5, weapon: 0 },
 };
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
 const EKIND = [ // fodder, eldritch, cyber-mutant, winged diver, burrower
@@ -326,7 +327,11 @@ function spawnWave(dt) {
     e.kind = lvl >= 6 && eliteRoll < 0.035 ? 4 : lvl >= 4 && eliteRoll < 0.095 ? 3
       : roll < BAL.mixCyb[li] ? 2 : (roll < BAL.mixCyb[li] + BAL.mixEld[li] ? 1 : 0);
     const K = EKIND[e.kind];
-    e.x = e.kind === 4 ? G.px : rr(CFG.laneMargin, CFG.W - CFG.laneMargin);
+    if (G.clusterT === undefined || G.clusterT <= 0) {         // re-roll swarm cluster center ~2s
+      G.clusterX = rr(CFG.laneMargin + 50, CFG.W - CFG.laneMargin - 50); G.clusterT = 1.6 + rng() * 1.2;
+    }
+    e.x = e.kind === 4 ? G.px : Math.max(CFG.laneMargin, Math.min(CFG.W - CFG.laneMargin,
+          (rng() < 0.75 ? G.clusterX + rr(-55, 55) : rr(CFG.laneMargin, CFG.W - CFG.laneMargin))));
     e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = e.x; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
     e.maxhp = e.hp = (e.kind < 3 ? [BAL.hp.bio, BAL.hp.eld, BAL.hp.cyb][e.kind](lvl)
@@ -427,7 +432,7 @@ function update(dt) {
   if (G.state !== 'play' && G.state !== 'boss') return;
   if (G.hitStop > 0) { G.hitStop -= dt; return; }
   if (G.bossKillT > 0) { G.bossKillT -= dt; dt *= .3; if (G.bossKillT <= 0) { G.boss=null; nextLevel(); return; } }
-  G.t += dt; G.levelT += dt;
+  G.t += dt; G.levelT += dt; if (G.clusterT !== undefined) G.clusterT -= dt;
   G.maxSquad=Math.max(G.maxSquad,G.squad);
   if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 12);
   if (G.flashT > 0) G.flashT -= dt;
@@ -478,7 +483,13 @@ function update(dt) {
     e.t += dt;
     if (e.mode === 1) { if (e.t >= 0.8) { e.mode = 0; e.t = 0; sfx('elite'); } else return; }
     if (e.kind === 3) e.x = e.baseX + Math.sin(e.t * 5 + e.phase) * 78;
-    else e.x += e.vx * dt;
+    else {
+      // swarm: cluster tight, wobble, then break apart
+      const breaking = e.t > 2.4;
+      const target = e.baseX + Math.sin(e.t * (breaking ? 1.1 : 2.4) + e.phase) * (breaking ? 95 : 30);
+      e.vx += ((target - e.x) * (breaking ? 1.6 : 3.2) - e.vx) * Math.min(1, dt * 3);
+      e.x += e.vx * dt;
+    }
     e.y += e.vy * dt;
     if (e.y > CFG.H + 40) { enemies.release(e); return; }
     // contact with squad zone
