@@ -79,7 +79,7 @@ const G = {
   kills: 0, shake: 0, streak:0, streakT:0, streakPeak:0, streakAward:0, chipHeal:0, shieldT:0, shieldHits:0,
   perks: {},               // name -> stacks
   droneT: 0, orbitalT: 0, laserT: 0, laserX: 0, laserSeq: 0,
-  hitStop:0, flashT:0, squadFlash:0, bossKillT:0, vehicleT:0, vehicleCD:4, vehicleFire:0,
+  hitStop:0, flashT:0, graceT:0, squadFlash:0, bossKillT:0, vehicleT:0, vehicleCD:4, vehicleFire:0,
   mode:'campaign', loop:0, runStart:0, maxSquad:10, runBosses:0, creditsStart:0, reviveUsed:false,
   boss: null,
   meta: load(),
@@ -377,6 +377,8 @@ function aoe(x, y, r, dmg) {
 }
 function die() { G.state='dead';if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
 function loseUnits(n, x, y) {
+  if (G.graceT > 0) { fx(x, y, '#48f'); return; }    // brief grace after a loss — units die in ticks, not floods
+  G.graceT = 0.55;
   const shield=G.perks['Shield Matrix']||0;if(shield&&G.shieldHits<shield){G.shieldHits++;fx(x,y,'#6ff');return;}
   G.squad -= Math.max(1, n - (shield ? 1 : 0));
   G.squadFlash = 0.22; fx(x, y, '#48f');
@@ -439,6 +441,7 @@ function update(dt) {
   if (G.hitStop > 0) { G.hitStop -= dt; return; }
   if (G.bossKillT > 0) { G.bossKillT -= dt; dt *= .3; if (G.bossKillT <= 0) { G.boss=null; nextLevel(); return; } }
   G.t += dt; G.levelT += dt; if (G.clusterT !== undefined) G.clusterT -= dt;
+  if (G.graceT > 0) G.graceT -= dt;
   G.maxSquad=Math.max(G.maxSquad,G.squad);
   if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 12);
   if (G.flashT > 0) G.flashT -= dt;
