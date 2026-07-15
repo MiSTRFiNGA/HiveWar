@@ -1,27 +1,38 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "game": "HiVE SWARM",
-  "round": 1,
+  "round": 2,
   "author": "Grok",
   "date": "2026-07-15",
+  "notes": "R2 validates R1 against live fire() DPS. Column cap 14 is the main late-game bottleneck.",
+  "simDps": {
+    "formula": "min(squad,14) * n * (dmg + 0.5*metaDmg) * (1+0.06*log2(1+squad)) * rof*(1+0.15*overclock)",
+    "weapons": [
+      {"name": "Blaster", "n": 1, "dmg": 1.0, "rof": 8, "dpsAt14": 138.3},
+      {"name": "Twin Plasma", "n": 2, "dmg": 0.62, "rof": 10, "dpsAt14": 214.3},
+      {"name": "Scatter Rail", "n": 4, "dmg": 0.38, "rof": 12, "dpsAt14": 315.2},
+      {"name": "Heavy Plasma", "n": 3, "dmg": 0.82, "rof": 11, "dpsAt14": 467.6},
+      {"name": "Orbital Link", "n": 5, "dmg": 0.89, "rof": 9, "dpsAt14": 692.1}
+    ]
+  },
   "goals": {
     "growthPulseSec": 20,
     "levelSecMin": 90,
     "levelSecMax": 150,
     "visibleSquadCap": 180,
+    "firingColumnsCap": 14,
     "trueSquadSoftCap": 50000,
     "shopCostGrowth": 1.6
   },
   "gates": {
     "intervalSec": { "l1": 4.2, "l10": 3.0, "formula": "max(3.0, 4.2 - 0.12*(L-1))" },
-    "approachSec": [2.4, 3.1],
     "plusN": {
       "spawn": [
         [3, 12], [5, 16], [8, 22], [10, 28], [12, 35],
         [15, 42], [18, 50], [22, 58], [26, 68], [30, 80]
       ],
       "softCapAfterShoot": [28, 40, 55, 70, 90, 110, 135, 160, 190, 220],
-      "hpPerStep": { "formula": "round(6 + 0.9*(L-1))", "l1": 6, "l10": 14 },
+      "hpPerStep": { "formula": "round(6 + 0.9*(L-1))" },
       "stepDelta": { "l1to3": 1, "l4to7": 2, "l8to10": 3 }
     },
     "multN": {
@@ -29,8 +40,8 @@
         [1.2, 1.5], [1.3, 1.6], [1.4, 1.7], [1.5, 1.8], [1.5, 2.0],
         [1.6, 2.0], [1.7, 2.2], [1.8, 2.3], [2.0, 2.5], [2.0, 2.6]
       ],
-      "maxAfterShoot": [2.0, 2.2, 2.4, 2.6, 2.8, 3.0, 3.2, 3.5, 3.8, 4.0],
-      "hpPerStep": { "formula": "round(10 + 1.3*(L-1))", "l1": 10, "l10": 22 },
+      "maxAfterShoot": [2.0, 2.2, 2.4, 2.6, 2.8, 2.8, 2.9, 3.0, 3.1, 3.2],
+      "hpPerStep": { "formula": "round(10 + 1.3*(L-1))" },
       "stepDelta": 0.1
     },
     "minusN": {
@@ -38,40 +49,49 @@
         [-8, -2], [-12, -4], [-16, -6], [-20, -8], [-28, -10],
         [-35, -12], [-42, -15], [-50, -18], [-60, -22], [-70, -25]
       ],
-      "hpPerStep": { "formula": "round(5 + 0.8*(L-1))", "l1": 5, "l10": 12 },
+      "hpPerStep": { "formula": "round(5 + 0.8*(L-1))" },
       "halveChance": [0.05, 0.08, 0.1, 0.12, 0.14, 0.15, 0.16, 0.18, 0.18, 0.2],
       "fullyConvertible": true
     },
     "weapon": {
       "tiers": ["Blaster", "TwinPlasma", "ScatterRail", "HeavyPlasma", "OrbitalLinked"],
-      "dpsMult": [1.0, 1.55, 2.3, 3.4, 5.0],
-      "fireRate": [8, 10, 12, 11, 9],
-      "hpPerStep": { "formula": "round(18 + 2.0*(L-1))", "l1": 18, "l10": 36 }
+      "dpsMult": [1.0, 1.55, 2.28, 3.38, 5.01],
+      "hpPerStep": { "formula": "round(18 + 2.0*(L-1))" }
     }
   },
   "waves": {
     "waveSec": [70, 74, 78, 82, 86, 90, 94, 98, 102, 55],
     "bossSecBudget": [18, 19.5, 21, 22.5, 24, 25.5, 27, 28.5, 30, 35],
-    "spawnRatePerSec": [8, 11, 14, 18, 22, 27, 32, 38, 45, 52],
+    "spawnRatePerSec": [8, 11, 14, 18, 22, 27, 32, 34, 39, 44],
     "mixPercent": {
       "biomorph": [90, 85, 78, 70, 62, 55, 50, 45, 42, 40],
       "eldritch": [10, 12, 15, 18, 22, 25, 28, 30, 32, 33],
       "cyberMutant": [0, 3, 7, 12, 16, 20, 22, 25, 26, 27]
     },
     "unitHp": {
-      "biomorph": "8 + 2.2*L",
-      "eldritch": "45 + 12*L",
-      "cyberMutant": "22 + 5*L"
+      "biomorph": "8 + 2.0*L",
+      "eldritch": "38 + 9.5*L",
+      "cyberMutant": "20 + 4.5*L",
+      "diver": "30 + 7*L",
+      "burrower": "45 + 10*L"
     },
-    "bossHp": [2200, 3400, 5000, 7200, 10000, 13500, 18000, 24000, 32000, null],
+    "bossHp": [2200, 3400, 5000, 7200, 10000, 13500, 16000, 21000, 28000, 0],
     "queen": {
       "phase1Hp": 28000,
       "phase2Hp": 36000,
       "phase3Hp": 22000,
+      "totalHp": 86000,
       "eggIntervalSec": 1.8,
       "eggHp": 120,
-      "hatchDelaySec": 4,
-      "hatchCount": 6
+      "hatchCount": 6,
+      "softAltIfFail": {
+        "phase1Hp": 24000,
+        "phase2Hp": 30000,
+        "phase3Hp": 18000,
+        "totalHp": 72000,
+        "eggIntervalSec": 2.0,
+        "eggHp": 100
+      }
     }
   },
   "economy": {
@@ -83,7 +103,7 @@
     "shop": {
       "growth": 1.6,
       "upgrades": [
-        { "id": "baseDamage", "baseCost": 50, "max": 25, "effect": "+8% dmg" },
+        { "id": "baseDamage", "baseCost": 50, "max": 25, "effect": "+8% dmg (meta.dmg*0.5 per bullet in sim)" },
         { "id": "startSquad", "baseCost": 80, "max": 15, "effect": "+2 start units" },
         { "id": "startWeapon", "baseCost": 200, "max": 4, "effect": "+1 weapon tier" },
         { "id": "biomatterValue", "baseCost": 60, "max": 20, "effect": "+10% bar fill" },
@@ -91,16 +111,28 @@
         { "id": "perkSlot", "baseCost": 500, "max": 2, "effect": "+1 perk kind capacity" }
       ]
     },
-    "perks": {
-      "barTargets": [100, 90, 85],
-      "maxRank": 3
-    },
+    "perks": { "barTargets": [100, 90, 85], "maxRank": 3 },
     "ads": {
       "doubleLevelCredits": true,
       "freeShopItem": true,
       "squadHeadStart": [15, 25, 40],
       "reviveOnce": { "squadFractionOfPeak": 0.5, "minUnits": 20 }
     }
+  },
+  "validation": {
+    "freshRun": {
+      "waveLeakLevels": [10],
+      "bossSlowLevels": [],
+      "queenTtkSecAtT5": 32.4,
+      "queenBudgetSec": 35
+    },
+    "r2Changes": [
+      "spawnRate L8-10 reduced",
+      "eldritch/cyber/bio HP slightly reduced",
+      "bossHp L7-9 trimmed ~12%",
+      "multCap L6-10 softened",
+      "queen kept 86k with soft-alt documented"
+    ]
   },
   "start": { "squad": 8, "weaponTier": 1, "credits": 0 }
 }
