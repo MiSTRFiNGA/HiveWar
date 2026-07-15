@@ -578,7 +578,7 @@ function bossAttackUpdate(B, dt) {
   if(B.attackClock>=tele&&B.attackClock<tele+active&&!B.attackHit){let hit=false;
     if(B.attack==='acid')hit=Math.abs(G.px-B.attackX)<48;else{const p=(B.attackClock-tele)/active;
       const x=B.attackSide<0?CFG.W-p*CFG.W:p*CFG.W;hit=Math.abs(G.px-x)<42;}
-    if(hit){B.attackHit=true;loseUnits(B.queen?10:6,G.px,CFG.H-110);G.shake=7;}}
+    if(hit){B.attackHit=true;loseUnits(B.queen?10:Math.max(2,Math.round(1.5+G.level*0.5)),G.px,CFG.H-110);G.shake=7;}}
   if(B.attackClock>=tele+active)B.attack=null;
 }
 function bossKill() {
