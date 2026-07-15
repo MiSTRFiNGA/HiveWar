@@ -139,7 +139,7 @@ function save() {
 }
 
 // ---------- input ----------
-let dragX = null, testBot = /[?&]test=1/.test(location.search);
+let dragX = null, testBot = /[?&]test=1/.test(location.search), debugCanvas=/[?&]dbg=1/.test(location.search);
 function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / scale; }
 function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.top)/scale; }
 function down(e) { botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
@@ -656,10 +656,16 @@ function draw() {
 
   if (G.state === 'perk') drawPerks();
   if(G.flashT>0){cx.globalAlpha=Math.min(.7,G.flashT*4);cx.fillStyle=G.flashT>.2?'#fff':'#6ff';cx.fillRect(0,0,CFG.W,CFG.H);cx.globalAlpha=1;}
+  if(debugCanvas)drawDebugCanvas();
   cx.restore();
 
   document.getElementById('hud').textContent =
     `⬡ ${G.squad}  ·  ${WEAPONS[G.weapon].name}  ·  L${G.level}  ·  ₵${G.credits}`;
+}
+function drawDebugCanvas(){
+  const d=window.__dbg?window.__dbg():{};cx.save();cx.globalAlpha=.88;cx.fillStyle='#02040d';cx.fillRect(8,58,244,106);cx.globalAlpha=1;cx.strokeStyle='#4ff';cx.strokeRect(8,58,244,106);cx.fillStyle='#bff';cx.font='bold 13px monospace';cx.textAlign='left';
+  const lines=[`state ${d.state}  L${d.level}  t ${Number(d.levelT||0).toFixed(1)}`,`enemies ${d.enemies||0}  bullets ${d.bullets||0}`,`gates ${d.gates||0}  kills ${d.kills||0}`,`credits ${d.credits||0}  squad ${d.squad||0}`,`testBot ${!!d.testBot}`];
+  lines.forEach((line,i)=>cx.fillText(line,17,78+i*19));cx.restore();
 }
 function drawSquad() {
   const n = Math.min(G.squad, CFG.squadCapVisible);
@@ -758,15 +764,22 @@ function screenText(big, small, col) {
 // ---------- loop ----------
 function frame(ts) {
   const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
-  update(dt); draw();
+  if(!testBot)update(dt); draw();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-if (testBot) { G.state = 'title'; setTimeout(() => { if (testBot) startRun(); }, 600); }
+if (testBot) { G.state = 'title';
+  // Chromium virtual-time may throttle requestAnimationFrame entirely. Finite
+  // deterministic checkpoints advance the real game loop without keeping the
+  // browser alive, so the exact --virtual-time-budget repro remains reliable.
+  const advanceTest=(seconds)=>{for(let i=0;i<seconds*10&&testBot;i++){update(.1);if(G.state==='perk'&&perkChoices[0]){const p=perkChoices[0];G.perks[p]=Math.min(BAL.perks.maxRank,(G.perks[p]||0)+1);G.state=G.boss?'boss':'play';}}draw();};
+  setTimeout(()=>{if(testBot){startRun();advanceTest(20);}},600);
+  setTimeout(()=>{if(testBot)advanceTest(40);},30000);
+}
 
 // ---------- debug ----------
 window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: G.weapon,
-  credits: G.credits, kills: G.kills, enemies: enemies.count(), bullets: bullets.count(),
+  levelT:G.levelT,credits: G.credits, kills: G.kills, enemies: enemies.count(), bullets: bullets.count(),gates:gates.filter(g=>g.live).length,
   perks: Object.assign({}, G.perks), laserActive: G.laserT > 0,
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
