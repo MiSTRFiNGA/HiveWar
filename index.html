@@ -492,6 +492,7 @@ function update(dt) {
     else {
       // swarm: cluster tight, wobble, then break apart
       const breaking = e.t > 2.4;
+      e.baseX += (G.px - e.baseX) * 0.22 * dt;        // horde funnels toward the squad (walks into the stream)
       const target = e.baseX + Math.sin(e.t * (breaking ? 1.1 : 2.4) + e.phase) * (breaking ? 95 : 30);
       e.vx += ((target - e.x) * (breaking ? 1.6 : 3.2) - e.vx) * Math.min(1, dt * 3);
       e.x += e.vx * dt;
