@@ -1,60 +1,63 @@
 {
-  "version": "4.0",
+  "version": "6.0",
   "game": "HiVE SWARM",
-  "round": 4,
+  "round": 6,
   "author": "Grok",
   "date": "2026-07-15",
-  "signOff": {
-    "model": "R3 power columns + meta 8% dmg + shop 45/1.5",
-    "primary": "70% positive gates, no meta",
-    "noWaveDeathBeforeL8": true,
-    "queenKillableAt70pct": true,
+  "geometry": {
+    "live": "flat_scroll",
+    "intended": "perspective_near_z_gt_0.35",
+    "tauNearSec": 3.2,
+    "regressionNote": "Near-band shortens on-screen sim time vs full flat path; easier or equal pressure. No spawn cut needed."
+  },
+  "regression70pct": {
+    "deathBeforeL8": false,
+    "bossOverBudget1_5x": false,
     "queenTtkSec": 10.1,
     "queenBudgetSec": 35,
-    "l1to3FodderSponge": false,
-    "l1to3TrivialPowerFantasy": true,
-    "optionalEarlyPolish": "slightly higher L1-2 biomorph HP or slower L1 gate interval"
+    "spawnNearPerSec": [8, 11, 14, 18, 22, 27, 32, 34, 39, 44],
+    "spawnCorrection": "none"
+  },
+  "crazyGamesTrial": {
+    "medianSessionRiskUnder3min": "low (L1 trivial; UX bounce more likely than HP)",
+    "estMedianSessionMin": { "dieL3": "4-7", "dieL5": "9-14", "dieL8": "16-24", "fullClear": "22-32" },
+    "recommendedFirstDeathLevel": "4-5",
+    "shopSecondsPerVisit": [12, 25],
+    "loadRisk": "low while single-file; watch atlas size post-art"
+  },
+  "difficultyScalar": {
+    "symbol": "D",
+    "apply": {
+      "enemyHp": "D",
+      "bossHp": "D",
+      "queenHp": "D",
+      "spawnRate": "0.5 + 0.5*D"
+    },
+    "presets": {
+      "easy": 0.85,
+      "default": 1.0,
+      "hard": 1.18
+    },
+    "hotTweak": "CFG.difficulty or BAL.D — trial analytics only; no per-level re-derive"
   },
   "columnCap": {
-    "formulaJs": "Math.min(G.squad, Math.min(48, Math.max(1, Math.floor(14 * Math.pow(Math.max(G.squad, 1) / 14, 0.45)))))",
-    "status": "keep from R3"
+    "formulaJs": "Math.min(G.squad, Math.min(48, Math.max(1, Math.floor(14 * Math.pow(Math.max(G.squad, 1) / 14, 0.45)))))"
   },
-  "ads": {
-    "doubleLevelCredits": { "value": 2, "final": true },
-    "freeShopItem": { "value": "one non-top combat rank", "final": true },
-    "squadHeadStart": {
-      "previous": [15, 25, 40],
-      "final": [12, 20, 28],
-      "brackets": { "1-3": 12, "4-7": 20, "8-10": 28 }
-    },
-    "revive": {
-      "fractionOfPeak": 0.5,
-      "minUnits": 20,
-      "oncePerRun": true,
-      "final": true
-    },
-    "softCapImpact": "ads shave soft-cap from ~3.3 clears to ~2.8-3.0; within 5-6 run pacing"
-  },
-  "perks": {
-    "list": ["Chain Lightning", "Drone Escort", "Orbital Laser", "Acid Rounds", "Magnet", "Overclock", "Shield Matrix"],
-    "autoPicksToday": ["Overclock", "Acid Rounds"],
-    "underpicksToday": ["Drone Escort", "Shield Matrix", "Magnet"],
-    "proposed": {
-      "Overclock": { "rofPerRank": 0.10 },
-      "Acid Rounds": { "onHitFractionPerRank": 0.12 },
-      "Chain Lightning": { "proc": 0.12, "bounceDmgFraction": 0.70 },
-      "Orbital Laser": { "interval": "max(3.5, 7.5 - 1.1*rank)", "dmg": "14 + 9*rank" },
-      "Drone Escort": { "countPerRank": 2, "dmg": "2.2 + 1.2*rank", "period": "max(0.14, 0.32 - 0.03*drones)" },
-      "Magnet": { "radiusPerRank": 40, "extra": "+5% biomatter bar fill per rank" },
-      "Shield Matrix": { "ignoreHitsEvery5s": "rank", "plusFlatReduce": 1 }
+  "endless": {
+    "r5Recommended": {
+      "spawnMult": "1.07**k",
+      "hpMult": "1.10**k",
+      "bossHp": "32000 * 1.13**k",
+      "creditMult": "1.12**k"
     }
   },
-  "economy": {
-    "baseDamage": { "baseCost": 45, "max": 15, "growth": 1.5, "totalCredits": 39311, "runsAt12k": 3.3 }
+  "killStreak": {
+    "windowSec": 1.15,
+    "thresholds": [10, 25, 50, 100, 250, 500],
+    "oneShotCreditBonus": [3, 6, 12, 25, 50, 80]
   },
-  "waves": {
-    "spawnRatePerSec": [8, 11, 14, 18, 22, 27, 32, 34, 39, 44],
-    "bossHp": [2200, 3400, 5000, 7200, 10000, 13500, 16000, 21000, 28000, 0],
-    "queenTotal": 86000
+  "ads": {
+    "squadHeadStart": [12, 20, 28],
+    "revive": { "fractionOfPeak": 0.5, "minUnits": 20, "oncePerRun": true }
   }
 }
