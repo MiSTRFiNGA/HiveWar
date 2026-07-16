@@ -1,0 +1,4 @@
+_game_extract.js
+_headless_harness_stub.js
+node_modules/
+__pycache__/
