@@ -166,3 +166,22 @@ Tell Claude the columns×rows (or which row = the looping walk/idle to use in-ga
   Praetorian renders in Brave; Queen shows at L10).
 - **Still needs a sheet:** kind 1 sponge — a `Log - Aurorean.png` exists (likely its new name)
   but no `Aurorean.png` sprite sheet yet. Send it (green bg) and Claude wires it like the rest.
+
+## 2026-07-16 (pt 6) — production pass 1 (new 1.md batch)
+DONE + verified in Brave (commit cdd297c):
+- Exciting EXPLOSIONS: colored fireball + ember/spark particles + fiery shockwave (was ring+circle).
+- Soldier GRAY BOX removed; one shot per soldier; shot streak half length.
+- Enemy pathfinding clamped inside road walls (perspective). Xenoid +10%.
+- Gates RARE (12-18s); locked = 1 at a time, always big red, devastating; gate value uncapped (grows as shot).
+- More player damage; money orbs halved; kill-streak window tightened; Praetorian HP doubled.
+- Shop overhauled (modest); HUD 'LEVEL N' + gem/money split; Bestiary ✕ / ESC close.
+- Enemy scale-reference image generated → Desktop\HiVE Swarm\ENEMY_SCALE_REFERENCE.png.
+
+STILL TODO (art-heavy / mechanics — next loop):
+- Eldritch Sponge sprite (kind 1 still old art — shows MISSING on scale ref); Aurorean.
+- Cyber-Mutant animation timing tweak; full attack+death anims for Praetorian & Psychoid.
+- Alien Queen mechanics: egg cluster + hatchlings + tail-swing attack.
+- Weapons.png pickups floating over the last sprite; Perk Icons into MUTATION screen.
+- Ground tile (Environment/Tile_*) tiled along the path; Tank swap (Items/Ironclad Centurion).
+- Correct bestiary LOG images (Enemies/Log - *.png) instead of sprite crops.
+- Transparent 02 assets: USE THEM (best for bounding boxes — no keying). Re-slice bosses from 02.
