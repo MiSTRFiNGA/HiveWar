@@ -824,6 +824,22 @@ const IMGS={};
   for(const k in files){const im=new Image();im.onload=()=>{im.ok=true;};im.onerror=()=>{im.ok=false;};
     im.src=files[k];IMGS[k]=im;}
 })();
+// ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
+const ANIM={};
+(function(){
+  const V='?v=3';                                 // bump to bust the browser cache when sprites change
+  const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
+  ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
+  ANIM[2]=load('assets/cyber_idle.png',4,5);      // cyber-mutant — malfunction idle
+  ANIM[4]=load('assets/subterra_scan.png',5,6);   // subterra burrower — scan cycle
+  ANIM[5]=load('assets/psychoid_swim.png',4,5);   // cephalo-psychoid — swim cycle
+})();
+function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
+  const a=ANIM[e.kind]; if(!a||!a.img.ok) return false;
+  const cs=a.img.height, f=Math.floor(e.t*a.fps)%a.frames;
+  cx.drawImage(a.img, f*cs, 0, cs, cs, px-size/2, py-size/2, size, size);
+  return true;
+}
 function enemyImg(kind,pi){
   if(kind===0)return (pi%2?IMGS.bio2:IMGS.bio);
   if(kind===1)return IMGS.eld;
@@ -977,13 +993,17 @@ function draw() {
     cx.fillStyle = 'rgba(0,0,10,.35)'; cx.beginPath(); cx.ellipse(e.x, e.y + e.r * 0.8, e.r * 0.9, e.r * 0.32, 0, 0, 7); cx.fill();
     // slight scuttle bob
     const bob = Math.sin(e.t * 11 + e._pi) * e.r * 0.06;
-    const pic = enemyImg(e.kind, e._pi);
-    if (pic && pic.ok) {                              // photoreal render, aspect-correct, height = 2.6r
-      const ph = e.r * 2.6, pw = ph * (pic.width / pic.height);
-      cx.drawImage(pic, e.x - pw / 2, e.y - ph / 2 + bob, pw, ph);
+    if (drawEnemyAnim(e, e.x, e.y + bob, e.r * 3.0)) {   // animated sprite strip (preferred)
+      // done
     } else {
-      const sp = ART.enemies[e.kind], sc = (e.r / 22) * 1.55, sz = 72 * sc;
-      cx.drawImage(sp, e.x - sz / 2, e.y - sz / 2 + bob, sz, sz);
+      const pic = enemyImg(e.kind, e._pi);
+      if (pic && pic.ok) {                              // static photoreal render, aspect-correct
+        const ph = e.r * 2.6, pw = ph * (pic.width / pic.height);
+        cx.drawImage(pic, e.x - pw / 2, e.y - ph / 2 + bob, pw, ph);
+      } else {
+        const sp = ART.enemies[e.kind], sc = (e.r / 22) * 1.55, sz = 72 * sc;
+        cx.drawImage(sp, e.x - sz / 2, e.y - sz / 2 + bob, sz, sz);
+      }
     }
     if (e.acidT > 0) {                                // corroding-acid overlay
       cx.save(); cx.globalCompositeOperation = 'lighter'; cx.globalAlpha = Math.min(.6, e.acidT);
@@ -1179,11 +1199,13 @@ function drawCodex(){
   const kind = unlocked[Math.min(G.codexPage||0, unlocked.length-1)], c = CODEX[kind];
   // page card
   cx.fillStyle='rgba(230,225,240,.06)';cx.fillRect(40,120,CFG.W-80,640);cx.strokeStyle='#5a4a7a';cx.strokeRect(40,120,CFG.W-80,640);
-  // specimen art (uses the enemy sprite if loaded, else vector)
-  const pic = enemyImg(kind,0);
+  // specimen art — animated strip frame 0 if available, else static sprite, else vector
   cx.save();
-  if(pic&&pic.ok){const ph=180,pw=ph*(pic.width/pic.height);cx.drawImage(pic,CFG.W/2-pw/2,150,pw,ph);}
-  else{const sp=ART.enemies[kind];cx.drawImage(sp,CFG.W/2-90,150,180,180);}
+  const anim=ANIM[kind];
+  if(anim&&anim.img.ok){const cs=anim.img.height;cx.drawImage(anim.img,0,0,cs,cs,CFG.W/2-100,150,200,200);}
+  else{const pic=enemyImg(kind,0);
+    if(pic&&pic.ok){const ph=180,pw=ph*(pic.width/pic.height);cx.drawImage(pic,CFG.W/2-pw/2,150,pw,ph);}
+    else{const sp=ART.enemies[kind];cx.drawImage(sp,CFG.W/2-90,150,180,180);}}
   cx.restore();
   cx.textAlign='center';cx.fillStyle='#eaddff';cx.font='bold 26px Segoe UI';cx.fillText(c.name,CFG.W/2,380);
   cx.fillStyle='#a89ad0';cx.font='italic 16px Segoe UI';cx.fillText(c.cls+'  ·  '+(G.meta.codex[kind]||0)+' terminated',CFG.W/2,410);
