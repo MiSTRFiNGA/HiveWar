@@ -144,3 +144,13 @@ Replace all non-boss enemies with the animated sheets (Cyber Mutant / Xenoid / S
 Psychoid). Claude will build a sprite-atlas frame-cycler. NEED per sheet: the frame grid —
 e.g. Cyber Mutant sheet has labelled rows of different lengths (idle 4, walk ~10, attack, death).
 Tell Claude the columns×rows (or which row = the looping walk/idle to use in-game) and it wires them.
+
+## 2026-07-16 (pt 4) — animated enemy sprites LIVE
+- Built `slice_enemies.py`: green-screen keyer (border-flood for Subterra's green head,
+  full-key for flesh creatures) + largest-blob (drops baked labels) + halo erosion + edge
+  green-despill → 128px horizontal strip atlases.
+- In-game `ANIM[kind]` + `drawEnemyAnim()`; enemy **kinds 0/2/4/5 now animate**:
+  Xenoid walk, Cyber-Mutant idle, Subterra scan, Psychoid swim. Bestiary uses frame 0. Verified in Brave.
+- **Still static/vector:** kind 1 Eldritch sponge + kind 3 Winged diver (no sheets provided yet).
+- Next: Eldritch + Winged sheets; optional death/attack anims from the same sheets; minor
+  green tint at the far horizon (tiny distant sprites) — cosmetic.
