@@ -241,7 +241,7 @@ async function attemptRevive(){if(G.reviveUsed)return;let ok=false;try{ok=!!(win
 function spawnGatePair() {
   const y = -60, wPair = (CFG.W - 2 * CFG.laneMargin) / 2 - 10, wFull = CFG.W - 2 * CFG.laneMargin;
   const li = G.level - 1, GB = BAL.gates;
-  const mk = (x, w) => {
+  const mk = (lane) => {
     const roll = rng();
     let kind, val, need, locked = false;
     // Reference mix: negatives are COMMON red barriers, multipliers rare
@@ -254,20 +254,19 @@ function spawnGatePair() {
     if (rng() < 0.30) { locked = true;
       if (kind === 'add' && val < 0) val = Math.round(rr(GB.minus[li][0] * 1.6, GB.minus[li][1] * 1.6)); // bigger, unavoidable-by-shooting
     }
-    return { x, y, w, h: 46, kind, val, shot: 0, need, live: true, locked };
+    return { lane, y, h: 46, kind, val, shot: 0, need, live: true, locked };  // x/w derived from perspective via gateRect()
   };
   // ~40% of the time spawn a SINGLE gate on one side (dodge-or-take), else a pair (pick a side)
   if (rng() < 0.40) {
-    const side = rng() < 0.5 ? CFG.laneMargin + 5 : CFG.W / 2 + 5;
-    gates.push(mk(side, wPair));
+    gates.push(mk(rng() < 0.5 ? 'L' : 'R'));
     return;
   }
-  const g1 = mk(CFG.laneMargin + 5, wPair);
-  let g2 = mk(CFG.W / 2 + 5, wPair);
+  const g1 = mk('L');
+  let g2 = mk('R');
   const isNeg = g => g.kind === 'add' && g.val < 0;
   if (isNeg(g1) && isNeg(g2) && !(g1.locked && g2.locked)) {  // avoid an unwinnable double-neg unless it's a dodge lane
     const r = GB.plus[li];
-    g2 = { x: CFG.W / 2 + 5, y, w: wPair, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false };
+    g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false };
   }
   gates.push(g1, g2);
 }
@@ -289,7 +288,7 @@ function gatePass(g) {
     G.squad = g.val < 1 ? Math.max(1, Math.round(G.squad * g.val)) : G.squad + gain; }
   else if (g.kind === 'wpn') G.weapon = Math.min(4, G.weapon + 1 + g.val);
   G.squad = Math.min(CFG.squadMax, G.squad);
-  fx(g.x + g.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44');
+  { const gr = gateRect(g); fx(gr.x + gr.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44'); }
   G.flashT = 0.16;
   sfx('gate');
   if (G.squad <= 0) die();
@@ -347,7 +346,7 @@ function perkWeapons(dt) {
     const R = 120 + orbital * 26;
     strikes.push({ x: sx, y: sy, t: 0.6, r: R });
     queueBlast(sx, sy, R, 55 + orbital * 45);            // huge central AOE detonation
-    G.shake = 13; G.flashT = 0.24; sfx('laser'); AUDIO.sample('explosion2');
+    G.shake = 7; G.flashT = 0.24; sfx('laser'); AUDIO.sample('explosion2');
   }
 }
 function vehicleUpdate(dt) {
@@ -459,7 +458,8 @@ function gore(x, y, kind) {
     const s = splats.alloc(); if (!s) return;
     s.x = x; s.y = y; s.vx = rr(-90, 90); s.vy = rr(-140, 40); s.r = rr(2, 5); s.a = 1; s.red = red;
   }
-  G.shake = Math.min(8, G.shake + 0.7);
+  // NOTE: no per-kill screen shake — with a dense swarm that pinned the screen shaking
+  // constantly. Shake is reserved for big beats only (nuke, boss hits, boss kill).
 }
 function fx(x, y, col) { for (let i = 0; i < 10; i++) { const s = splats.alloc(); if (!s) return;
   s.x = x; s.y = y; s.vx = rr(-160,160); s.vy = rr(-160,160); s.r = rr(1.5,3.5); s.a = 1; s.red = false; s._col = col; } }
@@ -525,7 +525,7 @@ function update(dt) {
     let tx = CFG.W / 2;
     let best = null;
     for (const g of gates) if (g.live && g.y > 200 && g.y < 800 && (g.kind !== 'add' || g.val > 0)) { best = g; break; }
-    if (best) tx = best.x + best.w / 2;
+    if (best) { const gr = gateRect(best); tx = gr.x + gr.w / 2; }
     G.px += Math.sign(tx - G.px) * Math.min(Math.abs(tx - G.px), 320 * dt);
   }
 
@@ -550,9 +550,9 @@ function update(dt) {
       bullets.release(b); return;
     }
     if (b.x < -20 || b.x > CFG.W + 20) { bullets.release(b); return; }
-    for (const g of gates) if (g.live && b.x > g.x && b.x < g.x + g.w && b.y > g.y && b.y < g.y + g.h) {
+    for (const g of gates) { const gr = gateRect(g); if (g.live && b.x > gr.x && b.x < gr.x + gr.w && b.y > g.y && b.y < g.y + g.h) {
       gateHit(g, b.dmg); bullets.release(b); return;
-    }
+    } }
     if (G.boss && !G.boss.dead && b.y < G.boss.y + 90 && Math.abs(b.x - G.boss.x) < 110) {
       G.boss.hp -= b.dmg; dmgnum(b.x, b.y, Math.round(b.dmg)); bullets.release(b);
       if (G.boss.hp <= 0) bossKill();
@@ -615,8 +615,8 @@ function update(dt) {
     });
   });
   // gates scroll
-  for (const g of gates) { g.y += CFG.scrollSpd * dt;
-    if (g.live && g.y + g.h > CFG.H - 150 && Math.abs((g.x + g.w/2) - G.px) < g.w/2 + 30) { g.live = false; gatePass(g); }
+  for (const g of gates) { g.y += CFG.scrollSpd * dt; const gr = gateRect(g);
+    if (g.live && g.y + g.h > CFG.H - 150 && Math.abs((gr.x + gr.w/2) - G.px) < gr.w/2 + 30) { g.live = false; gatePass(g); }
     }
   for (let i = gates.length - 1; i >= 0; i--) if (gates[i].y > CFG.H) gates.splice(i, 1);
   // pickups
@@ -678,7 +678,7 @@ function bossAttackUpdate(B, dt) {
   if(B.attackClock>=tele+active)B.attack=null;
 }
 function bossKill() {
-  if(!G.boss||G.boss.dead)return;G.boss.dead=true;G.shake=16;G.bossKillT=.4;G.flashT=.3;
+  if(!G.boss||G.boss.dead)return;G.boss.dead=true;G.shake=10;G.bossKillT=.4;G.flashT=.3;
   fx(G.boss.x,G.boss.y,'#ff0');fx(G.boss.x,G.boss.y,'#f4f');gore(G.boss.x,G.boss.y,0);sfx('boss');AUDIO.sample('explosion2');
   G.credits += BAL.eco.boss(G.level) + BAL.eco.level(G.level) + (G.boss.queen ? BAL.eco.queen : 0);
   G.runBosses++;if(G.mode==='campaign'&&G.boss.queen){G.meta.endless=true;save();}
@@ -688,6 +688,17 @@ function bossKill() {
 const HORIZON_Y=125;
 function roadHalfWidth(z){return 40+210*z;}
 function roadY(z){return HORIZON_Y+(CFG.H-HORIZON_Y)*Math.pow(z,1.6);}
+// Map a gate to the road's PERSPECTIVE at its current depth: narrow near the horizon,
+// widening as it travels down the corridor toward the squad. Lane = 'L' | 'R' | 'full'.
+function gateRect(g){
+  const z = Math.max(0, Math.min(1, Math.pow((g.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
+  const hw = roadHalfWidth(z), c = CFG.W/2;
+  let x, w;
+  if (g.lane === 'R') { x = c + 3; w = hw - 6; }
+  else if (g.lane === 'full') { x = c - hw + 4; w = hw*2 - 8; }
+  else { x = c - hw + 3; w = hw - 6; }           // 'L' (default)
+  return { x, w, z, gh: 22 + 46*z };             // gh: panel height also grows with depth
+}
 
 // ---------- pre-rendered art (offscreen canvases, built ONCE at load) ----------
 function mkCanvas(w,h,fn){const c=document.createElement('canvas');c.width=w;c.height=h;fn(c.getContext('2d'),w,h);return c;}
@@ -858,7 +869,9 @@ function drawVehicles(){
 function draw() {
   const s = scale;
   cx.setTransform(s, 0, 0, s, 0, 0);
-  const shx = G.shake ? rr(-G.shake, G.shake) : 0, shy = G.shake ? rr(-G.shake, G.shake) : 0;
+  // shake only during live gameplay — never wobble the upgrade / level-clear / title screens
+  const shakeOn = (G.state === 'play' || G.state === 'boss') && G.shake > 0;
+  const shx = shakeOn ? rr(-G.shake, G.shake) : 0, shy = shakeOn ? rr(-G.shake, G.shake) : 0;
   cx.save(); cx.translate(shx, shy);
   // Pre-rendered cyberpunk backdrop + elevated perspective highway.
   cx.fillStyle = '#0a0518'; cx.fillRect(-10, -10, CFG.W + 20, CFG.H + 20);
@@ -878,46 +891,47 @@ function draw() {
   drawHorizonBoss();
   drawFarHorde();
 
-  // gates
+  // gates — drawn as PERSPECTIVE trapezoids that follow the road corridor
+  // (narrow at the far top, widening as they travel down the path toward you).
   for (const g of gates) if (g.live) {
     const good = (g.kind === 'add' && g.val >= 0) || (g.kind === 'mul' && g.val >= 1) || g.kind === 'wpn';
-    const gh = 58;                                   // barrier wall height
-    // translucent energy wall (reference-video style): tall gradient panel + glow
-    const grad = cx.createLinearGradient(0, g.y - gh, 0, g.y + g.h);
-    if (good) { grad.addColorStop(0, 'rgba(40,220,255,0.05)'); grad.addColorStop(1, 'rgba(40,220,255,0.38)'); }
-    else      { grad.addColorStop(0, 'rgba(255,40,40,0.08)');  grad.addColorStop(1, 'rgba(255,40,40,0.45)'); }
-    cx.fillStyle = grad;
-    cx.fillRect(g.x, g.y - gh, g.w, gh + g.h);
-    cx.save();
-    cx.shadowColor = good ? '#2fd' : '#f33'; cx.shadowBlur = 14;
-    cx.strokeStyle = good ? '#6ff' : '#f55'; cx.lineWidth = 3;
-    cx.strokeRect(g.x, g.y - gh, g.w, gh + g.h);
-    cx.restore();
-    // top rail + bottom rail
-    cx.fillStyle = good ? '#2fd' : '#f33';
-    cx.fillRect(g.x, g.y - gh, g.w, 4); cx.fillRect(g.x, g.y + g.h - 3, g.w, 3);
+    const yb = g.y + g.h;                             // bottom (nearer)
+    const brB = gateRect({ lane: g.lane, y: yb });    // wider (near)
+    const yt = yb - (28 + 44 * brB.z);                // panel top a bit above, scaled with depth
+    const brT = gateRect({ lane: g.lane, y: yt });    // narrower (far)
+    const xTL = brT.x, xTR = brT.x + brT.w, xBL = brB.x, xBR = brB.x + brB.w;
+    const trap = () => { cx.beginPath(); cx.moveTo(xTL, yt); cx.lineTo(xTR, yt); cx.lineTo(xBR, yb); cx.lineTo(xBL, yb); cx.closePath(); };
+    const grad = cx.createLinearGradient(0, yt, 0, yb);
+    if (good) { grad.addColorStop(0, 'rgba(40,220,255,0.05)'); grad.addColorStop(1, 'rgba(40,220,255,0.42)'); }
+    else      { grad.addColorStop(0, 'rgba(255,40,40,0.08)');  grad.addColorStop(1, 'rgba(255,40,40,0.5)'); }
+    cx.fillStyle = grad; trap(); cx.fill();
+    cx.save(); cx.shadowColor = good ? '#2fd' : '#f33'; cx.shadowBlur = 14;
+    cx.strokeStyle = good ? '#6ff' : '#f55'; cx.lineWidth = 3; trap(); cx.stroke(); cx.restore();
+    // near rail (bottom, bright) + far rail (top, dim)
+    cx.strokeStyle = good ? '#2fd' : '#f33'; cx.lineWidth = 4;
+    cx.beginPath(); cx.moveTo(xBL, yb); cx.lineTo(xBR, yb); cx.stroke();
     if (!good) {                                     // hazard chevrons on red barriers
       cx.strokeStyle = 'rgba(255,120,120,0.5)'; cx.lineWidth = 2;
-      for (let hx = g.x + 8; hx < g.x + g.w - 8; hx += 22) {
-        cx.beginPath(); cx.moveTo(hx, g.y + g.h - 8); cx.lineTo(hx + 8, g.y - gh + 12); cx.stroke();
+      for (let t = 0.1; t < 0.9; t += 0.16) {
+        const bx = xBL + (xBR - xBL) * t, tx = xTL + (xTR - xTL) * t;
+        cx.beginPath(); cx.moveTo(bx, yb - 6); cx.lineTo(tx, yt + 6); cx.stroke();
       }
     }
-    cx.save();
-    cx.shadowColor = good ? '#0ff' : '#f44'; cx.shadowBlur = 10;
-    cx.fillStyle = good ? '#eaffff' : '#ffdddd'; cx.font = 'bold 30px Segoe UI'; cx.textAlign = 'center';
+    if (g.locked) {                                  // vertical steel bars converging in perspective
+      cx.strokeStyle = good ? 'rgba(180,240,255,.85)' : 'rgba(255,180,180,.9)'; cx.lineWidth = 4;
+      for (let t = 0.12; t < 0.9; t += 0.16) {
+        cx.beginPath(); cx.moveTo(xBL + (xBR - xBL) * t, yb - 3); cx.lineTo(xTL + (xTR - xTL) * t, yt + 3); cx.stroke();
+      }
+    }
+    const cxm = (xBL + xBR) / 2, cym = (yt + yb) / 2;
+    cx.save(); cx.shadowColor = good ? '#0ff' : '#f44'; cx.shadowBlur = 10;
+    cx.fillStyle = good ? '#eaffff' : '#ffdddd'; cx.font = 'bold ' + Math.round(20 + 16 * brB.z) + 'px Segoe UI'; cx.textAlign = 'center';
     const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
                 : g.kind === 'mul' ? 'x' + g.val
                 : 'WPN+' + (1 + g.val);
-    cx.fillText(label, g.x + g.w / 2, g.y - gh / 2 + 14);
+    cx.fillText(label, cxm, cym + 6);
+    if (g.locked) { cx.font = 'bold 11px Segoe UI'; cx.fillStyle = good ? '#bff' : '#fbb'; cx.fillText('🔒 LOCKED', cxm, yb - 5); }
     cx.restore();
-    if (g.locked) {                                  // steel bars = can't shoot it, must steer around
-      cx.save();
-      cx.strokeStyle = good ? 'rgba(180,240,255,.85)' : 'rgba(255,180,180,.9)'; cx.lineWidth = 5;
-      for (let bx = g.x + 14; bx < g.x + g.w - 6; bx += 20) { cx.beginPath(); cx.moveTo(bx, g.y - gh + 6); cx.lineTo(bx, g.y + g.h - 4); cx.stroke(); }
-      cx.fillStyle = good ? '#bff' : '#fbb'; cx.font = 'bold 11px Segoe UI'; cx.textAlign = 'center';
-      cx.fillText('🔒 LOCKED', g.x + g.w / 2, g.y + g.h - 6);
-      cx.restore();
-    }
   }
   // pickups + enemies: sprite-rendered, clipped to the road
   cx.save(); roadClip();
