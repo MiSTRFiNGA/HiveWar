@@ -122,13 +122,13 @@ const BAL = {
   start: { squad: 5, weapon: 0 },
 };
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
-const EKIND = [ // fodder, eldritch, cyber-mutant, winged diver, burrower, psychoid
-  {hp:2,  r:15, spd:70,  col:'#3f6', credits:1},
-  {hp:26, r:26, spd:26,  col:'#a3e', credits:4},
-  {hp:7,  r:18, spd:48,  col:'#f55', credits:3},
-  {hp:12, r:14, spd:105, col:'#5ff', credits:6},
-  {hp:20, r:18, spd:38,  col:'#fb5', credits:6},
-  {hp:55, r:24, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid: slow command node, buffs nearby swarm
+const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16)
+  {hp:2,  r:22, spd:70,  col:'#3f6', credits:1},    // 0 Xenoid
+  {hp:26, r:10, spd:26,  col:'#a3e', credits:4},    // 1 Eldritch — tiny
+  {hp:7,  r:32, spd:44,  col:'#f55', credits:3},    // 2 Cyber-Mutant — large hulk
+  {hp:12, r:18, spd:105, col:'#5ff', credits:6},    // 3 Xenoptera
+  {hp:20, r:13, spd:38,  col:'#fb5', credits:6},    // 4 Subterra — small
+  {hp:55, r:22, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid command node
 ];
 // Bestiary / field-guide: unlocked when first killed. tip = a real tactical secret.
 const CODEX = [
@@ -1024,7 +1024,7 @@ function draw() {
     cx.fillStyle = 'rgba(0,0,10,.35)'; cx.beginPath(); cx.ellipse(e.x, e.y + e.r * 0.8, e.r * 0.9, e.r * 0.32, 0, 0, 7); cx.fill();
     // slight scuttle bob
     const bob = Math.sin(e.t * 11 + e._pi) * e.r * 0.06;
-    if (drawEnemyAnim(e, e.x, e.y + bob, e.r * (e.kind === 0 ? 3.3 : 3.0))) {   // Xenoid +10% scale
+    if (drawEnemyAnim(e, e.x, e.y + bob, e.r * 3.0)) {   // size = r (from scale-reference sheet) × 3
       // done
     } else {
       const pic = enemyImg(e.kind, e._pi);
@@ -1179,7 +1179,7 @@ function drawBoss() {
   const bossImg = B.queen ? IMGS.queen : IMGS.praet;  // Alien Queen (final) vs Praetorian guardian
   if (bossImg && bossImg.ok) {
     const breathe = 1 + 0.03 * Math.sin(B.t * 2);
-    const ph = (B.queen ? 360 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);
+    const ph = (B.queen ? 420 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
     cx.save(); cx.shadowColor = B.queen ? '#4f6' : '#a4f'; cx.shadowBlur = 30;
     cx.drawImage(bossImg, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
     drawBossHud(B); return;
