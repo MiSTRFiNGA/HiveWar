@@ -135,7 +135,7 @@ const CODEX = [
   {name:'Biomorph Swarmer', cls:'Fodder Tier', tip:'Weak alone, lethal in numbers — a solid wall of them will overrun a thin squad. Widen your fire, do not tunnel on one lane.'},
   {name:'Eldritch Sponge',  cls:'Bulwark Tier', tip:'Huge health pool, slow. Acid Rounds shred it over time — tag it early and let the corrosion work while you handle the swarm.'},
   {name:'Cyber-Mutant',     cls:'Hazard Tier', tip:'Detonates on death in an AoE. In a tight cluster they chain-explode — bait the first one and let the cluster wipe itself.'},
-  {name:'Winged Diver',     cls:'Skirmisher Tier', tip:'Fast, erratic swoops. Do not chase — hold your lane and let it cross your stream.'},
+  {name:'Xenoptera',        cls:'Skirmisher Tier', tip:'Winged xenoid — fast, erratic swoops with a green core. Do not chase; hold your lane and let it cross your fire stream.'},
   {name:'Burrower',         cls:'Ambush Tier', tip:'Erupts from beneath the squad. Watch for the ground tell and slide off the mark before it surfaces.'},
   {name:'Cephalo-Psychoid', cls:'Command Node', tip:'A coordination node — its psychic aura makes every nearby xeno surge faster. KILL IT FIRST and the swarm around it slows right back down.'},
 ];
@@ -829,12 +829,17 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=3';                                 // bump to bust the browser cache when sprites change
+  const V='?v=4';                                 // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
   ANIM[2]=load('assets/cyber_idle.png',4,5);      // cyber-mutant — malfunction idle
+  ANIM[3]=load('assets/xenoptera_fly.png',4,9);   // xenoptera (winged) — flight loop
   ANIM[4]=load('assets/subterra_scan.png',5,6);   // subterra burrower — scan cycle
   ANIM[5]=load('assets/psychoid_swim.png',4,5);   // cephalo-psychoid — swim cycle
+  const heroLoad=(src)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return im;};
+  IMGS.praet=heroLoad('assets/praetorian_hero.png');   // mini-boss (overrides old static)
+  IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
+  IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
 })();
 function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
   const a=ANIM[e.kind]; if(!a||!a.img.ok) return false;
@@ -1098,11 +1103,15 @@ function drawSquad() {
     cx.fillStyle='rgba(0,0,12,.4)';cx.beginPath();cx.ellipse(x,y+16,20,8,0,0,7);cx.fill();
     cx.strokeStyle='#5ff';cx.shadowColor='#0ff';cx.shadowBlur=14;cx.lineWidth=4;cx.beginPath();cx.ellipse(x,y+15,21,9,0,0,7);cx.stroke();
     if(G.squadFlash>0){cx.globalAlpha=.85;cx.globalCompositeOperation='lighter';}
-    cx.drawImage(ART.trooper, x-24, y-42+bob, 48, 63);
-    // muzzle flash
-    if((G.t*WEAPONS[G.weapon].rof)%1<0.28){cx.globalCompositeOperation='lighter';
-      cx.fillStyle=WEAPONS[G.weapon].col;cx.shadowColor=cx.fillStyle;cx.shadowBlur=12;
-      cx.beginPath();cx.arc(x+9,y-40+bob,4+2*hash01(i+Math.floor(G.t*30)),0,7);cx.fill();}
+    if(IMGS.soldierAnim&&IMGS.soldierAnim.ok){                 // animated rear-view trooper (fire loop)
+      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%4, sz=58;
+      cx.drawImage(IMGS.soldierAnim, f*cs,0,cs,cs, x-sz/2, y-sz+10+bob, sz, sz);
+    } else {
+      cx.drawImage(ART.trooper, x-24, y-42+bob, 48, 63);
+      if((G.t*WEAPONS[G.weapon].rof)%1<0.28){cx.globalCompositeOperation='lighter';
+        cx.fillStyle=WEAPONS[G.weapon].col;cx.shadowColor=cx.fillStyle;cx.shadowBlur=12;
+        cx.beginPath();cx.arc(x+9,y-40+bob,4+2*hash01(i+Math.floor(G.t*30)),0,7);cx.fill();}
+    }
     cx.restore();
   }
   if (G.squad > CFG.squadCapVisible) { cx.fillStyle = '#fff'; cx.font = '900 20px Segoe UI';
@@ -1126,11 +1135,12 @@ function drawBossHud(B){
 }
 function drawBoss() {
   const B = G.boss;
-  if (IMGS.praet && IMGS.praet.ok && !B.queen) {      // photoreal guardian render
+  const bossImg = B.queen ? IMGS.queen : IMGS.praet;  // Alien Queen (final) vs Praetorian guardian
+  if (bossImg && bossImg.ok) {
     const breathe = 1 + 0.03 * Math.sin(B.t * 2);
-    const ph = 300 * breathe, pw = ph * (IMGS.praet.width / IMGS.praet.height);
-    cx.save(); cx.shadowColor = '#a4f'; cx.shadowBlur = 30;
-    cx.drawImage(IMGS.praet, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
+    const ph = (B.queen ? 360 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);
+    cx.save(); cx.shadowColor = B.queen ? '#4f6' : '#a4f'; cx.shadowBlur = 30;
+    cx.drawImage(bossImg, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
     drawBossHud(B); return;
   }
   cx.fillStyle = B.queen ? '#c3f' : '#93e';
