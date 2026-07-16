@@ -27,7 +27,7 @@ const CFG = {
   laneMargin: 60,
   scrollSpd: 170,                 // px/s world scroll
   squadCapVisible: 5,
-  squadMax: 100,                  // hard cap — total squad never exceeds 100 units
+  squadMax: 300,                  // hard cap — big-army feel; meta upgrades actually stack toward it
   gateAddMax: 15,                 // a single gate never grants more than +15 units
   bloodColor: 'green',            // 'green' | 'red' (red hidden from UI; xenos always green)
   levelSeconds: 100,
@@ -216,7 +216,7 @@ AUDIO.setMuted(!G.meta.sfx);
 // ---------- run flow ----------
 function startRun(mode='campaign') {
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
-  G.squad = BAL.start.squad + G.meta.squad * 2; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
+  G.squad = BAL.start.squad + G.meta.squad * 8; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
@@ -228,7 +228,7 @@ function startRun(mode='campaign') {
 function nextLevel() {
   if(G.mode==='endless'){G.loop++;G.state='shop';save();return;}
   G.level++;
-  if (G.level > CFG.levels) { G.state = 'win'; save(); return; }
+  if (G.level > CFG.levels) { G.state = 'win'; G.endElapsed=(performance.now()-G.runStart)/1000; save(); return; }
   G.state = 'shop'; save();
 }
 function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; }
@@ -264,7 +264,11 @@ function spawnGatePair() {
   const g1 = mk('L');
   let g2 = mk('R');
   const isNeg = g => g.kind === 'add' && g.val < 0;
-  if (isNeg(g1) && isNeg(g2) && !(g1.locked && g2.locked)) {  // avoid an unwinnable double-neg unless it's a dodge lane
+  const impassable = g => g.locked && isNeg(g);          // locked negative = can't shoot it, only lose units
+  // GUARANTEE an escape: a pair can never be BOTH impassable (that's the no-way-through trap).
+  if (impassable(g1) && impassable(g2)) g2.locked = false;   // make the right lane shootable
+  // also never a plain double-negative (both drain you): flip the right to a positive add
+  if (isNeg(g1) && isNeg(g2) && !impassable(g1)) {
     const r = GB.plus[li];
     g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false };
   }
@@ -354,11 +358,16 @@ function vehicleUpdate(dt) {
   if (G.vehicleT <= 0) { G.vehicleCD -= dt; if (G.vehicleCD <= 0) {
     G.vehicleT = 8; G.vehicleCD = Math.max(12, 24-rank*2); G.vehicleFire = 0; sfx('drone'); } return; }
   G.vehicleT -= dt; G.vehicleFire -= dt;
-  // tank LOBS heavy grenades: slow, fat shells with a big AOE blast — not soldier bullets
+  // exactly TWO tanks (one per side) each LOB one heavy shell that detonates on impact
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
-    for (let i = 0; i < Math.min(3, 1 + Math.floor(rank/2)); i++) { const b = bullets.alloc(); if (!b) break;
-      b.x = G.px + (i - 1) * 60; b.y = CFG.H - 175; b.vx = (i - 1) * 40; b.vy = -300 - rank*20;
-      b.dmg = 26 + rank*14; b.r = 12; b.tier = 4; b.aoe = 78 + rank*10; b.grenade = true; } }
+    for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
+      b.x = G.px + side * 70; b.y = CFG.H - 172; b.vx = side * 26; b.vy = -320 - rank*18;
+      b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; } }
+}
+function grenadeBlast(b) {                 // heavy shell detonation: big explosion + AOE + shake
+  strikes.push({ x: b.x, y: b.y, t: 0.45, r: b.aoe * 1.15 });
+  queueBlast(b.x, b.y, b.aoe, b.dmg);
+  fx(b.x, b.y, '#fb4'); AUDIO.sample('explosion'); G.shake = Math.max(G.shake, 4);
 }
 let spawnAcc = 0;
 function spawnWave(dt) {
@@ -441,7 +450,8 @@ function queueBlast(x, y, r, dmg) {
   blastQueue.length = 0;
   blastDraining = false;
 }
-function die() { G.state='dead';if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
+function die() { G.state='dead'; G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
+  if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
 function loseUnits(n, x, y) {
   if (G.graceT > 0) { fx(x, y, '#48f'); return; }    // brief grace after a loss — units die in ticks, not floods
   G.graceT = 0.28;                                   // shorter grace: a sustained swarm can actually overwhelm you
@@ -489,7 +499,7 @@ function pickPerk(gx, clientY) {
 const SHOP = [
   // R3 economy: combat growth 1.5, utility 1.6, rank caps (balance.json v3.0)
   {k:'dmg',   name:'Base Damage +',   max:15, cost: l => Math.round(45  * Math.pow(1.5, l))},
-  {k:'squad', name:'Start Squad +2',  max:12, cost: l => Math.round(80  * Math.pow(1.5, l))},
+  {k:'squad', name:'Start Squad +8',  max:20, cost: l => Math.round(80  * Math.pow(1.4, l))},
   {k:'weapon',name:'Start Weapon +',  max:4,  cost: l => Math.round(200 * Math.pow(1.5, l))},
   {k:'perkSlot',name:'Perk Kind Slot +', max:2, cost: l => Math.round(500 * Math.pow(1.6, l))},
   {k:'vehicleDrop',name:'Tank Drop +', max:5, cost: l => Math.round(300 * Math.pow(1.6, l))},
@@ -545,6 +555,7 @@ function update(dt) {
     // tracers END at the kill line (reference look) — extended reach during boss fights
     const cutoff = G.boss ? Math.max(60, G.boss.y - 40) : roadY(0.355) - 6;
     if (b.y < cutoff) {
+      if (b.grenade) { grenadeBlast(b); bullets.release(b); return; }   // shell detonates at the front line
       const s = splats.alloc();
       if (s) { s.x = b.x; s.y = cutoff + rr(-4, 8); s.vx = rr(-40, 40); s.vy = rr(-60, 10); s.r = rr(1.5, 3.5); s.a = 0.8; s.red = false; }
       bullets.release(b); return;
@@ -597,6 +608,7 @@ function update(dt) {
     bullets.each(b => {
       const dx = e.x - b.x, dy = e.y - b.y, rr2 = (e.r + b.r) * (e.r + b.r);
       if (dx*dx + dy*dy < rr2) {
+        if (b.grenade) { b.x = e.x; b.y = e.y; grenadeBlast(b); bullets.release(b); return; }  // impact detonation
         bullets.release(b);
         damageEnemy(e, b.dmg, b.x, b.y);
         if (b.aoe) aoe(e.x, e.y, b.aoe, b.dmg * .55);
@@ -621,9 +633,13 @@ function update(dt) {
   for (let i = gates.length - 1; i >= 0; i--) if (gates[i].y > CFG.H) gates.splice(i, 1);
   // pickups
   const magR = 60 + 40 * (G.perks['Magnet'] || 0);
+  const pullR = 150 + 95 * (G.perks['Magnet'] || 0);   // tractor-beam reach (Magnet perk extends it)
+  const collectR = 46;                                  // any soldier over it grabs it
   pickups.each(p => { p.y += CFG.scrollSpd * dt;
-    const dx = p.x - G.px, dy = p.y - (CFG.H - 110);
-    if (dx*dx + dy*dy < magR*magR) {
+    const tx = G.px, ty = CFG.H - 110, dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1;
+    if (d < pullR) { const pull = (0.35 + 0.65 * (1 - d / pullR)) * 620 * dt;   // sucked toward the character
+      p.x += dx / d * pull; p.y += dy / d * pull; }
+    if (d < collectR) {
       if (p.kind === 0) { G.bio+=1+.05*(G.perks['Magnet']||0); if (G.bio >= G.bioNeed) { G.bio = 0; G.bioNeed = Math.round(G.bioNeed * 1.5); offerPerks(); } }
       else {G.credits += 5;const m=G.perks['Magnet']||0;if(m&&++G.chipHeal>=[12,12,9,6][m]){G.squad=Math.min(CFG.squadMax,G.squad+1);G.chipHeal=0;}}
       pickups.release(p);
@@ -862,9 +878,9 @@ function drawHorizonBoss(){
   cx.fillStyle='rgba(225,210,255,.75)';cx.font='bold 12px Segoe UI';cx.textAlign='center';cx.fillText(G.level===CFG.levels?'ALIEN QUEEN APPROACHING':'HIVE GUARDIAN SIGNAL',CFG.W/2,HORIZON_Y-10);
 }
 function drawVehicles(){
-  const count=Math.min(8,3+(G.meta.vehicleDrop||0));for(let i=0;i<count;i++){const row=Math.floor(i/2),side=i%2?1:-1,x=G.px+side*(58+row*38),y=CFG.H-170-row*52;cx.save();cx.translate(x,y);
-    if(IMGS.tank&&IMGS.tank.ok){const th=64,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
-    cx.fillStyle='#df9c35';cx.shadowColor='#f80';cx.shadowBlur=10;cx.fillRect(-20,-12,40,25);cx.fillStyle='#ffe3a5';cx.fillRect(-5,-22,10,24);cx.fillRect(-3,-40,6,22);cx.strokeStyle='#8ff';cx.beginPath();cx.ellipse(0,15,24,8,0,0,7);cx.stroke();cx.restore();}
+  for(const side of [-1,1]){const x=G.px+side*74,y=CFG.H-168;cx.save();cx.translate(x,y);   // one tank per side
+    if(IMGS.tank&&IMGS.tank.ok){const th=72,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
+    cx.fillStyle='#df9c35';cx.shadowColor='#f80';cx.shadowBlur=10;cx.fillRect(-22,-13,44,27);cx.fillStyle='#ffe3a5';cx.fillRect(-5,-24,10,26);cx.fillRect(-3,-44,6,24);cx.strokeStyle='#8ff';cx.beginPath();cx.ellipse(0,16,26,9,0,0,7);cx.stroke();cx.restore();}
 }
 function draw() {
   const s = scale;
@@ -891,55 +907,58 @@ function draw() {
   drawHorizonBoss();
   drawFarHorde();
 
-  // gates — drawn as PERSPECTIVE trapezoids that follow the road corridor
-  // (narrow at the far top, widening as they travel down the path toward you).
+  // gates — UPRIGHT 3D energy walls standing on the road, blocking the path.
+  // Base sits on the road (perspective width); the wall RISES vertically, taller
+  // as it nears. A thin top cap + side edge give it real wall thickness.
   for (const g of gates) if (g.live) {
     const good = (g.kind === 'add' && g.val >= 0) || (g.kind === 'mul' && g.val >= 1) || g.kind === 'wpn';
-    const yb = g.y + g.h;                             // bottom (nearer)
-    const brB = gateRect({ lane: g.lane, y: yb });    // wider (near)
-    const yt = yb - (28 + 44 * brB.z);                // panel top a bit above, scaled with depth
-    const brT = gateRect({ lane: g.lane, y: yt });    // narrower (far)
-    const xTL = brT.x, xTR = brT.x + brT.w, xBL = brB.x, xBR = brB.x + brB.w;
-    const trap = () => { cx.beginPath(); cx.moveTo(xTL, yt); cx.lineTo(xTR, yt); cx.lineTo(xBR, yb); cx.lineTo(xBL, yb); cx.closePath(); };
-    const grad = cx.createLinearGradient(0, yt, 0, yb);
-    if (good) { grad.addColorStop(0, 'rgba(40,220,255,0.05)'); grad.addColorStop(1, 'rgba(40,220,255,0.42)'); }
-    else      { grad.addColorStop(0, 'rgba(255,40,40,0.08)');  grad.addColorStop(1, 'rgba(255,40,40,0.5)'); }
-    cx.fillStyle = grad; trap(); cx.fill();
-    cx.save(); cx.shadowColor = good ? '#2fd' : '#f33'; cx.shadowBlur = 14;
-    cx.strokeStyle = good ? '#6ff' : '#f55'; cx.lineWidth = 3; trap(); cx.stroke(); cx.restore();
-    // near rail (bottom, bright) + far rail (top, dim)
-    cx.strokeStyle = good ? '#2fd' : '#f33'; cx.lineWidth = 4;
-    cx.beginPath(); cx.moveTo(xBL, yb); cx.lineTo(xBR, yb); cx.stroke();
-    if (!good) {                                     // hazard chevrons on red barriers
-      cx.strokeStyle = 'rgba(255,120,120,0.5)'; cx.lineWidth = 2;
-      for (let t = 0.1; t < 0.9; t += 0.16) {
-        const bx = xBL + (xBR - xBL) * t, tx = xTL + (xTR - xTL) * t;
-        cx.beginPath(); cx.moveTo(bx, yb - 6); cx.lineTo(tx, yt + 6); cx.stroke();
-      }
+    const baseY = g.y + g.h;                          // wall FOOT on the road (nearer edge)
+    const br = gateRect({ lane: g.lane, y: baseY });
+    const xBL = br.x, xBR = br.x + br.w, z = br.z, c = CFG.W / 2;
+    const wallH = 46 + 92 * z;                        // stands taller as it approaches
+    const topY = baseY - wallH;
+    const shrink = 0.9;                               // top slightly narrower (vertical-wall perspective)
+    const xTL = c + (xBL - c) * shrink, xTR = c + (xBR - c) * shrink;
+    const face = () => { cx.beginPath(); cx.moveTo(xTL, topY); cx.lineTo(xTR, topY); cx.lineTo(xBR, baseY); cx.lineTo(xBL, baseY); cx.closePath(); };
+    // front face (bright at the base, fading up) — reads as a glowing energy wall
+    const grad = cx.createLinearGradient(0, topY, 0, baseY);
+    if (good) { grad.addColorStop(0, 'rgba(40,220,255,0.10)'); grad.addColorStop(1, 'rgba(40,220,255,0.5)'); }
+    else      { grad.addColorStop(0, 'rgba(255,40,40,0.12)');  grad.addColorStop(1, 'rgba(255,60,60,0.58)'); }
+    cx.fillStyle = grad; face(); cx.fill();
+    // vertical scan bars on the face (energy) — locked walls get solid steel bars
+    cx.save(); cx.clip(); face();
+    cx.strokeStyle = g.locked ? (good ? 'rgba(190,240,255,.9)' : 'rgba(255,190,190,.95)')
+                              : (good ? 'rgba(120,240,255,.28)' : 'rgba(255,140,140,.3)');
+    cx.lineWidth = g.locked ? 4 : 2;
+    for (let t = 0.1; t <= 0.9; t += (g.locked ? 0.16 : 0.11)) {
+      const bxp = xBL + (xBR - xBL) * t, txp = xTL + (xTR - xTL) * t;
+      cx.beginPath(); cx.moveTo(bxp, baseY); cx.lineTo(txp, topY); cx.stroke();
     }
-    if (g.locked) {                                  // vertical steel bars converging in perspective
-      cx.strokeStyle = good ? 'rgba(180,240,255,.85)' : 'rgba(255,180,180,.9)'; cx.lineWidth = 4;
-      for (let t = 0.12; t < 0.9; t += 0.16) {
-        cx.beginPath(); cx.moveTo(xBL + (xBR - xBL) * t, yb - 3); cx.lineTo(xTL + (xTR - xTL) * t, yt + 3); cx.stroke();
-      }
-    }
-    const cxm = (xBL + xBR) / 2, cym = (yt + yb) / 2;
+    cx.restore();
+    // glowing frame + bright top rail (the cap of the wall)
+    cx.save(); cx.shadowColor = good ? '#2fd' : '#f44'; cx.shadowBlur = 16;
+    cx.strokeStyle = good ? '#7ff' : '#f66'; cx.lineWidth = 3; face(); cx.stroke();
+    cx.strokeStyle = good ? '#dffff' : '#fbb'; cx.lineWidth = 4;
+    cx.beginPath(); cx.moveTo(xTL, topY); cx.lineTo(xTR, topY); cx.stroke();   // top cap
+    cx.restore();
+    // label on the standing face
+    const cxm = (xTL + xTR) / 2, cym = topY + wallH * 0.42;
     cx.save(); cx.shadowColor = good ? '#0ff' : '#f44'; cx.shadowBlur = 10;
-    cx.fillStyle = good ? '#eaffff' : '#ffdddd'; cx.font = 'bold ' + Math.round(20 + 16 * brB.z) + 'px Segoe UI'; cx.textAlign = 'center';
+    cx.fillStyle = good ? '#eaffff' : '#ffe0e0'; cx.font = 'bold ' + Math.round(22 + 18 * z) + 'px Segoe UI'; cx.textAlign = 'center';
     const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
                 : g.kind === 'mul' ? 'x' + g.val
                 : 'WPN+' + (1 + g.val);
-    cx.fillText(label, cxm, cym + 6);
-    if (g.locked) { cx.font = 'bold 11px Segoe UI'; cx.fillStyle = good ? '#bff' : '#fbb'; cx.fillText('🔒 LOCKED', cxm, yb - 5); }
+    cx.fillText(label, cxm, cym);
+    if (g.locked) { cx.font = 'bold ' + Math.round(10 + 4 * z) + 'px Segoe UI'; cx.fillStyle = good ? '#bff' : '#fbb'; cx.fillText('🔒 LOCKED', cxm, baseY - 6); }
     cx.restore();
   }
   // pickups + enemies: sprite-rendered, clipped to the road
   cx.save(); roadClip();
   pickups.each(p => {
     const col = p.kind === 0 ? '#3f6' : '#0cf';
-    cx.save(); cx.shadowColor = col; cx.shadowBlur = 8; cx.fillStyle = col;
-    cx.beginPath(); cx.arc(p.x, p.y, 6, 0, 7); cx.fill();
-    cx.fillStyle = 'rgba(255,255,255,.75)'; cx.beginPath(); cx.arc(p.x - 2, p.y - 2, 2, 0, 7); cx.fill(); cx.restore();
+    cx.save(); cx.shadowColor = col; cx.shadowBlur = 7; cx.fillStyle = col;
+    cx.beginPath(); cx.arc(p.x, p.y, 4.5, 0, 7); cx.fill();          // ~25% smaller
+    cx.fillStyle = 'rgba(255,255,255,.75)'; cx.beginPath(); cx.arc(p.x - 1.5, p.y - 1.5, 1.5, 0, 7); cx.fill(); cx.restore();
   });
   enemies.each(e => {
     if (e.mode === 1) { cx.strokeStyle = '#fb5'; cx.lineWidth = 3; cx.globalAlpha = 0.35 + 0.45 * Math.sin(e.t * 18) ** 2;
@@ -1177,8 +1196,8 @@ function drawCodex(){
   cx.textAlign='center';cx.fillStyle='#666';cx.font='13px Segoe UI';
   cx.fillText((unlocked.indexOf(kind)+1)+' / '+unlocked.length,CFG.W/2,740);
 }
-function drawEndScreen(win){const elapsed=Math.max(0,(performance.now()-G.runStart)/1000),score=endlessScore();
-  cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'SWARM LOST',CFG.W/2,280);
+function drawEndScreen(win){const elapsed=Math.max(0,G.endElapsed||0),score=endlessScore();   // frozen clock
+  cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'SWARM WON',CFG.W/2,280);
   cx.fillStyle='#cdf';cx.font='20px Segoe UI';cx.fillText(`TIME ${elapsed.toFixed(1)}s  ·  KILLS ${G.kills}`,CFG.W/2,355);
   cx.fillText(`CREDITS ${Math.max(0,G.credits-G.creditsStart)}  ·  SCORE ${score}`,CFG.W/2,395);
   if(!win&&!G.reviveUsed){cx.fillStyle='rgba(80,180,255,.18)';cx.fillRect(90,620,CFG.W-180,90);cx.strokeStyle='#6df';cx.strokeRect(90,620,CFG.W-180,90);
