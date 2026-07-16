@@ -154,3 +154,15 @@ Tell Claude the columns×rows (or which row = the looping walk/idle to use in-ga
 - **Still static/vector:** kind 1 Eldritch sponge + kind 3 Winged diver (no sheets provided yet).
 - Next: Eldritch + Winged sheets; optional death/attack anims from the same sheets; minor
   green tint at the far horizon (tiny distant sprites) — cosmetic.
+
+## 2026-07-16 (pt 5) — CRITICAL campaign fix + more sprites
+- **FIXED: Campaign froze instantly** — gateRect did pow(negative,1/1.6)=NaN for gates
+  spawned above the horizon (y=-60) → createLinearGradient(NaN) crashed the render loop on
+  the first gate. Clamped base to >=0. Hardened the headless harness to throw on non-finite
+  gradient args so this class is caught offline in future.
+- **Xenoptera** (winged, kind 3): animated flight loop; renamed 'Winged Diver' → Xenoptera.
+- **Animated squad**: rear-view trooper fire loop (soldier_fire) replaces the vector trooper.
+- **Bosses**: Praetorian mini-boss + Alien Queen hero sprites wired into drawBoss (verified
+  Praetorian renders in Brave; Queen shows at L10).
+- **Still needs a sheet:** kind 1 sponge — a `Log - Aurorean.png` exists (likely its new name)
+  but no `Aurorean.png` sprite sheet yet. Send it (green bg) and Claude wires it like the rest.
