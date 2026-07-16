@@ -97,3 +97,28 @@ node _chain_test.js                  # cyber-mutant chain-explosion stress test
 - **Weapon-tier + perk icons** from the sheet wired into UI.
 - **Sounds** (Eric's lane).
 - Minor: hide top HUD bar while on the Bestiary screen.
+
+## 2026-07-16 (pt 2) — shake fix, perspective gates, art-export decision
+
+### Done + verified (Brave screenshots)
+- **Screen shake normalized:** removed per-kill accumulation (dense swarm pinned it on);
+  shake now only for big beats and ONLY during play/boss — upgrade/level-clear screens stay still.
+- **Perspective gates:** gates now render + collide as trapezoids that follow the road
+  corridor (narrow far → wide near) via `gateRect(lane,y)`. No longer flat falling boxes.
+
+### Background color decision (for clean asset export)
+Sampled the new enemy sprites — bodies span purple (Xenoid, Cyber Mutant), olive-green
+(Subterra) and red-brown (Psychoid). So NO single chroma color is clean for all:
+- magenta clashes with the 2 purple enemies; neon green clashes with Subterra.
+- **BEST: export true-transparent PNGs from the PSD** (the checkerboard is Photoshop's
+  transparency display — "Export As → PNG" keeps real alpha; the current files were
+  flattened so the checker got baked in, alpha=255).
+- **If a solid matte is unavoidable: NEON GREEN #00FF00** — clashes least with this roster
+  (only Subterra is greenish, and it's olive, distinguishable from pure neon), easiest to key.
+
+### Queued (needs the clean transparent exports)
+- Replace ALL non-boss enemies with the new animated sprites (Xenoid, Subterra, Cyber
+  Mutant, Psychoid) — build a sprite-sheet frame-cycler once grid dims are known.
+- Perk/MUTATION screen: it is ALREADY free (picking a perk never spends credits — confirmed
+  in code). Remaining: wire the perk icons from the sheet + prettify the layout.
+- Weapon-tier icons, gate art (+N/×N panels), pickups, barrier weapon variety.
