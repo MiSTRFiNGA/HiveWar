@@ -707,7 +707,9 @@ function roadY(z){return HORIZON_Y+(CFG.H-HORIZON_Y)*Math.pow(z,1.6);}
 // Map a gate to the road's PERSPECTIVE at its current depth: narrow near the horizon,
 // widening as it travels down the corridor toward the squad. Lane = 'L' | 'R' | 'full'.
 function gateRect(g){
-  const z = Math.max(0, Math.min(1, Math.pow((g.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
+  // clamp the base to >=0 BEFORE the fractional power — a gate above the horizon
+  // (spawns at y=-60) would otherwise give pow(negative,1/1.6)=NaN and crash the draw.
+  const z = Math.max(0, Math.min(1, Math.pow(Math.max(0, g.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
   const hw = roadHalfWidth(z), c = CFG.W/2;
   let x, w;
   if (g.lane === 'R') { x = c + 3; w = hw - 6; }

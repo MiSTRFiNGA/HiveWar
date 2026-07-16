@@ -8,8 +8,8 @@ function makeCtx() {
   const grad = { addColorStop() {} };
   return new Proxy({
     canvas: { width: 540, height: 960 },
-    createLinearGradient: () => grad,
-    createRadialGradient: () => grad,
+    createLinearGradient: (...a) => { if (a.some(v => !Number.isFinite(v))) throw new Error('createLinearGradient non-finite: ' + a); return grad; },
+    createRadialGradient: (...a) => { if (a.some(v => !Number.isFinite(v))) throw new Error('createRadialGradient non-finite: ' + a); return grad; },
     createPattern: () => ({}),
     getImageData: () => ({ data: [] }),
     measureText: () => ({ width: 10 }),
