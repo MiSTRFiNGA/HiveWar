@@ -122,3 +122,25 @@ Sampled the new enemy sprites — bodies span purple (Xenoid, Cyber Mutant), oli
 - Perk/MUTATION screen: it is ALREADY free (picking a perk never spends credits — confirmed
   in code). Remaining: wire the perk icons from the sheet + prettify the layout.
 - Weapon-tier icons, gate art (+N/×N panels), pickups, barrier weapon variety.
+
+## 2026-07-16 (pt 3) — gameplay batch (all verified in Brave)
+- **3D wall gates:** gates now stand UP as upright energy walls (base on road, rising
+  vertically, taller as they near; scan bars, steel-bar locks, top cap). Per Eric's pen sketch.
+- **Escape guaranteed:** a gate pair can never be both impassable (locked-negative).
+- **Pickups:** ~25% smaller, tractor-beam pull toward the character (Magnet extends reach).
+- **Tanks:** exactly one per side; shells detonate ON IMPACT with a big explosion (ring+AOE+shake).
+- **Death screen:** clock freezes at death (was still ticking); "SWARM LOST" → "SWARM WON".
+- **Army:** squadMax 100→300; Start Squad shop +8/level (max 20) so meta upgrades build a real army.
+- **In-run perks are free** (confirmed — collecting the dots → MUTATION pick costs no credits).
+
+### Background decision for enemy cutouts
+- GREEN (#00FF00) background is GOOD — Claude will key it with **edge flood-fill**, which
+  removes only the green touching the border and PRESERVES the creatures' interior green/cyan
+  glow accents. Requirement: leave a small margin so the creature doesn't touch the image edge.
+- Transparent PNG is still the gold standard (no key needed).
+
+### NEXT (the animated-sprite pass — needs frame specs)
+Replace all non-boss enemies with the animated sheets (Cyber Mutant / Xenoid / Subterra /
+Psychoid). Claude will build a sprite-atlas frame-cycler. NEED per sheet: the frame grid —
+e.g. Cyber Mutant sheet has labelled rows of different lengths (idle 4, walk ~10, attack, death).
+Tell Claude the columns×rows (or which row = the looping walk/idle to use in-game) and it wires them.
