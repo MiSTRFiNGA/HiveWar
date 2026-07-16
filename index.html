@@ -421,11 +421,15 @@ function dmgnum(x, y, v) { const d = dmgnums.alloc(); if (!d) return; d.x = x; d
 
 // ---------- perks / shop ----------
 let perkChoices = [];
-function offerPerks() { G.state = 'perk';
+function offerPerks() {
   perkChoices = [];
   const owned = Object.keys(G.perks), cap = BAL.perks.baseKinds + Math.min(BAL.perks.maxExtraSlots, G.meta.perkSlot || 0);
   const pool = PERKS.filter(p => (G.perks[p] || 0) < BAL.perks.maxRank && (owned.length < cap || G.perks[p]));
   while (perkChoices.length < 3 && pool.length) perkChoices.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+  if (perkChoices.length === 0) {          // all perks maxed — never soft-lock the MUTATION screen
+    G.credits += 60; G.flashT = 0.2; sfx('perk'); return;   // stay in play/boss, bank a reward
+  }
+  G.state = 'perk';                        // only enter the screen when there is something to pick
 }
 function pickPerk(gx, clientY) {
   const r = cv.getBoundingClientRect(), gy = (clientY - r.top) / scale;
