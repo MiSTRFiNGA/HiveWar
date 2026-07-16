@@ -38,17 +38,25 @@ def key_green_flood(a):
     return _border_flood(_green(a))                         # keep interior green (Subterra head, Xenoptera core)
 
 
-def key_dark(a):                                            # dark-gray/black background (soldier sheet)
+def key_dark(a):                                            # tight key on the (48,58,67) panel + existing alpha
     r, g, b = a[..., 0].astype(int), a[..., 1].astype(int), a[..., 2].astype(int)
-    return _border_flood((r < 62) & (g < 68) & (b < 72))
+    already = a[..., 3] < 200
+    panel = (abs(r - 48) < 16) & (abs(g - 58) < 16) & (abs(b - 67) < 18)  # only the flat panel colour
+    return already | panel                                  # soldier's dark joints (not this exact hue) stay connected
 
 
-def cell_sprite(cell_rgba, keyfn):
-    """Return a trimmed RGBA of just the largest creature blob in the cell,
-    with the green halo eroded away and any green spill neutralised."""
+def cell_sprite(cell_rgba, keyfn, largest=True):
+    """Return a trimmed RGBA of the cell's content. largest=True keeps only the
+    biggest blob (drops labels/insets) + erodes the color halo; largest=False just
+    keys + trims (for sheets that are already clean / would fragment)."""
     a = np.array(cell_rgba)
     bg = keyfn(a)
     a[bg, 3] = 0
+    if not largest:
+        ys, xs = np.where(a[..., 3] > 0)
+        if len(xs) == 0:
+            return None
+        return Image.fromarray(a, "RGBA").crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
     opaque = a[..., 3] > 0
     lbl, n = ndimage.label(opaque)
     if n == 0:
@@ -71,7 +79,7 @@ def cell_sprite(cell_rgba, keyfn):
     return img
 
 
-def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128):
+def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128, largest=True):
     """region=(x0,y0,x1,y1) fractional box holding the frame ROW(s); cols=frames across."""
     im = Image.open(fr"{SRC}\{sheet}").convert("RGBA")
     W, H = im.size
@@ -83,7 +91,7 @@ def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128):
         row = i // cols
         rh = (y1 - y0)                                       # single-row region
         cell_img = im.crop((cx0 + 4, y0 + 4, cx1 - 4, y1 - 4))
-        sp = cell_sprite(cell_img, keyfn)
+        sp = cell_sprite(cell_img, keyfn, largest)
         if sp: sprites.append(sp)
     if not sprites:
         print("NO SPRITES for", out_name); return
@@ -106,7 +114,7 @@ make_strip(E+"Subterra.png", (0.0, 0.365, 1.0, 0.55), 5, key_green_flood, [0, 1,
 # Xenoptera (winged, kind 3): flight loop = top row 4 frames (green bg + green core -> flood)
 make_strip(E+"Xenoptera.png", (0.0, 0.06, 1.0, 0.34), 4, key_green_flood, [0, 1, 2, 3], "xenoptera_fly.png")
 # Player soldier (rear view): shooting loop = top row 4 frames (dark bg -> flood)
-make_strip("Player soilders.png", (0.0, 0.02, 1.0, 0.40), 4, key_dark, [0, 1, 2, 3], "soldier_fire.png")
+make_strip("Player soilders.png", (0.0, 0.045, 1.0, 0.33), 4, key_dark, [0, 1, 2, 3], "soldier_fire.png")
 # Bosses: one clean hero frame each (green bg + green core -> flood)
 make_strip("Enemies\\Mini boss Praetorian.png", (0.0, 0.06, 0.5, 0.55), 1, key_green_flood, [0], "praetorian_hero.png", cell=192)
 make_strip("Enemies\\Alien  Queen.png", (0.30, 0.10, 0.70, 0.95), 1, key_green_flood, [0], "queen_hero.png", cell=224)

@@ -28,7 +28,7 @@ const CFG = {
   scrollSpd: 170,                 // px/s world scroll
   squadCapVisible: 5,
   squadMax: 300,                  // hard cap — big-army feel; meta upgrades actually stack toward it
-  gateAddMax: 15,                 // a single gate never grants more than +15 units
+  gateAddMax: 999,                // gate value grows as high as you shoot it (capped by per-level plusCap)
   bloodColor: 'green',            // 'green' | 'red' (red hidden from UI; xenos always green)
   levelSeconds: 100,
   levels: 10,
@@ -63,10 +63,10 @@ function makePool(n, factory) {
     count() { return n - top; }
   };
 }
-const bullets  = makePool(900,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,aoe:0,vis:false,grenade:false,live:false}));
+const bullets  = makePool(1800,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,aoe:0,vis:false,grenade:false,live:false}));
 const enemies  = makePool(1600, () => ({x:0,y:0,vx:0,vy:0,hp:1,maxhp:1,r:10,kind:0,t:0,
   baseX:0,phase:0,mode:0,laserMark:0,live:false}));
-const splats   = makePool(500,  () => ({x:0,y:0,vx:0,vy:0,r:2,a:1,red:false,live:false}));
+const splats   = makePool(1400, () => ({x:0,y:0,vx:0,vy:0,r:2,a:1,red:false,spark:false,fade:1.4,_col:null,live:false}));
 const dmgnums  = makePool(120,  () => ({x:0,y:0,v:0,val:0,a:1,live:false}));
 const pickups  = makePool(200,  () => ({x:0,y:0,kind:0,live:false}));   // 0 biomatter 1 chip
 const gates    = [];                                                     // few at a time; plain array
@@ -101,10 +101,10 @@ const BAL = {
   mixEld:    [10,12,15,18,22,25,28,30,32,33],           // % eldritch
   mixCyb:    [0,3,7,12,16,20,22,25,26,27],              // % cyber-mutant
   hp: { bio: L => 8 + 2.0*L, eld: L => 38 + 9.5*L, cyb: L => 20 + 4.5*L },   // R2
-  bossHp:    [2200,3400,5000,7200,10000,13500,16000,21000,28000,0],           // R2 trim L7-9
+  bossHp:    [4400,6800,10000,14400,20000,27000,32000,42000,56000,0],          // Praetorian HP doubled
   queen:     { p1:28000, p2:36000, p3:22000, eggInt:1.8, eggHp:120, hatch:6 },
   gates: {
-    interval: L => Math.max(6.0, 9.0 - 0.2*(L-1)),   // spaced out — a gate is a choice, not a metronome
+    interval: L => Math.max(12.0, 18.0 - 0.4*(L-1)),  // RARE reward — a gate is an event, not a metronome
     // Eric growth pass: +1..5 at L1, big negatives, slow shoot-to-upgrade
     plus:  [[1,5],[2,8],[4,12],[6,16],[8,22],[10,28],[13,34],[16,42],[20,52],[24,64]],
     plusCap: [8,14,22,32,45,60,80,105,135,170],
@@ -179,6 +179,7 @@ function botOff(e) { if (testBot && e.isTrusted) testBot = false; }
 addEventListener('mousedown', down); addEventListener('mousemove', move); addEventListener('mouseup', up);
 addEventListener('touchstart', down, {passive:true}); addEventListener('touchmove', move, {passive:true});
 addEventListener('touchend', up);
+addEventListener('keydown', e => { if (e.key === 'Escape' && G.state === 'codex') G.state = 'title'; });
 
 // ---------- audio (pooled channel stub; real samples land in the audio pass) ----------
 const AUDIO = (() => {
@@ -216,7 +217,7 @@ AUDIO.setMuted(!G.meta.sfx);
 // ---------- run flow ----------
 function startRun(mode='campaign') {
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
-  G.squad = BAL.start.squad + G.meta.squad * 8; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
+  G.squad = BAL.start.squad + G.meta.squad * 4; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
@@ -241,33 +242,33 @@ async function attemptRevive(){if(G.reviveUsed)return;let ok=false;try{ok=!!(win
 function spawnGatePair() {
   const y = -60, wPair = (CFG.W - 2 * CFG.laneMargin) / 2 - 10, wFull = CFG.W - 2 * CFG.laneMargin;
   const li = G.level - 1, GB = BAL.gates;
-  const mk = (lane) => {
+  const lockedLive = gates.some(g => g.live && g.locked);   // only ONE locked gate on screen at a time
+  const mk = (lane, allowLocked) => {
     const roll = rng();
     let kind, val, need, locked = false;
     // Reference mix: negatives are COMMON red barriers, multipliers rare
-    if (roll < 0.34) { kind = 'add'; const r = GB.plus[li]; val = Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))); need = GB.hpStepPlus(G.level); }
+    if (roll < 0.34) { kind = 'add'; const r = GB.plus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
     else if (roll < 0.42) { kind = 'mul'; const r = GB.mult[li]; val = Math.round(rr(r[0], r[1]) * 10) / 10; need = GB.hpStepMult(G.level); }
     else if (roll < 0.52) { kind = 'wpn'; val = 0; need = GB.hpStepWpn(G.level); }
     else { kind = 'add'; const r = GB.minus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
-    // ~30% of gates are LOCKED: can't be shot down. A locked negative MUST be dodged
-    // (steer around it); a locked positive is a fixed reward. Forces real movement.
-    if (rng() < 0.30) { locked = true;
-      if (kind === 'add' && val < 0) val = Math.round(rr(GB.minus[li][0] * 1.6, GB.minus[li][1] * 1.6)); // bigger, unavoidable-by-shooting
-    }
+    // LOCKED gates are ALWAYS a big red negative, unshootable, DEVASTATING on contact.
+    // Only one exists at a time — steer around it.
+    if (allowLocked && rng() < 0.22) { locked = true; kind = 'add';
+      val = -Math.round(rr(GB.minus[li][1] * -2.2, GB.minus[li][1] * -1.4)); need = 1; }
     return { lane, y, h: 46, kind, val, shot: 0, need, live: true, locked };  // x/w derived from perspective via gateRect()
   };
-  // ~40% of the time spawn a SINGLE gate on one side (dodge-or-take), else a pair (pick a side)
+  // ~40% single gate (dodge-or-take), else a pair (pick a side). Only one lane may be locked.
   if (rng() < 0.40) {
-    gates.push(mk(rng() < 0.5 ? 'L' : 'R'));
+    gates.push(mk(rng() < 0.5 ? 'L' : 'R', !lockedLive));
     return;
   }
-  const g1 = mk('L');
-  let g2 = mk('R');
+  const g1 = mk('L', !lockedLive);
+  let g2 = mk('R', !lockedLive && !g1.locked);            // never two locked gates in one pair
   const isNeg = g => g.kind === 'add' && g.val < 0;
-  const impassable = g => g.locked && isNeg(g);          // locked negative = can't shoot it, only lose units
-  // GUARANTEE an escape: a pair can never be BOTH impassable (that's the no-way-through trap).
-  if (impassable(g1) && impassable(g2)) g2.locked = false;   // make the right lane shootable
-  // also never a plain double-negative (both drain you): flip the right to a positive add
+  const impassable = g => g.locked;                      // locked = can't shoot it, only lose units
+  // GUARANTEE an escape: a pair can never be BOTH impassable.
+  if (impassable(g1) && impassable(g2)) g2.locked = false;
+  // never a plain double-negative (both drain you): flip the right to a positive add
   if (isNeg(g1) && isNeg(g2) && !impassable(g1)) {
     const r = GB.plus[li];
     g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false };
@@ -306,20 +307,19 @@ function fire(dt) {
   fireT -= dt;
   if (fireT > 0) return;
   fireT = 1 / rof;
-  // R3 power-scaled columns (fixes late-game DPS flatline past 14 squad)
-  const cols = Math.min(G.squad, Math.min(48, Math.max(1, Math.floor(14 * Math.pow(Math.max(G.squad, 1) / 14, 0.45)))));
+  // ONE shot per soldier owned (capped at 150 for perf; beyond that the wall merges anyway)
+  const cols = Math.min(G.squad, 150);
   for (let c = 0; c < cols; c++) {
     for (let i = 0; i < w.n; i++) {
       const b = bullets.alloc(); if (!b) return;
-      const off = (c - (cols - 1) / 2) * Math.min(16, 340 / Math.max(1, cols));   // firing line stays inside the road
+      const off = (c - (cols - 1) / 2) * Math.min(11, 340 / Math.max(1, cols));   // firing line stays inside the road
       b.x = Math.max(36, Math.min(CFG.W - 36, G.px + off));
       b.y = CFG.H - 130 - hash01(c * 7.3) * 56;                                   // fixed per-column stagger → steady streams
       b.tier = G.weapon;
-      // streams converge toward the vanishing point (reference look); slight jitter per shot
       b.vx = (CFG.W / 2 - b.x) * 0.55 + (i - (w.n - 1) / 2) * w.spread * 60;
       b.vy = -640;
-      b.vis = c % Math.max(1, Math.ceil(cols / 7)) === 0 && i === 0;   // render ~7 streams; rest are sim-only
-      b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg) * (1 + 0.06 * Math.log2(1 + G.squad));
+      b.vis = c % Math.max(1, Math.ceil(cols / 12)) === 0 && i === 0;  // render ~12 streams; rest are sim-only
+      b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg);                          // damage per soldier's shot (no log fudge now)
       b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false;
     }
   }
@@ -348,7 +348,7 @@ function perkWeapons(dt) {
     let sx = 0, sy = 0, n = 0; enemies.each(e => { if (e.mode !== 1) { sx += e.x; sy += e.y; n++; } });
     if (n) { sx /= n; sy /= n; } else { sx = CFG.W / 2; sy = CFG.H * 0.42; }
     const R = 120 + orbital * 26;
-    strikes.push({ x: sx, y: sy, t: 0.6, r: R });
+    strikes.push({ x: sx, y: sy, t: 0.6, r: R }); boom(sx, sy, 2.4);   // nuke: massive ember burst
     queueBlast(sx, sy, R, 55 + orbital * 45);            // huge central AOE detonation
     G.shake = 7; G.flashT = 0.24; sfx('laser'); AUDIO.sample('explosion2');
   }
@@ -364,10 +364,10 @@ function vehicleUpdate(dt) {
       b.x = G.px + side * 70; b.y = CFG.H - 172; b.vx = side * 26; b.vy = -320 - rank*18;
       b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; } }
 }
-function grenadeBlast(b) {                 // heavy shell detonation: big explosion + AOE + shake
-  strikes.push({ x: b.x, y: b.y, t: 0.45, r: b.aoe * 1.15 });
+function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
+  boom(b.x, b.y, 1.6);
   queueBlast(b.x, b.y, b.aoe, b.dmg);
-  fx(b.x, b.y, '#fb4'); AUDIO.sample('explosion'); G.shake = Math.max(G.shake, 4);
+  AUDIO.sample('explosion'); G.shake = Math.max(G.shake, 5);
 }
 let spawnAcc = 0;
 function spawnWave(dt) {
@@ -415,7 +415,7 @@ function damageEnemy(e, dmg, x, y) {
     if (!G.meta.codex) G.meta.codex = {};              // bestiary: unlock this enemy's page on first kill
     if (!G.meta.codex[e.kind]) { G.meta.codex[e.kind] = 0; G.newCodex = e.kind; G.newCodexT = 3; save(); }
     G.meta.codex[e.kind]++;
-    G.streak++; G.streakT=1.15; G.streakPeak=Math.max(G.streakPeak,G.streak);
+    G.streak++; G.streakT=0.5; G.streakPeak=Math.max(G.streakPeak,G.streak);   // tighter combo window — resets in lulls
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
     const K = EKIND[e.kind];
     G.credits += Math.round(K.credits*(G.mode==='endless'?Math.pow(1.12,G.loop):1));
@@ -423,12 +423,12 @@ function damageEnemy(e, dmg, x, y) {
     if (e.kind >= 3) G.hitStop = 0.04;
     gore(e.x, e.y, e.kind);
     if (e.kind === 2) queueBlast(e.x, e.y, 55, 6);    // cyber-mutant explodes (queued: chains iterate, never recurse)
-    if (rng() < 0.35) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.8 ? 0 : 1; } }
+    if (rng() < 0.18) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.8 ? 0 : 1; } }  // ~half the money orbs
     enemies.release(e);
   }
 }
 function aoe(x, y, r, dmg) {
-  fx(x, y, '#fa0');
+  boom(x, y, Math.min(1.2, 0.5 + r / 90));   // colored ember burst scaled to blast radius
   AUDIO.sample('explosion');
   enemies.each(e => { const dx = e.x - x, dy = e.y - y; if (dx*dx + dy*dy < r*r) damageEnemy(e, dmg, e.x, e.y); });
 }
@@ -466,13 +466,31 @@ function gore(x, y, kind) {
   const red = CFG.bloodColor === 'red' && kind !== 0;  // xenos (kind 0) always green
   for (let i = 0; i < 6; i++) {
     const s = splats.alloc(); if (!s) return;
-    s.x = x; s.y = y; s.vx = rr(-90, 90); s.vy = rr(-140, 40); s.r = rr(2, 5); s.a = 1; s.red = red;
+    s.x = x; s.y = y; s.vx = rr(-90, 90); s.vy = rr(-140, 40); s.r = rr(2, 5); s.a = 1; s.red = red; s.spark = false; s._col = null; s.fade = 1.4;
   }
   // NOTE: no per-kill screen shake — with a dense swarm that pinned the screen shaking
   // constantly. Shake is reserved for big beats only (nuke, boss hits, boss kill).
 }
 function fx(x, y, col) { for (let i = 0; i < 10; i++) { const s = splats.alloc(); if (!s) return;
-  s.x = x; s.y = y; s.vx = rr(-160,160); s.vy = rr(-160,160); s.r = rr(1.5,3.5); s.a = 1; s.red = false; s._col = col; } }
+  s.x = x; s.y = y; s.vx = rr(-160,160); s.vy = rr(-160,160); s.r = rr(1.5,3.5); s.a = 1; s.red = false; s.spark = false; s.fade = 1.4; s._col = col; } }
+// Exciting explosion: colored ember burst + fire ring + spark shrapnel + flash.
+const EMBER_COLS = ['#ffffff', '#fff1a8', '#ffd24a', '#ff8a1e', '#ff4d1e'];
+function boom(x, y, power) {
+  power = power || 1;
+  const n = Math.round(14 + 20 * power);
+  for (let i = 0; i < n; i++) { const s = splats.alloc(); if (!s) break;
+    const a = Math.random() * 6.283, sp = (0.35 + Math.random()) * 175 * power;
+    s.x = x; s.y = y; s.vx = Math.cos(a) * sp; s.vy = Math.sin(a) * sp - 30 * power;
+    s.r = (1.6 + Math.random() * 3.2) * (0.7 + 0.5 * power); s.a = 1; s.red = false; s.spark = true;
+    s.fade = 1.5 + Math.random() * 1.2; s._col = EMBER_COLS[(Math.random() * EMBER_COLS.length) | 0]; }
+  // thin fast spark streaks
+  for (let i = 0; i < Math.round(6 * power); i++) { const s = splats.alloc(); if (!s) break;
+    const a = Math.random() * 6.283, sp = (1.2 + Math.random()) * 220 * power;
+    s.x = x; s.y = y; s.vx = Math.cos(a) * sp; s.vy = Math.sin(a) * sp; s.r = 1.3; s.a = 1;
+    s.spark = true; s.fade = 2.6; s._col = '#fff'; }
+  strikes.push({ x, y, t: 0.42 * (0.7 + power * 0.3), r: 34 + 42 * power, boom: true });
+  G.flashT = Math.max(G.flashT, 0.1 * power);
+}
 function dmgnum(x, y, v) { const d = dmgnums.alloc(); if (!d) return; d.x = x; d.y = y; d.v = 40; d.val = v; d.a = 1; }
 
 // ---------- perks / shop ----------
@@ -498,11 +516,12 @@ function pickPerk(gx, clientY) {
 }
 const SHOP = [
   // R3 economy: combat growth 1.5, utility 1.6, rank caps (balance.json v3.0)
-  {k:'dmg',   name:'Base Damage +',   max:15, cost: l => Math.round(45  * Math.pow(1.5, l))},
-  {k:'squad', name:'Start Squad +8',  max:20, cost: l => Math.round(80  * Math.pow(1.4, l))},
-  {k:'weapon',name:'Start Weapon +',  max:4,  cost: l => Math.round(200 * Math.pow(1.5, l))},
-  {k:'perkSlot',name:'Perk Kind Slot +', max:2, cost: l => Math.round(500 * Math.pow(1.6, l))},
-  {k:'vehicleDrop',name:'Tank Drop +', max:5, cost: l => Math.round(300 * Math.pow(1.6, l))},
+  // Modest, useful-not-game-breaking meta upgrades (you should still GROW via gates in-run)
+  {k:'dmg',   name:'Base Damage +10%', max:12, cost: l => Math.round(60  * Math.pow(1.55, l))},
+  {k:'squad', name:'Start Squad +4',   max:8,  cost: l => Math.round(90  * Math.pow(1.55, l))},
+  {k:'weapon',name:'Start Weapon +',   max:4,  cost: l => Math.round(220 * Math.pow(1.6, l))},
+  {k:'perkSlot',name:'Perk Slot +',    max:2,  cost: l => Math.round(600 * Math.pow(1.7, l))},
+  {k:'vehicleDrop',name:'Tank Drop +', max:5,  cost: l => Math.round(320 * Math.pow(1.65, l))},
 ];
 function shopTap(e) {
   const r = cv.getBoundingClientRect();
@@ -557,7 +576,7 @@ function update(dt) {
     if (b.y < cutoff) {
       if (b.grenade) { grenadeBlast(b); bullets.release(b); return; }   // shell detonates at the front line
       const s = splats.alloc();
-      if (s) { s.x = b.x; s.y = cutoff + rr(-4, 8); s.vx = rr(-40, 40); s.vy = rr(-60, 10); s.r = rr(1.5, 3.5); s.a = 0.8; s.red = false; }
+      if (s) { s.x = b.x; s.y = cutoff + rr(-4, 8); s.vx = rr(-40, 40); s.vy = rr(-60, 10); s.r = rr(1.5, 3.5); s.a = 0.8; s.red = false; s.spark = false; s._col = null; s.fade = 1.4; }
       bullets.release(b); return;
     }
     if (b.x < -20 || b.x > CFG.W + 20) { bullets.release(b); return; }
@@ -597,10 +616,14 @@ function update(dt) {
       const crawl = 0.5 + 0.8 * Math.max(0, Math.sin(e.t * (2.3 + (e.phase % 1.0)) + e.phase));  // creep surges
       e.y += e.vy * crawl * (e.buffed ? 1.45 : 1) * dt;   // psychoid aura urges the swarm forward
     }
+    // keep every enemy INSIDE the road corridor (perspective-correct — no clipping past the walls)
+    { const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
+      const ehw = roadHalfWidth(ez) - e.r * 0.6;
+      e.x = Math.max(CFG.W/2 - ehw, Math.min(CFG.W/2 + ehw, e.x)); }
     if (e.y > CFG.H + 40) { enemies.release(e); return; }
     // contact with squad zone
     if (e.y > CFG.H - 150 && Math.abs(e.x - G.px) < 60) {
-      const loss = [2,8,4,5,4,3][e.kind] || 2;   // real bite — a breakthrough thins the squad fast
+      const loss = [4,16,8,9,8,6][e.kind] || 4;   // harder hits — enemies reaching you really hurt
       loseUnits(loss, e.x, e.y); enemies.release(e);
       if (G.squad <= 0) return;
       return;
@@ -646,8 +669,9 @@ function update(dt) {
     } else if (p.y > CFG.H + 20) pickups.release(p);
   });
   // fx decay
-  splats.each(s => { s.x += s.vx * dt; s.y += s.vy * dt + CFG.scrollSpd * dt * 0.4; s.vy += 300 * dt;
-    s.a -= dt * 1.4; if (s.a <= 0) splats.release(s); });
+  splats.each(s => { s.x += s.vx * dt; s.y += s.vy * dt + CFG.scrollSpd * dt * 0.4;
+    s.vy += (s.spark ? 120 : 300) * dt; if (s.spark) { s.vx *= 0.92; s.vy *= 0.92; }   // embers drift + decelerate
+    s.a -= dt * (s.fade || 1.4); if (s.a <= 0) splats.release(s); });
   dmgnums.each(d => { d.y -= d.v * dt; d.a -= dt * 1.2; if (d.a <= 0) dmgnums.release(d); });
   for (let i = strikes.length - 1; i >= 0; i--) { strikes[i].t -= dt; if (strikes[i].t <= 0) strikes.splice(i, 1); }
   for (let i = arcs.length - 1; i >= 0; i--) { arcs[i].t -= dt; if (arcs[i].t <= 0) arcs.splice(i, 1); }
@@ -829,7 +853,7 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=4';                                 // bump to bust the browser cache when sprites change
+  const V='?v=5';                                 // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
   ANIM[2]=load('assets/cyber_idle.png',4,5);      // cyber-mutant — malfunction idle
@@ -876,7 +900,7 @@ function drawFarHorde(){
   const flow=(G.t*.055)%(1/rows);
   for(let r=0;r<rows;r++){
     const z=.02+((r/rows)+flow)%1*.335,y=roadY(z),hw=roadHalfWidth(z)-4;
-    const n=Math.max(6,Math.round(hw/4.2)),size=1.2+z*5;
+    const n=Math.max(6,Math.round(hw/4.2)),size=0.8+z*2.2;   // smaller wave-indicator specks
     for(let i=0;i<n;i++){
       const h=hash01(r*131+i*7),h2=hash01(r*57+i*13);
       const x=CFG.W/2-hw+ (i+h*.9)*(2*hw/n), yy=y+(h2-.5)*7*z;
@@ -1000,7 +1024,7 @@ function draw() {
     cx.fillStyle = 'rgba(0,0,10,.35)'; cx.beginPath(); cx.ellipse(e.x, e.y + e.r * 0.8, e.r * 0.9, e.r * 0.32, 0, 0, 7); cx.fill();
     // slight scuttle bob
     const bob = Math.sin(e.t * 11 + e._pi) * e.r * 0.06;
-    if (drawEnemyAnim(e, e.x, e.y + bob, e.r * 3.0)) {   // animated sprite strip (preferred)
+    if (drawEnemyAnim(e, e.x, e.y + bob, e.r * (e.kind === 0 ? 3.3 : 3.0))) {   // Xenoid +10% scale
       // done
     } else {
       const pic = enemyImg(e.kind, e._pi);
@@ -1025,16 +1049,26 @@ function draw() {
   // boss
   if (G.boss) drawBoss();
   if (G.boss && G.boss.attack) drawBossAttack(G.boss);
-  // orbital nuke: descending beam → white core → expanding shock ring
+  // explosions: fireball core → orange/red shockwave (boom) or cyan beam (orbital)
   for (const s of strikes) {
-    const k = 1 - s.t / 0.6;                          // 0→1 over life
+    const life = s.boom ? (s.t / 0.42) : (s.t / 0.6), k = 1 - Math.max(0, Math.min(1, life));
     cx.save(); cx.globalCompositeOperation = 'lighter';
-    if (k < 0.35) { const bw = 26 * (1 - k / 0.35);   // beam column punching down
+    if (!s.boom && k < 0.35) { const bw = 26 * (1 - k / 0.35);         // orbital beam column
       cx.fillStyle = 'rgba(180,240,255,.9)'; cx.fillRect(s.x - bw / 2, 0, bw, s.y); }
-    cx.strokeStyle = 'rgba(255,240,180,' + (1 - k) + ')'; cx.lineWidth = 6;
-    cx.beginPath(); cx.arc(s.x, s.y, s.r * k, 0, 7); cx.stroke();        // shock ring
-    cx.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - k)) + ')';
-    cx.beginPath(); cx.arc(s.x, s.y, s.r * 0.5 * (1 - k) + 8, 0, 7); cx.fill();  // white core
+    if (s.boom) {                                     // fireball: hot white core → orange → red ring
+      const grad = cx.createRadialGradient(s.x, s.y, 1, s.x, s.y, Math.max(1, s.r * (0.4 + 0.9 * k)));
+      grad.addColorStop(0, 'rgba(255,255,240,' + (0.95 * (1 - k)) + ')');
+      grad.addColorStop(0.4, 'rgba(255,180,60,' + (0.8 * (1 - k)) + ')');
+      grad.addColorStop(1, 'rgba(255,60,20,0)');
+      cx.fillStyle = grad; cx.beginPath(); cx.arc(s.x, s.y, s.r * (0.4 + 0.9 * k), 0, 7); cx.fill();
+      cx.strokeStyle = 'rgba(255,150,40,' + (1 - k) + ')'; cx.lineWidth = 5 - 3 * k;
+      cx.beginPath(); cx.arc(s.x, s.y, s.r * (0.3 + k), 0, 7); cx.stroke();
+    } else {                                          // orbital nuke shockwave
+      cx.strokeStyle = 'rgba(255,240,180,' + (1 - k) + ')'; cx.lineWidth = 6;
+      cx.beginPath(); cx.arc(s.x, s.y, s.r * k, 0, 7); cx.stroke();
+      cx.fillStyle = 'rgba(255,255,255,' + (0.85 * (1 - k)) + ')';
+      cx.beginPath(); cx.arc(s.x, s.y, s.r * 0.5 * (1 - k) + 8, 0, 7); cx.fill();
+    }
     cx.restore();
   }
   // chain lightning: jagged forked arcs between struck enemies
@@ -1057,7 +1091,7 @@ function draw() {
       return;
     }
     if(!b.vis) return; const col=WEAPONS[b.tier].col;
-    const len=42, nx=b.vx/700, ny=b.vy/700;
+    const len=21, nx=b.vx/700, ny=b.vy/700;   // shot streak half length
     cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=10;cx.lineWidth=4;
     cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
     cx.strokeStyle='rgba(255,255,255,.9)';cx.lineWidth=1.6;
@@ -1069,8 +1103,15 @@ function draw() {
   // fx (clipped to road so gore never lands in the sky)
   cx.save(); roadClip();
   splats.each(sp => { cx.globalAlpha = Math.max(0, sp.a);
-    cx.fillStyle = sp._col || (sp.red ? '#e33' : '#4f5'); sp._col = null;
-    cx.beginPath(); cx.arc(sp.x, sp.y, sp.r, 0, 7); cx.fill(); cx.globalAlpha = 1; });
+    if (sp.spark) {                                   // glowing ember: additive + halo
+      cx.save(); cx.globalCompositeOperation = 'lighter';
+      cx.fillStyle = sp._col || '#fc4'; cx.shadowColor = sp._col || '#f80'; cx.shadowBlur = 8;
+      cx.beginPath(); cx.arc(sp.x, sp.y, sp.r * (0.6 + 0.4 * sp.a), 0, 7); cx.fill(); cx.restore();
+    } else {
+      cx.fillStyle = sp._col || (sp.red ? '#e33' : '#4f5');
+      cx.beginPath(); cx.arc(sp.x, sp.y, sp.r, 0, 7); cx.fill();
+    }
+    cx.globalAlpha = 1; });
   cx.restore();
   dmgnums.each(d => { cx.globalAlpha = Math.max(0, d.a); cx.fillStyle = '#ffd75e';
     cx.font = 'bold 16px Segoe UI'; cx.textAlign = 'center'; cx.fillText(d.val, d.x, d.y); cx.globalAlpha = 1; });
@@ -1083,7 +1124,7 @@ function draw() {
   cx.restore();
 
   document.getElementById('hud').textContent =
-    `⬡ ${G.squad}  ·  ${WEAPONS[G.weapon].name}  ·  L${G.level}  ·  ₵${G.credits}`;
+    `⬡ ${G.squad}          LEVEL ${G.level} · ${WEAPONS[G.weapon].name}          💰 ${G.credits}`;
 }
 function drawDebugCanvas(){
   const d=window.__dbg?window.__dbg():{};cx.save();cx.globalAlpha=.88;cx.fillStyle='#02040d';cx.fillRect(8,58,244,106);cx.globalAlpha=1;cx.strokeStyle='#4ff';cx.strokeRect(8,58,244,106);cx.fillStyle='#bff';cx.font='bold 13px monospace';cx.textAlign='left';
@@ -1204,6 +1245,7 @@ function drawCodex(){
   cx.fillStyle='rgba(6,3,16,.94)';cx.fillRect(0,0,CFG.W,CFG.H);
   cx.textAlign='center';cx.fillStyle='#c6f';cx.shadowColor='#a4f';cx.shadowBlur=14;cx.font='bold 30px Segoe UI';
   cx.fillText('BESTIARY',CFG.W/2,54);cx.shadowBlur=0;
+  cx.fillStyle='rgba(255,120,120,.9)';cx.font='bold 30px Segoe UI';cx.fillText('✕',CFG.W-34,44);   // close (tap here or ESC)
   cx.fillStyle='#89f';cx.font='14px Segoe UI';cx.fillText('◄ tap left / right to flip · tap top to go back ►',CFG.W/2,84);
   const unlocked = CODEX.map((c,i)=>i).filter(i => G.meta.codex && G.meta.codex[i]);
   if(!unlocked.length){cx.fillStyle='#889';cx.font='18px Segoe UI';cx.fillText('No specimens catalogued yet.',CFG.W/2,300);
