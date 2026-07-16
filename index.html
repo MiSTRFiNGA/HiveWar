@@ -122,12 +122,22 @@ const BAL = {
   start: { squad: 5, weapon: 0 },
 };
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
-const EKIND = [ // fodder, eldritch, cyber-mutant, winged diver, burrower
+const EKIND = [ // fodder, eldritch, cyber-mutant, winged diver, burrower, psychoid
   {hp:2,  r:15, spd:70,  col:'#3f6', credits:1},
   {hp:26, r:26, spd:26,  col:'#a3e', credits:4},
   {hp:7,  r:18, spd:48,  col:'#f55', credits:3},
   {hp:12, r:14, spd:105, col:'#5ff', credits:6},
   {hp:20, r:18, spd:38,  col:'#fb5', credits:6},
+  {hp:55, r:24, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid: slow command node, buffs nearby swarm
+];
+// Bestiary / field-guide: unlocked when first killed. tip = a real tactical secret.
+const CODEX = [
+  {name:'Biomorph Swarmer', cls:'Fodder Tier', tip:'Weak alone, lethal in numbers — a solid wall of them will overrun a thin squad. Widen your fire, do not tunnel on one lane.'},
+  {name:'Eldritch Sponge',  cls:'Bulwark Tier', tip:'Huge health pool, slow. Acid Rounds shred it over time — tag it early and let the corrosion work while you handle the swarm.'},
+  {name:'Cyber-Mutant',     cls:'Hazard Tier', tip:'Detonates on death in an AoE. In a tight cluster they chain-explode — bait the first one and let the cluster wipe itself.'},
+  {name:'Winged Diver',     cls:'Skirmisher Tier', tip:'Fast, erratic swoops. Do not chase — hold your lane and let it cross your stream.'},
+  {name:'Burrower',         cls:'Ambush Tier', tip:'Erupts from beneath the squad. Watch for the ground tell and slide off the mark before it surfaces.'},
+  {name:'Cephalo-Psychoid', cls:'Command Node', tip:'A coordination node — its psychic aura makes every nearby xeno surge faster. KILL IT FIRST and the swarm around it slows right back down.'},
 ];
 
 function load() {
@@ -146,7 +156,16 @@ function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - 
 function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.top)/scale; }
 function down(e) { botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
   if (dragX>CFG.W-65&&gy<70) { G.meta.sfx=!G.meta.sfx; AUDIO.setMuted(!G.meta.sfx); save(); return; }
-  if (G.state === 'title') { if(G.meta.endless&&gy>610) startRun('endless'); else startRun('campaign'); }
+  if (G.state === 'title') {
+    if (gy > 740 && gy < 800) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY button
+    if (G.meta.endless && gy > 610 && gy < 700) startRun('endless'); else startRun('campaign');
+  }
+  else if (G.state === 'codex') {
+    if (gy < 70) { G.state = 'title'; return; }                                 // back
+    const unlocked = CODEX.map((c,i)=>i).filter(i => G.meta.codex && G.meta.codex[i]);
+    if (unlocked.length) { if (dragX < CFG.W/2) G.codexPage = (G.codexPage + unlocked.length - 1) % unlocked.length;
+                           else G.codexPage = (G.codexPage + 1) % unlocked.length; }
+  }
   else if (G.state === 'perk') pickPerk(px2game(e.touches ? e.touches[0] : e), (e.touches?e.touches[0].clientY:e.clientY));
   else if (G.state === 'shop') shopTap(e);
   else if (G.state === 'dead'&&gy>610&&gy<720) attemptRevive();
@@ -353,7 +372,9 @@ function spawnWave(dt) {
     const e = enemies.alloc(); if (!e) return;
     const roll = rng() * 100;
     const eliteRoll = rng();
-    e.kind = lvl >= 6 && eliteRoll < 0.035 ? 4 : lvl >= 4 && eliteRoll < 0.095 ? 3
+    e.kind = (lvl >= 3 && eliteRoll < 0.020) ? 5           // Cephalo-Psychoid command node (rare)
+      : (lvl >= 6 && eliteRoll < 0.055) ? 4
+      : (lvl >= 4 && eliteRoll < 0.115) ? 3
       : roll < BAL.mixCyb[li] ? 2 : (roll < BAL.mixCyb[li] + BAL.mixEld[li] ? 1 : 0);
     const K = EKIND[e.kind];
     if (G.clusterT === undefined || G.clusterT <= 0) {         // re-roll swarm cluster center ~2s
@@ -364,9 +385,11 @@ function spawnWave(dt) {
     e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = e.x; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
     e.maxhp = e.hp = (e.kind < 3 ? [BAL.hp.bio, BAL.hp.eld, BAL.hp.cyb][e.kind](lvl)
-      : (e.kind === 3 ? 30 + 7 * lvl : 45 + 10 * lvl));
+      : e.kind === 3 ? 30 + 7 * lvl
+      : e.kind === 4 ? 45 + 10 * lvl
+      : 40 + 14 * lvl);                                   // kind 5 psychoid: chunky priority target
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
-    e.r = K.r; e.t = 0;
+    e.r = K.r; e.t = 0; e.acidT = 0; e.buffed = 0;
   }
 }
 function spawnBoss() {
@@ -381,6 +404,9 @@ function damageEnemy(e, dmg, x, y) {
   e.hp -= dmg;   // no per-hit numbers on regular enemies — kill-streak counter is the big number (reference style); bosses keep theirs
   if (e.hp <= 0) {
     G.kills++;
+    if (!G.meta.codex) G.meta.codex = {};              // bestiary: unlock this enemy's page on first kill
+    if (!G.meta.codex[e.kind]) { G.meta.codex[e.kind] = 0; G.newCodex = e.kind; G.newCodexT = 3; save(); }
+    G.meta.codex[e.kind]++;
     G.streak++; G.streakT=1.15; G.streakPeak=Math.max(G.streakPeak,G.streak);
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
     const K = EKIND[e.kind];
@@ -402,6 +428,7 @@ function aoe(x, y, r, dmg) {
 // cluster can never blow the call stack — the level-2 freeze was unbounded recursion here.
 let blastQueue = [], blastDraining = false;
 let strikes = [], arcs = [];        // orbital nuke rings + chain-lightning arcs (visual fx)
+let psychoids = [];                 // live Psychoid command nodes (rebuilt each frame)
 function queueBlast(x, y, r, dmg) {
   blastQueue.push(x, y, r, dmg);
   if (blastDraining) return;
@@ -532,10 +559,18 @@ function update(dt) {
       return;
     }
   });
+  // gather live Psychoid command nodes: they passively buff nearby swarm (priority kills)
+  psychoids.length = 0;
+  enemies.each(e => { if (e.kind === 5 && e.mode !== 1) psychoids.push(e); });
   // enemy grid-lite: brute segmented (fine at M0 counts)
   enemies.each(e => {
     e.t += dt;
     if (e.acidT > 0) { e.acidT -= dt; e.hp -= dt * 3 * (G.perks['Acid Rounds'] || 0); if (e.hp <= 0) { damageEnemy(e, 0, e.x, e.y); return; } }
+    // psychoid coordination aura: nearby non-node enemies surge faster (mark for tint)
+    e.buffed = 0;
+    if (e.kind !== 5 && psychoids.length) for (const n of psychoids) {
+      if (Math.abs(e.x - n.x) < 140 && Math.abs(e.y - n.y) < 160) { e.buffed = 1; break; }
+    }
     if (e.mode === 1) { if (e.t >= 0.8) { e.mode = 0; e.t = 0; sfx('elite'); } else return; }
     if (e.kind === 3) {                                // winged diver: wide diving swoop
       e.x = e.baseX + Math.sin(e.t * 4 + e.phase) * 70;
@@ -549,7 +584,7 @@ function update(dt) {
       e.baseX += (G.px - e.baseX) * 0.05 * dt;         // gentle pull down the corridor toward the squad
       e.x = Math.max(CFG.laneMargin - 20, Math.min(CFG.W - CFG.laneMargin + 20, e.baseX + weave));
       const crawl = 0.5 + 0.8 * Math.max(0, Math.sin(e.t * (2.3 + (e.phase % 1.0)) + e.phase));  // creep surges
-      e.y += e.vy * crawl * dt;
+      e.y += e.vy * crawl * (e.buffed ? 1.45 : 1) * dt;   // psychoid aura urges the swarm forward
     }
     if (e.y > CFG.H + 40) { enemies.release(e); return; }
     // contact with squad zone
@@ -757,7 +792,7 @@ const IMGS={};
 (function(){
   const files={bio:'assets/biomorph_a.png',bio2:'assets/biomorph_b.png',eld:'assets/eldritch.png',
                cyb:'assets/cyber_a.png',cyb2:'assets/cyber_b.png',div:'assets/winged.png',
-               bur:'assets/burrower.png',praet:'assets/praetorian.png',
+               bur:'assets/burrower.png',praet:'assets/praetorian.png',psychoid:'assets/psychoid.png',
                soldier:'assets/soldier_front.png',tank:'assets/tank_front.png'};
   for(const k in files){const im=new Image();im.onload=()=>{im.ok=true;};im.onerror=()=>{im.ok=false;};
     im.src=files[k];IMGS[k]=im;}
@@ -767,6 +802,7 @@ function enemyImg(kind,pi){
   if(kind===1)return IMGS.eld;
   if(kind===2)return (pi%2?IMGS.cyb2:IMGS.cyb);
   if(kind===3)return IMGS.div;
+  if(kind===5)return IMGS.psychoid;
   return IMGS.bur;
 }
 function roadClip(){
@@ -834,6 +870,7 @@ function draw() {
 
   drawGear();
   if (G.state === 'title') { drawTitle(); cx.restore(); return; }
+  if (G.state === 'codex') { drawCodex(); cx.restore(); return; }
   if (G.state === 'win')   { drawEndScreen(true); cx.restore(); return; }
   if (G.state === 'dead')  { drawEndScreen(false); cx.restore(); return; }
   if (G.state === 'shop')  { drawShop(); cx.restore(); return; }
@@ -893,6 +930,16 @@ function draw() {
   enemies.each(e => {
     if (e.mode === 1) { cx.strokeStyle = '#fb5'; cx.lineWidth = 3; cx.globalAlpha = 0.35 + 0.45 * Math.sin(e.t * 18) ** 2;
       cx.beginPath(); cx.ellipse(e.x, e.y, 34, 15, 0, 0, 7); cx.stroke(); cx.globalAlpha = 1; return; }
+    if (e.kind === 5) {                               // psychoid coordination aura (pulsing purple ring)
+      cx.save(); cx.globalCompositeOperation = 'lighter';
+      const pr = 140 + Math.sin(e.t * 3) * 10; cx.globalAlpha = 0.10 + 0.06 * Math.sin(e.t * 3);
+      const rg = cx.createRadialGradient(e.x, e.y, 10, e.x, e.y, pr);
+      rg.addColorStop(0, 'rgba(200,120,255,.5)'); rg.addColorStop(1, 'rgba(120,60,255,0)');
+      cx.fillStyle = rg; cx.beginPath(); cx.arc(e.x, e.y, pr, 0, 7); cx.fill(); cx.restore();
+    } else if (e.buffed) {                             // enemies under a psychoid aura glow purple
+      cx.save(); cx.globalCompositeOperation = 'lighter'; cx.globalAlpha = 0.25;
+      cx.fillStyle = '#b6f'; cx.beginPath(); cx.arc(e.x, e.y, e.r * 1.2, 0, 7); cx.fill(); cx.restore();
+    }
     // ground shadow
     cx.fillStyle = 'rgba(0,0,10,.35)'; cx.beginPath(); cx.ellipse(e.x, e.y + e.r * 0.8, e.r * 0.9, e.r * 0.32, 0, 0, 7); cx.fill();
     // slight scuttle bob
@@ -1084,6 +1131,37 @@ function drawTitle(){
   cx.fillStyle='#dff';cx.font='bold 24px Segoe UI';cx.fillText('CAMPAIGN',CFG.W/2,480);
   if(G.meta.endless){cx.fillStyle='rgba(255,80,220,.16)';cx.fillRect(85,620,CFG.W-170,80);cx.strokeStyle='#f4f';cx.strokeRect(85,620,CFG.W-170,80);
     cx.fillStyle='#fdf';cx.fillText('ENDLESS HIVE',CFG.W/2,670);cx.font='16px Segoe UI';cx.fillText('BEST '+(G.meta.bestScore||0),CFG.W/2,730);}
+  const nUnlocked = G.meta.codex ? Object.keys(G.meta.codex).length : 0;   // BESTIARY button
+  cx.fillStyle='rgba(200,120,255,.14)';cx.fillRect(85,740,CFG.W-170,58);cx.strokeStyle='#c6f';cx.strokeRect(85,740,CFG.W-170,58);
+  cx.fillStyle='#e8d8ff';cx.font='bold 20px Segoe UI';cx.fillText('📖 BESTIARY  '+nUnlocked+' / '+CODEX.length,CFG.W/2,776);
+}
+function drawCodex(){
+  cx.fillStyle='rgba(6,3,16,.94)';cx.fillRect(0,0,CFG.W,CFG.H);
+  cx.textAlign='center';cx.fillStyle='#c6f';cx.shadowColor='#a4f';cx.shadowBlur=14;cx.font='bold 30px Segoe UI';
+  cx.fillText('BESTIARY',CFG.W/2,54);cx.shadowBlur=0;
+  cx.fillStyle='#89f';cx.font='14px Segoe UI';cx.fillText('◄ tap left / right to flip · tap top to go back ►',CFG.W/2,84);
+  const unlocked = CODEX.map((c,i)=>i).filter(i => G.meta.codex && G.meta.codex[i]);
+  if(!unlocked.length){cx.fillStyle='#889';cx.font='18px Segoe UI';cx.fillText('No specimens catalogued yet.',CFG.W/2,300);
+    cx.fillText('Kill enemies to unlock their field-guide pages.',CFG.W/2,330);return;}
+  const kind = unlocked[Math.min(G.codexPage||0, unlocked.length-1)], c = CODEX[kind];
+  // page card
+  cx.fillStyle='rgba(230,225,240,.06)';cx.fillRect(40,120,CFG.W-80,640);cx.strokeStyle='#5a4a7a';cx.strokeRect(40,120,CFG.W-80,640);
+  // specimen art (uses the enemy sprite if loaded, else vector)
+  const pic = enemyImg(kind,0);
+  cx.save();
+  if(pic&&pic.ok){const ph=180,pw=ph*(pic.width/pic.height);cx.drawImage(pic,CFG.W/2-pw/2,150,pw,ph);}
+  else{const sp=ART.enemies[kind];cx.drawImage(sp,CFG.W/2-90,150,180,180);}
+  cx.restore();
+  cx.textAlign='center';cx.fillStyle='#eaddff';cx.font='bold 26px Segoe UI';cx.fillText(c.name,CFG.W/2,380);
+  cx.fillStyle='#a89ad0';cx.font='italic 16px Segoe UI';cx.fillText(c.cls+'  ·  '+(G.meta.codex[kind]||0)+' terminated',CFG.W/2,410);
+  // secret tip (wrapped)
+  cx.fillStyle='#8f4';cx.font='bold 15px Segoe UI';cx.fillText('◆ FIELD INTEL ◆',CFG.W/2,470);
+  cx.fillStyle='#d8e8ff';cx.font='17px Segoe UI';cx.textAlign='left';
+  const words=c.tip.split(' ');let line='',yy=500;
+  for(const w of words){const t=line+w+' ';if(cx.measureText(t).width>CFG.W-110){cx.fillText(line,66,yy);line=w+' ';yy+=26;}else line=t;}
+  cx.fillText(line,66,yy);
+  cx.textAlign='center';cx.fillStyle='#666';cx.font='13px Segoe UI';
+  cx.fillText((unlocked.indexOf(kind)+1)+' / '+unlocked.length,CFG.W/2,740);
 }
 function drawEndScreen(win){const elapsed=Math.max(0,(performance.now()-G.runStart)/1000),score=endlessScore();
   cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'SWARM LOST',CFG.W/2,280);
