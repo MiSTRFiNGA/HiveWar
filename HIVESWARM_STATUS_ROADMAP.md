@@ -68,3 +68,32 @@ node _chain_test.js                  # cyber-mutant chain-explosion stress test
 ### Awaiting Eric
 - Playtest with the new caps → report difficulty → Claude retunes balance.
 - Re-share the labeled asset sheets for implementation.
+
+## 2026-07-16 — Claude (Fable 5): freeze fix + challenge/juice pass + Psychoid + Bestiary
+
+### Fixed
+- **L7 "MUTATION READY" freeze** — soft-lock: `offerPerks()` entered the perk screen with
+  an empty pool once all 3 perk slots were maxed. Now skips the screen + banks +60 credits.
+  Reproduced/verified headless (`_perk_test.js`).
+
+### Challenge + juice (verified in Brave)
+- Swarm density ~2.5×; harsher contact + shorter grace → you can actually be overwhelmed.
+- Gates: spaced ~6–9s; ~40% single-gate choices; ~30% **LOCKED** (unshootable, steel-bar,
+  must steer around); bigger locked negatives; exact negative subtraction.
+- Orbital perk = central **NUKE** (beam + shock ring + big AoE), not a thin line.
+  Chain Lightning draws forked arcs; Acid Rounds = green corrosion tint + DoT.
+- Tank now **lobs heavy grenades** (fat shells, big AoE), not soldier bullets.
+- **Cephalo-Psychoid** (enemy kind 5): coordination node, buffs nearby swarm (+45%),
+  purple aura; priority kill. **Bestiary** log book: unlock pages on first kill, per-enemy
+  tactical tip, title-screen button.
+
+### Still open (next session)
+- **ART EXPORT NEEDED (Eric):** Psychoid + all `ASSETS 01/02` sheet items must be exported
+  as **clean transparent PNGs (no checkerboard)** — the sheets have the gray checker baked in
+  (alpha=255), so slicing leaves grid specks. Per-enemy top-down frames, gate art (+5/+10/
+  +25/×2/×3, −5/−10), weapon-tier icons, pickups, tanks, queen.
+- **Barrier weapon variety** (flamethrower / laser / machine-gun / rail-gun gates) — not built.
+- **Full sprite-sheet animation** (Psychoid 8-frame wiggle; soldier run/fire; biomorph walk).
+- **Weapon-tier + perk icons** from the sheet wired into UI.
+- **Sounds** (Eric's lane).
+- Minor: hide top HUD bar while on the Bestiary screen.
