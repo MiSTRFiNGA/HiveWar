@@ -218,9 +218,13 @@ const AUDIO = (() => {
     }catch(_){}
   }
   function resume(){ try{ const ac=ensure(); if(ac.state==='suspended')ac.resume(); }catch(_){}
-    // pre-create + load every SFX element so the first in-game play is instant, not delayed
+    // pre-create every SFX element, then UNLOCK each by a muted play+pause inside this gesture
+    // (browsers gate HTML <audio> autoplay until an element has been played during a user gesture)
     for(const name in SAMPLES){ if(!pool[name]){ const [src,vol,psz]=SAMPLES[name];
-      pool[name]=Array.from({length:psz},()=>{const a=new Audio(src);a.volume=vol;a.load();return a;}); } }
+      pool[name]=Array.from({length:psz},()=>{const a=new Audio(src);a.volume=vol;return a;}); } }
+    for(const name in pool){ for(const a of pool[name]){ try{ a.muted=true;
+      const p=a.play(); if(p) p.then(()=>{a.pause();a.currentTime=0;a.muted=false;}).catch(()=>{a.muted=false;}); else a.muted=false;
+    }catch(_){} } }
   }
   addEventListener('psdk:adstart', () => { muted = true; });
   addEventListener('psdk:adend', () => { muted = false; });
