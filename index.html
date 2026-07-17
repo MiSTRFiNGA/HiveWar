@@ -96,7 +96,7 @@ const WEAPONS = [
 ];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
-  spawnRate: [5,7,10,14,19,26,34,44,56,72],             // lower early; ramps up per level (+ within-level ramp)
+  spawnRate: [3,4,6,9,13,18,25,35,47,62],               // early halved again; ramps up per level (+ within-level ramp)
   waveSec:   [70,74,78,82,86,90,94,98,102,55],
   mixEld:    [10,12,15,18,22,25,28,30,32,33],           // % eldritch
   mixCyb:    [0,3,7,12,16,20,22,25,26,27],              // % cyber-mutant
@@ -128,7 +128,7 @@ const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16)
   {hp:7,  r:32, spd:44,  col:'#f55', credits:3},    // 2 Cyber-Mutant — large hulk
   {hp:12, r:18, spd:105, col:'#5ff', credits:6},    // 3 Xenoptera
   {hp:20, r:13, spd:38,  col:'#fb5', credits:6},    // 4 Subterra — small
-  {hp:55, r:22, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid command node
+  {hp:55, r:28, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid command node (bigger)
 ];
 // Bestiary / field-guide: unlocked when first killed. tip = a real tactical secret.
 const CODEX = [
@@ -217,12 +217,22 @@ const AUDIO = (() => {
       const a=arr.find(x=>x.paused)||arr[0];a.currentTime=0;a.play().catch(()=>{});
     }catch(_){}
   }
+  function resume(){ try{ const ac=ensure(); if(ac.state==='suspended')ac.resume(); }catch(_){}
+    // pre-create + load every SFX element so the first in-game play is instant, not delayed
+    for(const name in SAMPLES){ if(!pool[name]){ const [src,vol,psz]=SAMPLES[name];
+      pool[name]=Array.from({length:psz},()=>{const a=new Audio(src);a.volume=vol;a.load();return a;}); } }
+  }
   addEventListener('psdk:adstart', () => { muted = true; });
   addEventListener('psdk:adend', () => { muted = false; });
-  return { play, sample, setMuted(v) { muted = !!v; } };
+  return { play, sample, resume, setMuted(v) { muted = !!v; } };
 })();
 function sfx(name) { AUDIO.play(name); }
-AUDIO.setMuted(!G.meta.sfx);
+G.meta.sfx = true;                        // always start UNMUTED (a stuck muted save was silencing everything)
+AUDIO.setMuted(false);
+// unlock browser audio on the first real user gesture (required — audio can't autoplay)
+function unlockAudio(){ try{ AUDIO.resume(); }catch(_){}
+  window.removeEventListener('pointerdown', unlockAudio); window.removeEventListener('keydown', unlockAudio); }
+addEventListener('pointerdown', unlockAudio); addEventListener('keydown', unlockAudio);
 
 // ---------- run flow ----------
 function startRun(mode='campaign') {
@@ -384,7 +394,7 @@ function spawnWave(dt) {
   const endlessSpawn=G.mode==='endless'?Math.pow(1.07,G.loop):1;
   // WITHIN-LEVEL RAMP: start gentle (~30%) and build to full over the first ~18s, so the
   // player's early firepower isn't swamped. Difficulty rises smoothly as the wave progresses.
-  const ramp = Math.min(1, 0.30 + G.levelT / 18);
+  const ramp = Math.min(1, 0.18 + G.levelT / 20);   // gentler start, builds over ~20s
   spawnAcc += BAL.spawnRate[li] * endlessSpawn * ramp * dt;
   if(enemies.count()>850){spawnAcc*=.35;return;}
   while (spawnAcc >= 1) {
