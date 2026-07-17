@@ -79,6 +79,39 @@ def cell_sprite(cell_rgba, keyfn, largest=True):
     return img
 
 
+def auto_strip(sheet, region, keyfn, out_name, take=None, cell=128, minw=40):
+    """Auto-detect frames in a row band by background gaps (for irregular sheets).
+    region=(x0,y0,x1,y1) fractional; take=list of frame indices to keep (None=all)."""
+    im = Image.open(fr"{SRC}\{sheet}").convert("RGBA")
+    W, H = im.size
+    x0, y0, x1, y1 = int(region[0]*W), int(region[1]*H), int(region[2]*W), int(region[3]*H)
+    band = np.array(im.crop((x0, y0, x1, y1)))
+    bg = keyfn(band)
+    colhas = (~bg).sum(axis=0) > (band.shape[0] * 0.06)      # columns with real content
+    # find runs of content
+    runs, s = [], None
+    for x in range(len(colhas)):
+        if colhas[x] and s is None: s = x
+        elif not colhas[x] and s is not None:
+            if x - s >= minw: runs.append((s, x)); s = None
+            else: s = None
+    if s is not None and len(colhas) - s >= minw: runs.append((s, len(colhas)))
+    sprites = []
+    for idx, (cs, ce) in enumerate(runs):
+        if take is not None and idx not in take: continue
+        cell_img = Image.fromarray(band[:, cs:ce])
+        sp = cell_sprite(cell_img, keyfn, True)
+        if sp: sprites.append(sp)
+    if not sprites:
+        print("NO SPRITES for", out_name, "(runs=", len(runs), ")"); return
+    strip = Image.new("RGBA", (cell*len(sprites), cell), (0,0,0,0))
+    for i, sp in enumerate(sprites):
+        s2 = sp.copy(); s2.thumbnail((cell-8, cell-8))
+        strip.paste(s2, (i*cell+(cell-s2.width)//2, (cell-s2.height)//2), s2)
+    strip.save(fr"{OUT}\{out_name}")
+    print(f"{out_name}: {len(sprites)}/{len(runs)} frames -> {strip.size}")
+
+
 def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128, largest=True):
     """region=(x0,y0,x1,y1) fractional box holding the frame ROW(s); cols=frames across."""
     im = Image.open(fr"{SRC}\{sheet}").convert("RGBA")
@@ -107,14 +140,20 @@ def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128, largest=T
 make_strip(E+"Xenoid.png", (0.0, 0.055, 1.0, 0.30), 4, key_green, [0, 1, 2, 3], "xeno_walk.png")
 # Psychoid (kind 5): 4x2 grid, swim loop = row 0 frames 0-3
 make_strip(E+"Psychoid.png", (0.0, 0.06, 1.0, 0.50), 4, key_green, [0, 1, 2, 3], "psychoid_swim.png")
-# Cyber Mutant (kind 2): top idle row = 4 frames across the top
-make_strip(E+"Cyber Mutant.png", (0.0, 0.015, 1.0, 0.185), 4, key_green, [0, 1, 2, 3], "cyber_idle.png")
+# Cyber Mutant (kind 2): top idle row = 4 frames — taller band so the LEGS aren't cut off
+make_strip(E+"Cyber Mutant.png", (0.0, 0.012, 1.0, 0.27), 4, key_green, [0, 1, 2, 3], "cyber_idle.png")
+# Eldritch Sponge (kind 1): auto-detect top-row frames, take idle + ooze (first 4) as the loop
+auto_strip(E+"Eldritch Sponge.png", (0.0, 0.05, 1.0, 0.52), key_green, "eldritch_ooze.png", take=[0,1,2,3])
 # Subterra (burrower, kind 4): scanning row = 5 frames (head weaving); gray-keyed
 make_strip(E+"Subterra.png", (0.0, 0.365, 1.0, 0.55), 5, key_green_flood, [0, 1, 2, 3, 4], "subterra_scan.png")
 # Xenoptera (winged, kind 3): flight loop = top row 4 frames (green bg + green core -> flood)
 make_strip(E+"Xenoptera.png", (0.0, 0.06, 1.0, 0.34), 4, key_green_flood, [0, 1, 2, 3], "xenoptera_fly.png")
 # Player soldier (rear view): shooting loop = top row 4 frames (dark bg -> flood)
 make_strip("Player soilders.png", (0.0, 0.045, 1.0, 0.33), 4, key_dark, [0, 1, 2, 3], "soldier_fire.png")
+# Praetorian mini-boss ANIMATIONS (green bg + green eyes -> flood): idle / attack / death rows
+auto_strip(E+"Mini boss Praetorian.png", (0.0, 0.015, 1.0, 0.205), key_green_flood, "praet_idle.png",   cell=192, minw=120)
+auto_strip(E+"Mini boss Praetorian.png", (0.0, 0.225, 1.0, 0.395), key_green_flood, "praet_attack.png", cell=192, minw=120)
+auto_strip(E+"Mini boss Praetorian.png", (0.0, 0.775, 1.0, 0.99),  key_green_flood, "praet_death.png",  cell=192, minw=120)
 # Bosses: one clean hero frame each (green bg + green core -> flood)
 make_strip("Enemies\\Mini boss Praetorian.png", (0.0, 0.06, 0.5, 0.55), 1, key_green_flood, [0], "praetorian_hero.png", cell=192)
 make_strip("Enemies\\Alien  Queen.png", (0.30, 0.10, 0.70, 0.95), 1, key_green_flood, [0], "queen_hero.png", cell=224)

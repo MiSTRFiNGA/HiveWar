@@ -241,7 +241,7 @@ addEventListener('pointerdown', unlockAudio); addEventListener('keydown', unlock
 // ---------- run flow ----------
 function startRun(mode='campaign') {
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
-  G.squad = BAL.start.squad + G.meta.squad * 4; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
+  G.squad = 1; G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);   // always start with 1 soldier
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
@@ -256,7 +256,7 @@ function nextLevel() {
   if (G.level > CFG.levels) { G.state = 'win'; G.endElapsed=(performance.now()-G.runStart)/1000; save(); return; }
   G.state = 'shop'; save();
 }
-function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; }
+function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = 1; }  // always start each level with 1 soldier
 function endlessScore(){return Math.floor(G.kills*10+G.runBosses*500+G.maxSquad*2+G.loop*2000+
   Math.max(0,G.credits-G.creditsStart)*.25+(G.weapon+1)*100);}
 async function attemptRevive(){if(G.reviveUsed)return;let ok=false;try{ok=!!(window.PSDK&&await PSDK.rewarded());}catch(_){}
@@ -333,7 +333,7 @@ function fire(dt) {
   fireT = 1 / rof;
   AUDIO.sample('gun');                               // one gun report per volley (throttled by rof)
   // EXACTLY one bullet per soldier owned (20 soldiers → 20 bullets). Cap 200 for perf.
-  const cols = Math.min(G.squad, 200);
+  const cols = Math.min(G.squad, 15);   // 1 bullet per soldier, capped at 15 streams (perf: 10 men=10, 100 men=15)
   for (let c = 0; c < cols; c++) {
     const b = bullets.alloc(); if (!b) return;
     const off = (c - (cols - 1) / 2) * Math.min(9, 360 / Math.max(1, cols));   // firing line stays inside the road
@@ -343,7 +343,7 @@ function fire(dt) {
     b.vx = (CFG.W / 2 - b.x) * 0.55 + rr(-1, 1) * w.spread * 40;               // slight jitter per shot
     b.vy = -640;
     b.vis = true;                                    // EVERY soldier's bullet is visible now
-    b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1);       // multi-pellet weapons fold power into 1 bullet
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1);  // +10% damage (10% easier); multi-pellet folded in
     b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false;
   }
 }
@@ -883,17 +883,19 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=5';                                 // bump to bust the browser cache when sprites change
+  const V='?v=6';                                 // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
-  ANIM[2]=load('assets/cyber_idle.png',4,5);      // cyber-mutant — malfunction idle
+  ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — idle/ooze
+  ANIM[2]=load('assets/cyber_idle.png',4,4);      // cyber-mutant — malfunction idle (slower, matches sheet)
   ANIM[3]=load('assets/xenoptera_fly.png',4,9);   // xenoptera (winged) — flight loop
   ANIM[4]=load('assets/subterra_scan.png',5,6);   // subterra burrower — scan cycle
   ANIM[5]=load('assets/psychoid_swim.png',4,5);   // cephalo-psychoid — swim cycle
   const heroLoad=(src)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return im;};
-  IMGS.praet=heroLoad('assets/praetorian_hero.png');   // mini-boss (overrides old static)
   IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
   IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
+  // Praetorian mini-boss animations: idle loop / attack / death sequence
+  window.PRAET={idle:load('assets/praet_idle.png',4,4), attack:load('assets/praet_attack.png',5,10), death:load('assets/praet_death.png',5,9)};
 })();
 function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
   const a=ANIM[e.kind]; if(!a||!a.img.ok) return false;
@@ -1188,8 +1190,17 @@ function drawSquad() {
   if (G.squad > CFG.squadCapVisible) { cx.fillStyle = '#fff'; cx.font = '900 20px Segoe UI';
     cx.textAlign = 'center'; cx.fillText('SQUAD x' + G.squad, G.px, y0 + 55); }
   const drones = 2 * (G.perks['Drone Escort'] || 0);
-  for (let i = 0; i < drones; i++) { const a = G.t * 2.4 + i * 6.283 / drones;
-    cx.fillStyle = '#7ff'; cx.fillRect(G.px + Math.cos(a) * 54 - 5, y0 + Math.sin(a) * 25 - 5, 10, 10); }
+  for (let i = 0; i < drones; i++) {                    // glowing escort drones orbiting above the squad
+    const a = G.t * 2.6 + i * 6.283 / drones, dx = G.px + Math.cos(a) * 82, dy = (y0 - 30) + Math.sin(a) * 34;
+    cx.save(); cx.shadowColor = '#0ff'; cx.shadowBlur = 14; cx.fillStyle = '#8ff';
+    cx.translate(dx, dy); cx.rotate(a * 2);
+    cx.beginPath(); cx.moveTo(0, -9); cx.lineTo(8, 0); cx.lineTo(0, 9); cx.lineTo(-8, 0); cx.closePath(); cx.fill();  // diamond body
+    cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(0, 0, 2.5, 0, 7); cx.fill();  // core
+    cx.restore();
+    // thruster glow underneath
+    cx.save(); cx.globalCompositeOperation = 'lighter'; cx.globalAlpha = .5; cx.fillStyle = '#0cf';
+    cx.beginPath(); cx.arc(dx, dy + 10, 4, 0, 7); cx.fill(); cx.restore();
+  }
 }
 function drawBossAttack(B){const tele=B.attack==='acid'?.9:.75,active=B.attack==='sweep'?.65:.45;
   cx.save();cx.globalAlpha=B.attackClock<tele?.3:.78;if(B.attack==='acid'){cx.fillStyle='#7f3';cx.fillRect(B.attackX-42,0,84,CFG.H);}
@@ -1206,7 +1217,20 @@ function drawBossHud(B){
 }
 function drawBoss() {
   const B = G.boss;
-  const bossImg = B.queen ? IMGS.queen : IMGS.praet;  // Alien Queen (final) vs Praetorian guardian
+  // Praetorian: full animation — death sequence / attack swing / idle loop
+  if (!B.queen && window.PRAET && PRAET.idle.img.ok) {
+    let a = PRAET.idle, f;
+    if (B.dead && PRAET.death.img.ok) { a = PRAET.death;
+      f = Math.min(a.frames - 1, Math.floor((1 - Math.max(0, G.bossKillT) / 0.4) * a.frames)); }
+    else if (B.attack && PRAET.attack.img.ok) { a = PRAET.attack; f = Math.floor(B.attackClock * a.fps) % a.frames; }
+    else { f = Math.floor(B.t * a.fps) % a.frames; }
+    const cs = a.img.height, breathe = B.dead ? 1 : 1 + 0.03 * Math.sin(B.t * 2);
+    const ph = 300 * breathe, pw = ph * (cs / cs);
+    cx.save(); cx.shadowColor = '#a4f'; cx.shadowBlur = 26;
+    cx.drawImage(a.img, f * cs, 0, cs, cs, B.x - ph / 2, B.y - ph / 2, ph, ph); cx.restore();
+    drawBossHud(B); return;
+  }
+  const bossImg = B.queen ? IMGS.queen : IMGS.praet;  // Alien Queen (final)
   if (bossImg && bossImg.ok) {
     const breathe = 1 + 0.03 * Math.sin(B.t * 2);
     const ph = (B.queen ? 420 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
