@@ -96,7 +96,7 @@ const WEAPONS = [
 ];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
-  spawnRate: [10,15,22,30,40,52,66,82,100,122],         // flood the corridor — real swarm density
+  spawnRate: [5,7,10,14,19,26,34,44,56,72],             // lower early; ramps up per level (+ within-level ramp)
   waveSec:   [70,74,78,82,86,90,94,98,102,55],
   mixEld:    [10,12,15,18,22,25,28,30,32,33],           // % eldritch
   mixCyb:    [0,3,7,12,16,20,22,25,26,27],              // % cyber-mutant
@@ -124,7 +124,7 @@ const BAL = {
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
 const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16)
   {hp:2,  r:22, spd:70,  col:'#3f6', credits:1},    // 0 Xenoid
-  {hp:26, r:10, spd:26,  col:'#a3e', credits:4},    // 1 Eldritch — tiny
+  {hp:26, r:12, spd:26,  col:'#a3e', credits:4},    // 1 Eldritch — tiny (+20%)
   {hp:7,  r:32, spd:44,  col:'#f55', credits:3},    // 2 Cyber-Mutant — large hulk
   {hp:12, r:18, spd:105, col:'#5ff', credits:6},    // 3 Xenoptera
   {hp:20, r:13, spd:38,  col:'#fb5', credits:6},    // 4 Subterra — small
@@ -197,13 +197,23 @@ const AUDIO = (() => {
       ch.gain.exponentialRampToValueAtTime(0.001, now + 0.09); osc.connect(ch); osc.start(now); osc.stop(now + 0.1);
     } catch (_) {}
   }
-  const SAMPLES={explosion:'sounds/explosion.mp3',explosion2:'sounds/explosion-05.mp3',
-                 zap:'sounds/electric-explosive.mp3',squish:'sounds/hit-flesh-01.mp3'};
+  const SFX='assets/SFX/';
+  const SAMPLES={                       // {file, volume, poolSize}
+    gun:[SFX+'m41a-pulse-rifle.mp3',.22,5], grenade:[SFX+'grenade.mp3',.6,3],
+    explosion:[SFX+'electric-explosive.mp3',.55,4], explosion2:[SFX+'electric-explosive.mp3',.6,3],
+    perk:[SFX+'magic-spell.mp3',.6,2], money:[SFX+'money.mp3',.4,4],
+    lightning:[SFX+'lightning01.mp3',.5,3], eggs:[SFX+'Eggs Open.mp3',.7,2],
+    boss:[SFX+'praetorian01.mp3',.7,2], queenroar:[SFX+'praetorian02.mp3',.7,2],
+    xenohit:[SFX+'xeno attack.mp3',.4,4], subterrahit:[SFX+'subterrahit.mp3',.4,3],
+    xenopterahit:[SFX+'xenotera hit.mp3',.4,3], eldritchdie:[SFX+'eldritch sponge death.mp3',.5,2],
+    mg:[SFX+'light-machine-gun.mp3',.3,3],
+  };
   const pool={};
   function sample(name){
     if(muted||!SAMPLES[name])return;
     try{
-      const arr=pool[name]||(pool[name]=[0,0,0].map(()=>{const a=new Audio(SAMPLES[name]);a.volume=.5;return a;}));
+      const [src,vol,psz]=SAMPLES[name];
+      const arr=pool[name]||(pool[name]=Array.from({length:psz},()=>{const a=new Audio(src);a.volume=vol;return a;}));
       const a=arr.find(x=>x.paused)||arr[0];a.currentTime=0;a.play().catch(()=>{});
     }catch(_){}
   }
@@ -307,21 +317,20 @@ function fire(dt) {
   fireT -= dt;
   if (fireT > 0) return;
   fireT = 1 / rof;
-  // ONE shot per soldier owned (capped at 150 for perf; beyond that the wall merges anyway)
-  const cols = Math.min(G.squad, 150);
+  AUDIO.sample('gun');                               // one gun report per volley (throttled by rof)
+  // EXACTLY one bullet per soldier owned (20 soldiers → 20 bullets). Cap 200 for perf.
+  const cols = Math.min(G.squad, 200);
   for (let c = 0; c < cols; c++) {
-    for (let i = 0; i < w.n; i++) {
-      const b = bullets.alloc(); if (!b) return;
-      const off = (c - (cols - 1) / 2) * Math.min(11, 340 / Math.max(1, cols));   // firing line stays inside the road
-      b.x = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-      b.y = CFG.H - 130 - hash01(c * 7.3) * 56;                                   // fixed per-column stagger → steady streams
-      b.tier = G.weapon;
-      b.vx = (CFG.W / 2 - b.x) * 0.55 + (i - (w.n - 1) / 2) * w.spread * 60;
-      b.vy = -640;
-      b.vis = c % Math.max(1, Math.ceil(cols / 12)) === 0 && i === 0;  // render ~12 streams; rest are sim-only
-      b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg);                          // damage per soldier's shot (no log fudge now)
-      b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false;
-    }
+    const b = bullets.alloc(); if (!b) return;
+    const off = (c - (cols - 1) / 2) * Math.min(9, 360 / Math.max(1, cols));   // firing line stays inside the road
+    b.x = Math.max(36, Math.min(CFG.W - 36, G.px + off));
+    b.y = CFG.H - 130 - hash01(c * 7.3) * 56;                                  // fixed per-column stagger
+    b.tier = G.weapon;
+    b.vx = (CFG.W / 2 - b.x) * 0.55 + rr(-1, 1) * w.spread * 40;               // slight jitter per shot
+    b.vy = -640;
+    b.vis = true;                                    // EVERY soldier's bullet is visible now
+    b.dmg = w.dmg * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1);       // multi-pellet weapons fold power into 1 bullet
+    b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false;
   }
 }
 function perkWeapons(dt) {
@@ -367,13 +376,16 @@ function vehicleUpdate(dt) {
 function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
   boom(b.x, b.y, 1.6);
   queueBlast(b.x, b.y, b.aoe, b.dmg);
-  AUDIO.sample('explosion'); G.shake = Math.max(G.shake, 5);
+  AUDIO.sample('grenade'); G.shake = Math.max(G.shake, 5);
 }
 let spawnAcc = 0;
 function spawnWave(dt) {
   const lvl = G.level, li = lvl - 1;
   const endlessSpawn=G.mode==='endless'?Math.pow(1.07,G.loop):1;
-  spawnAcc += BAL.spawnRate[li] * endlessSpawn * dt;
+  // WITHIN-LEVEL RAMP: start gentle (~30%) and build to full over the first ~18s, so the
+  // player's early firepower isn't swamped. Difficulty rises smoothly as the wave progresses.
+  const ramp = Math.min(1, 0.30 + G.levelT / 18);
+  spawnAcc += BAL.spawnRate[li] * endlessSpawn * ramp * dt;
   if(enemies.count()>850){spawnAcc*=.35;return;}
   while (spawnAcc >= 1) {
     spawnAcc--;
@@ -403,6 +415,7 @@ function spawnWave(dt) {
 function spawnBoss() {
   G.state = 'boss';
   const queen = G.level === CFG.levels, Q = BAL.queen;
+  AUDIO.sample(queen ? 'queenroar' : 'boss');
   G.boss = { x: CFG.W/2, y: -140,
              hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? Q.p1 + Q.p2 + Q.p3 : BAL.bossHp[G.level - 1]),
              maxhp: 0, phase: 0, t: 0, queen, eggT: 0 };
@@ -419,8 +432,10 @@ function damageEnemy(e, dmg, x, y) {
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
     const K = EKIND[e.kind];
     G.credits += Math.round(K.credits*(G.mode==='endless'?Math.pow(1.12,G.loop):1));
-    if (e.kind >= 3) sfx('elite');
     if (e.kind >= 3) G.hitStop = 0.04;
+    // throttled per-enemy death sound (~4/sec max, so a dense swarm doesn't machine-gun the SFX)
+    if (G.t - (G.hitSfxT || 0) > 0.22) { G.hitSfxT = G.t;
+      AUDIO.sample(['xenohit','eldritchdie','xenohit','xenopterahit','subterrahit','xenohit'][e.kind] || 'xenohit'); }
     gore(e.x, e.y, e.kind);
     if (e.kind === 2) queueBlast(e.x, e.y, 55, 6);    // cyber-mutant explodes (queued: chains iterate, never recurse)
     if (rng() < 0.18) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.8 ? 0 : 1; } }  // ~half the money orbs
@@ -510,7 +525,7 @@ function pickPerk(gx, clientY) {
   const i = Math.floor((gy - 330) / 110);
   if (i >= 0 && i < 3 && gy > 330) {
     const p = perkChoices[i]; if (!p) return;
-    G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1); sfx('perk');
+    G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1); AUDIO.sample('perk');
     G.state = G.boss ? 'boss' : 'play';
   }
 }
@@ -641,6 +656,7 @@ function update(dt) {
           enemies.each(o => { if (jumps < 2 + cl && o !== e && Math.abs(o.x - sx) < 90 && Math.abs(o.y - sy) < 90) {
             arcs.push({ x1: sx, y1: sy, x2: o.x, y2: o.y, t: 0.14 });
             damageEnemy(o, b.dmg * (cl === 3 ? .8 : .6), o.x, o.y); jumps++; } });
+          if (jumps) AUDIO.sample('lightning');
           if (!jumps) aoe(sx, sy, 60, b.dmg * .55);
         }
         const ac = G.perks['Acid Rounds'] || 0;
@@ -664,7 +680,7 @@ function update(dt) {
       p.x += dx / d * pull; p.y += dy / d * pull; }
     if (d < collectR) {
       if (p.kind === 0) { G.bio+=1+.05*(G.perks['Magnet']||0); if (G.bio >= G.bioNeed) { G.bio = 0; G.bioNeed = Math.round(G.bioNeed * 1.5); offerPerks(); } }
-      else {G.credits += 5;const m=G.perks['Magnet']||0;if(m&&++G.chipHeal>=[12,12,9,6][m]){G.squad=Math.min(CFG.squadMax,G.squad+1);G.chipHeal=0;}}
+      else {G.credits += 5;AUDIO.sample('money');const m=G.perks['Magnet']||0;if(m&&++G.chipHeal>=[12,12,9,6][m]){G.squad=Math.min(CFG.squadMax,G.squad+1);G.chipHeal=0;}}
       pickups.release(p);
     } else if (p.y > CFG.H + 20) pickups.release(p);
   });
