@@ -30,12 +30,12 @@ def _green(a):
     return (g > 100) & (g - r > 30) & (g - b > 30)
 
 
-def key_green(a):
-    return _green(a)                                        # remove ALL green (no intentional green on creature)
+def key_green(a):                                          # works for green OR transparent sheets
+    return _green(a) | (a[..., 3] < 128)
 
 
-def key_green_flood(a):
-    return _border_flood(_green(a))                         # keep interior green (Subterra head, Xenoptera core)
+def key_green_flood(a):                                    # keep interior green (Subterra head, Xenoptera core)
+    return _border_flood(_green(a)) | (a[..., 3] < 128)
 
 
 def key_dark(a):                                            # tight key on the (48,58,67) panel + existing alpha
@@ -139,7 +139,7 @@ def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128, largest=T
 # Xenoid (biomorph, kind 0): 4x4 grid, walk cycle = row 0 frames 0-3
 make_strip(E+"Xenoid.png", (0.0, 0.055, 1.0, 0.30), 4, key_green, [0, 1, 2, 3], "xeno_walk.png")
 # Psychoid (kind 5): 4x2 grid, swim loop = row 0 frames 0-3
-make_strip(E+"Psychoid.png", (0.0, 0.06, 1.0, 0.50), 4, key_green, [0, 1, 2, 3], "psychoid_swim.png")
+make_strip(E+"Psychoid 02.png", (0.0, 0.06, 1.0, 0.50), 4, key_green, [0, 1, 2, 3], "psychoid_swim.png")
 # Cyber Mutant (kind 2): top idle row = 4 frames — taller band so the LEGS aren't cut off
 make_strip(E+"Cyber Mutant.png", (0.0, 0.012, 1.0, 0.27), 4, key_green, [0, 1, 2, 3], "cyber_idle.png")
 # Eldritch Sponge (kind 1): auto-detect top-row frames, take idle + ooze (first 4) as the loop
@@ -147,13 +147,12 @@ auto_strip(E+"Eldritch Sponge.png", (0.0, 0.05, 1.0, 0.52), key_green, "eldritch
 # Subterra (burrower, kind 4): scanning row = 5 frames (head weaving); gray-keyed
 make_strip(E+"Subterra.png", (0.0, 0.365, 1.0, 0.55), 5, key_green_flood, [0, 1, 2, 3, 4], "subterra_scan.png")
 # Xenoptera (winged, kind 3): flight loop = top row 4 frames (green bg + green core -> flood)
-make_strip(E+"Xenoptera.png", (0.0, 0.06, 1.0, 0.34), 4, key_green_flood, [0, 1, 2, 3], "xenoptera_fly.png")
+make_strip(E+"Xenoptera02.png", (0.0, 0.06, 1.0, 0.34), 4, key_green_flood, [0, 1, 2, 3], "xenoptera_fly.png")
 # Player soldier (rear view): shooting loop = top row 4 frames (dark bg -> flood)
 make_strip("Player soilders.png", (0.0, 0.045, 1.0, 0.33), 4, key_dark, [0, 1, 2, 3], "soldier_fire.png")
 # Praetorian mini-boss ANIMATIONS (green bg + green eyes -> flood): idle / attack / death rows
-auto_strip(E+"Mini boss Praetorian.png", (0.0, 0.015, 1.0, 0.205), key_green_flood, "praet_idle.png",   cell=192, minw=120)
-auto_strip(E+"Mini boss Praetorian.png", (0.0, 0.225, 1.0, 0.395), key_green_flood, "praet_attack.png", cell=192, minw=120)
-auto_strip(E+"Mini boss Praetorian.png", (0.0, 0.775, 1.0, 0.99),  key_green_flood, "praet_death.png",  cell=192, minw=120)
-# Bosses: one clean hero frame each (green bg + green core -> flood)
-make_strip("Enemies\\Mini boss Praetorian.png", (0.0, 0.06, 0.5, 0.55), 1, key_green_flood, [0], "praetorian_hero.png", cell=192)
-make_strip("Enemies\\Alien  Queen.png", (0.30, 0.10, 0.70, 0.95), 1, key_green_flood, [0], "queen_hero.png", cell=224)
+auto_strip(E+"Mini boss Praetorian02.png", (0.0, 0.015, 1.0, 0.205), key_green_flood, "praet_idle.png",   cell=192, minw=120)
+auto_strip(E+"Mini boss Praetorian02.png", (0.0, 0.225, 1.0, 0.395), key_green_flood, "praet_attack.png", cell=192, minw=120)
+auto_strip(E+"Mini boss Praetorian02.png", (0.0, 0.775, 1.0, 0.99),  key_green_flood, "praet_death.png",  cell=192, minw=120)
+# Queen hero still (Praetorian uses its animation, not a still)
+auto_strip(E+"Alien  Queen02.png", (0.0, 0.05, 1.0, 0.95), key_green_flood, "queen_hero.png", take=[0], cell=256, minw=150)
