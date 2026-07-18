@@ -489,9 +489,11 @@ function spawnWave(dt) {
     if (G.clusterT === undefined || G.clusterT <= 0) {         // re-roll swarm cluster lane ~2s
       G.clusterLane = rr(-0.7, 0.7); G.clusterT = 1.6 + rng() * 1.2;
     }
-    // lane -1..1 across the road; cluster most spawns, scatter the rest
+    // lane -1..1 across the road; looser clusters + more scatter so the swarm BLANKETS the
+    // road's full width up top (convergence on the player only happens near the bottom)
     e.lane = e.kind === 4 ? (G.px - CFG.W/2) / Math.max(1, roadHalfWidth(0.75))
-           : Math.max(-0.92, Math.min(0.92, rng() < 0.75 ? G.clusterLane + rr(-0.25, 0.25) : rr(-0.9, 0.9)));
+           : Math.max(-0.92, Math.min(0.92, rng() < 0.55 ? G.clusterLane + rr(-0.4, 0.4) : rr(-0.9, 0.9)));
+    e.lane0 = e.lane;                                  // remembered roaming lane for the spread phase
     e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = 0; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
     e.x = CFG.W/2 + e.lane * roadHalfWidth(Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y)/(CFG.H - HORIZON_Y), 1/1.6))));
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
@@ -729,11 +731,16 @@ function update(dt) {
     } else {
       // LANE-RELATIVE position: e.lane (-1..1) maps onto the road's perspective width, so enemies
       // converge at the horizon and fan out as the road widens — they NEVER cross the pink/blue walls.
-      // HIVE HOMING: the whole swarm funnels toward the squad, harder the closer it gets.
-      const targetLane = (G.px - CFG.W/2) / Math.max(1, hw) + e.crowd * (1 - ez) * 0.6;
-      const homing = (0.25 + 1.5 * ez) * (e.buffed ? 1.5 : 1);
-      if (e.kind === 3) {                                // winged diver: swoop, but dive AT the squad
-        const swoop = Math.sin(e.t * 4 + e.phase) * (0.35 * (1 - ez * 0.7));
+      // TWO-PHASE FLOW (Eric 2026-07-18): the swarm covers the ENTIRE path on the way down —
+      // NO homing until they cross the funnel line a little above the squad, then they turn
+      // hard toward the player. Early swarm = wide wall you must sweep; late swarm = converging bite.
+      const FUNNEL_Y = CFG.H - 330;                      // "blue circle": where the turn toward the player begins
+      const funnel = Math.max(0, Math.min(1, (e.y - FUNNEL_Y) / 140));   // 0 above the line → 1 near the squad
+      const targetLane = funnel === 0 ? e.lane
+        : (G.px - CFG.W/2) / Math.max(1, hw) + e.crowd * (1 - ez) * 0.6;
+      const homing = funnel * 2.6 * (e.buffed ? 1.5 : 1);
+      if (e.kind === 3) {                                // winged diver: swoop wide, dive at the squad late
+        const swoop = Math.sin(e.t * 4 + e.phase) * (0.35 * (1 - funnel * 0.7));
         e.lane += (targetLane - e.lane) * homing * 1.4 * dt;
         e.x = CFG.W/2 + Math.max(-0.95, Math.min(0.95, e.lane + swoop)) * hw;
         e.y += e.vy * dt;
