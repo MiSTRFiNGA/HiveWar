@@ -218,7 +218,17 @@ function down(e) {
   // start a run from the title screen or steer the squad mid-game
   if (e.target && e.target.closest && e.target.closest('#forge,#forgeBtn')) return;
   botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
-  if (dragX>CFG.W-65&&gy<70) { G.meta.sfx=!G.meta.sfx; AUDIO.setMuted(!G.meta.sfx); save(); return; }
+  if (gy < 70) {                                       // top-right HUD buttons: [⟳ restart] [⏸ pause] [⚙ mute]
+    const inRun = G.state === 'play' || G.state === 'boss';
+    if (dragX > CFG.W-62) { G.meta.sfx=!G.meta.sfx; AUDIO.setMuted(!G.meta.sfx); save(); return; }
+    if ((inRun || G.paused) && dragX > CFG.W-120) {    // pause / resume
+      G.paused = !G.paused;
+      if (G.paused) AUDIO.stopAll();
+      else if (G.vehicleT > 0 && G.meta.sfx) AUDIO.loopTank(true);   // tanks were mid-deploy: bring the engine back
+      return; }
+    if (inRun && dragX > CFG.W-178) { G.paused = false; startRun(G.mode); return; }   // restart the run
+  }
+  if (G.paused) { G.paused = false; return; }          // tap anywhere else while paused = resume
   if (G.state === 'title') {
     if (gy > 740 && gy < 800) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY button
     if (G.meta.endless && gy > 610 && gy < 700) startRun('endless'); else startRun('campaign');
@@ -297,9 +307,14 @@ const AUDIO = (() => {
       if (tankLoop.paused) { try { tankLoop.currentTime = 0; tankLoop.play().catch(() => {}); } catch (_) {} }
     } else if (tankLoop) { try { tankLoop.pause(); } catch (_) {} }
   }
-  addEventListener('psdk:adstart', () => { muted = true; loopTank(false); });
+  function stopAll() {                     // hard stop: silence every playing sample + loops NOW
+    try { for (const name in pool) for (const a of pool[name]) { a.pause(); a.currentTime = 0; } } catch (_) {}
+    loopTank(false);
+  }
+  addEventListener('psdk:adstart', () => { muted = true; stopAll(); });
   addEventListener('psdk:adend', () => { muted = false; });
-  return { play, sample, resume, loopTank, setMuted(v) { muted = !!v; if (v) loopTank(false); } };
+  return { play, sample, resume, loopTank, stopAll,
+           setMuted(v) { muted = !!v; if (v) stopAll(); } };   // mute = instant silence, not fade-out
 })();
 function sfx(name) { AUDIO.play(name); }
 G.meta.sfx = true;                        // always start UNMUTED (a stuck muted save was silencing everything)
@@ -322,6 +337,7 @@ function startRun(mode='campaign') {
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
   G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.reviveUsed=false;
+  G.paused=false; rollers.length=0; G.rollT=5; loadEnv(G.level);
   seed = 1000 + G.level * 777;
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
   gates.length = 0; blastQueue.length = 0; blastDraining = false;
@@ -655,6 +671,7 @@ function shopTap(e) {
 let gateT = 0, last = 0;
 function update(dt) {
   if (G.state !== 'play' && G.state !== 'boss') return;
+  if (G.paused) return;                                // HUD pause button froze the run
   if (G.hitStop > 0) { G.hitStop -= dt; return; }
   if (G.bossKillT > 0) { G.bossKillT -= dt; dt *= .3; if (G.bossKillT <= 0) { G.boss=null; nextLevel(); return; } }
   G.t += dt; G.levelT += dt; if (G.clusterT !== undefined) G.clusterT -= dt;
@@ -1153,11 +1170,34 @@ function drawPerspectiveRoad(){
     cx.fill(); cx.restore(); }catch(e){} }
   const grad=cx.createLinearGradient(0,HORIZON_Y,0,CFG.H);grad.addColorStop(0,'#17132b');grad.addColorStop(1,'#21183a');
   cx.fillStyle=grad;cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.fill();
-  // per-level PATH tile: scrolling pattern clipped to the road trapezoid (FORGE WORLD art)
-  if(env.path.ok){ try{ const pat=cx.createPattern(env.path,'repeat');
-    cx.save(); cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.clip();
-    cx.fillStyle=pat; cx.globalAlpha=.9; cx.translate(0,(G.t*90)%env.path.height);
-    cx.fillRect(-10,HORIZON_Y-960,CFG.W+20,CFG.H-HORIZON_Y+1920); cx.restore(); }catch(e){} }
+  // per-level PATH: TRUE PERSPECTIVE tiling — 4 tiles across the road at every depth,
+  // rows stacked up the corridor with foreshortening, scrolling toward the viewer.
+  // Rendered as horizontal slices: each slice samples the right band of a pre-composed
+  // 4-across tile strip and stretches it to the road's width at that screen row.
+  if(env.path.ok){ try{
+    let pc=env.path._pc;
+    if(!pc){ const tw=env.path.width, th=env.path.height;
+      pc=env.path._pc=document.createElement('canvas'); pc.width=tw*4; pc.height=th*2;
+      const g=pc.getContext('2d');
+      for(let c4=0;c4<4;c4++){ g.drawImage(env.path,c4*tw,0); g.drawImage(env.path,c4*tw,th); } }
+    const TH=pc.height/2, PW=pc.width;
+    const S=13, scroll=G.t*1.35;                      // S: tile density along the road; scroll: tiles/sec toward viewer
+    const zAt=y=>Math.pow(Math.max(0.0001,(y-HORIZON_Y)/(CFG.H-HORIZON_Y)),1/1.6);
+    const vAt=z=>S/(0.19+z)+scroll;                   // world tile coordinate at depth z
+    cx.save();
+    cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.clip();
+    const slices=120, span=CFG.H-HORIZON_Y;
+    for(let i=0;i<slices;i++){
+      const y1=HORIZON_Y+span*i/slices, y2=HORIZON_Y+span*(i+1)/slices+0.6;
+      const z1=zAt(y1), z2=zAt(y2);
+      const v1=vAt(z1), v2=vAt(z2);                   // v1 > v2 (more tiles toward the horizon)
+      const dv=Math.min(0.98, v1-v2);
+      const t2=TH+(1-((v2%1)+1)%1)*TH;                // sample window inside the doubled strip (never wraps)
+      const hw2=roadHalfWidth(z2)+2;
+      cx.globalAlpha=Math.min(1, 0.30+z1*1.9);        // fade the shimmering micro-tiles near the horizon
+      cx.drawImage(pc, 0, t2-dv*TH, PW, Math.max(1,dv*TH), CFG.W/2-hw2, y1, hw2*2, y2-y1);
+    }
+    cx.restore(); cx.globalAlpha=1; }catch(e){} }
   cx.save();cx.globalCompositeOperation='lighter';for(const side of [-1,1]){cx.strokeStyle=side<0?'#f3c':'#2ef';cx.shadowColor=cx.strokeStyle;cx.shadowBlur=12;cx.lineWidth=4;cx.beginPath();cx.moveTo(CFG.W/2+side*top,HORIZON_Y);cx.lineTo(CFG.W/2+side*bot,CFG.H);cx.stroke();}cx.restore();
   const phase=(G.t*.16)%1;for(let i=0;i<13;i++){const z=(i/13+phase)%1,y=roadY(z),hw=roadHalfWidth(z);cx.globalAlpha=.12+.3*z;cx.strokeStyle='#7cf';cx.lineWidth=1+z*2;cx.beginPath();cx.moveTo(CFG.W/2-hw,y);cx.lineTo(CFG.W/2+hw,y);cx.stroke();}cx.globalAlpha=1;
   cx.strokeStyle='rgba(255,255,255,.2)';cx.setLineDash([18,24]);cx.beginPath();cx.moveTo(CFG.W/2,HORIZON_Y);cx.lineTo(CFG.W/2,CFG.H);cx.stroke();cx.setLineDash([]);
@@ -1165,11 +1205,11 @@ function drawPerspectiveRoad(){
 function drawFarHorde(){
   // organic packed mass: jittered body dots clipped to the road, flowing downward
   const intent=(BAL.spawnRate[G.level-1]||8)*(G.mode==='endless'?Math.pow(1.07,G.loop):1);
-  const rows=Math.max(14,Math.min(34,Math.round(10+intent*.45)));
+  const rows=Math.max(10,Math.min(24,Math.round(8+intent*.35)));
   cx.save();roadClip();
   const flow=(G.t*.055)%(1/rows);
   for(let r=0;r<rows;r++){
-    const z=.02+((r/rows)+flow)%1*.335,y=roadY(z),hw=roadHalfWidth(z)-4;
+    const z=.02+((r/rows)+flow)%1*.17,y=roadY(z),hw=roadHalfWidth(z)-4;   // tight band right below the horizon (half the old spread)
     const n=Math.max(6,Math.round(hw/4.2)),size=0.8+z*2.2;   // smaller wave-indicator specks
     for(let i=0;i<n;i++){
       const h=hash01(r*131+i*7),h2=hash01(r*57+i*13);
@@ -1179,8 +1219,8 @@ function drawFarHorde(){
       if(h>.93){cx.fillStyle='rgba(220,255,230,.5)';cx.beginPath();cx.arc(x-size*.3,yy-size*.3,size*.3,0,7);cx.fill();}
     }
   }
-  // acid kill line where the mass dies
-  const ky=roadY(.36),khw=roadHalfWidth(.36);
+  // acid kill line where the mass dies (moved up with the shorter band)
+  const ky=roadY(.20),khw=roadHalfWidth(.20);
   cx.globalCompositeOperation='lighter';
   cx.strokeStyle='rgba(90,255,80,.8)';cx.shadowColor='#6f4';cx.shadowBlur=20;cx.lineWidth=9;
   cx.beginPath();cx.moveTo(CFG.W/2-khw,ky);cx.lineTo(CFG.W/2+khw,ky);cx.stroke();
@@ -1413,6 +1453,7 @@ function draw() {
     cx.restore(); cx.globalAlpha = 1;
   }
   cx.drawImage(ART.vignette, 0, 0);
+  if (G.paused) drawPausedOverlay();
   if (G.state === 'perk') drawPerks();
   if(G.flashT>0){cx.globalAlpha=Math.min(.7,G.flashT*4);cx.fillStyle=G.flashT>.2?'#fff':'#6ff';cx.fillRect(0,0,CFG.W,CFG.H);cx.globalAlpha=1;}
   if(debugCanvas)drawDebugCanvas();
@@ -1559,7 +1600,23 @@ function drawShop() {
   cx.fillText('▶ DEPLOY — LEVEL ' + G.level, CFG.W / 2, 885);
 }
 function drawGear(){cx.fillStyle='#9cf';cx.font='26px Segoe UI';cx.textAlign='center';cx.fillText('⚙',CFG.W-34,42);
-  cx.font='11px Segoe UI';cx.fillText(G.meta.sfx?'SFX':'MUTE',CFG.W-34,58);}
+  cx.font='11px Segoe UI';cx.fillText(G.meta.sfx?'SFX':'MUTE',CFG.W-34,58);
+  if (G.state === 'play' || G.state === 'boss' || G.paused) {          // in-run controls beside mute
+    cx.font='24px Segoe UI'; cx.fillStyle = G.paused ? '#ff4' : '#9cf';
+    cx.fillText(G.paused ? '▶' : '⏸', CFG.W-92, 42);
+    cx.fillStyle='#9cf'; cx.fillText('⟳', CFG.W-150, 42);
+    cx.font='11px Segoe UI'; cx.fillText(G.paused?'PLAY':'PAUSE', CFG.W-92, 58); cx.fillText('RESTART', CFG.W-150, 58);
+  }
+  }
+function drawPausedOverlay(){                                           // dim + banner while frozen (drawn LAST)
+    cx.fillStyle='rgba(5,3,15,.55)'; cx.fillRect(0,0,CFG.W,CFG.H);
+    cx.textAlign='center'; cx.font='900 54px Segoe UI'; cx.lineWidth=8; cx.strokeStyle='#130524';
+    cx.strokeText('PAUSED', CFG.W/2, 430);
+    cx.shadowColor='#ff4'; cx.shadowBlur=24; cx.fillStyle='#ff4'; cx.fillText('PAUSED', CFG.W/2, 430);
+    cx.shadowBlur=0; cx.font='16px Segoe UI'; cx.fillStyle='#cdf'; cx.fillText('tap anywhere to resume', CFG.W/2, 470);
+    cx.font='24px Segoe UI'; cx.fillStyle='#ff4'; cx.fillText('▶', CFG.W-92, 42);   // keep the button visible above the dim
+    cx.font='11px Segoe UI'; cx.fillText('PLAY', CFG.W-92, 58);
+  }
 function drawTitle(){
   cx.textAlign='center';cx.fillStyle='#4ff';cx.shadowColor='#f4f';cx.shadowBlur=20;cx.font='bold 58px Segoe UI';cx.fillText('HiVE SWARM',CFG.W/2,300);cx.shadowBlur=0;
   cx.fillStyle='rgba(40,255,220,.16)';cx.fillRect(85,430,CFG.W-170,80);cx.strokeStyle='#4ff';cx.strokeRect(85,430,CFG.W-170,80);
