@@ -525,6 +525,8 @@ function damageEnemy(e, dmg, x, y) {
     if (G.t - (G.hitSfxT || 0) > 0.22) { G.hitSfxT = G.t;
       AUDIO.sample(['xenohit','eldritchdie','xenohit','xenopterahit','subterrahit','xenohit'][e.kind] || 'xenohit'); }
     gore(e.x, e.y, e.kind);
+    const dieA = XANIM[e.kind+':Die'];                // FORGE-authored death anim (optional)
+    if (dieA && dieA.img.ok && deathFx.length < 40) deathFx.push({ x:e.x, y:e.y, kind:e.kind, r:e.r, t:0 });
     if (e.kind === 2) queueBlast(e.x, e.y, 55, 6);    // cyber-mutant explodes (queued: chains iterate, never recurse)
     if (rng() < 0.20) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.5 ? 0 : 1; } }  // 50% money orbs (coin sfx audible)
     enemies.release(e);
@@ -978,11 +980,27 @@ const ANIM={};
   // Praetorian mini-boss animations: idle loop / attack / death sequence
   window.PRAET={idle:load('assets/praet_idle.png',4,4), attack:load('assets/praet_attack.png',5,10), death:load('assets/praet_death.png',5,9)};
 })();
+// FORGE-authored optional strips: `${kind}:${action}` → {img,frames,fps}. Slots the user
+// hasn't created simply aren't here — the game ignores them and uses the shipped defaults.
+const XANIM = {};
+const deathFx = [];                            // one-shot 'Die' strip playbacks at kill spots
 function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
-  const a=ANIM[e.kind]; if(!a||!a.img.ok) return false;
+  const w=XANIM[e.kind+':Walk'];               // user-made Walk strip wins over the default anim
+  const a=(w&&w.img.ok)?w:ANIM[e.kind]; if(!a||!a.img.ok) return false;
   const cs=a.img.height, f=Math.floor(e.t*a.fps)%a.frames;
   cx.drawImage(a.img, f*cs, 0, cs, cs, px-size/2, py-size/2, size, size);
   return true;
+}
+function drawDeathFx(dt){                      // FORGE 'Die' anims: play once, then vanish
+  for (let i = deathFx.length - 1; i >= 0; i--) {
+    const d = deathFx[i], a = XANIM[d.kind+':Die'];
+    if (!a || !a.img.ok) { deathFx.splice(i, 1); continue; }
+    d.t += dt;
+    const f = Math.floor(d.t * a.fps);
+    if (f >= a.frames) { deathFx.splice(i, 1); continue; }
+    const cs = a.img.height, size = d.r * 3.0;
+    cx.drawImage(a.img, f*cs, 0, cs, cs, d.x - size/2, d.y - size/2, size, size);
+  }
 }
 function enemyImg(kind,pi){
   if(kind===0)return (pi%2?IMGS.bio2:IMGS.bio);
@@ -1165,6 +1183,7 @@ function draw() {
       cx.fillStyle = '#f44'; cx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2 * (e.hp / e.maxhp), 3);
     }
   });
+  drawDeathFx(window.FORGE_DBG && FORGE_DBG.pause ? 0 : 1/60);   // FORGE 'Die' strips play out where enemies fell (frozen while paused)
   cx.restore();
   // boss
   if (G.boss) drawBoss();
@@ -1490,50 +1509,60 @@ function wrapImg(im, defFrames){ return { get img(){return im;}, get frames(){re
 // cat/unit/action grid: every unit shows ALL action slots; empty slot (h:null) = no
 // asset yet — the game simply ignores it, and FORGE shows it greyed as a placeholder.
 const REG = [
-  // ENEMIES (alphabetical)
+  // ENEMIES (alphabetical). Empty slots (h:null) are CREATABLE: "+ CREATE" makes a blank
+  // strip at `cell` px. xkind wires the slot into XANIM so the game uses it when present
+  // (Walk overrides the default anim, Die plays once on kill) and ignores it when absent.
   { key:'cyber',    cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Idle',   h: wrapAnim(ANIM[2]) },
-  { key:'cyberW',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Walk',   h: null },
-  { key:'cyberA',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Attack', h: null },
-  { key:'cyberD',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Die',    h: null },
+  { key:'cyberW',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Walk',   h: null, cell:128, xkind:2 },
+  { key:'cyberA',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Attack', h: null, cell:128, xkind:2 },
+  { key:'cyberD',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Die',    h: null, cell:128, xkind:2 },
   { key:'eldritch', cat:'ENEMIES', unit:'Eldritch Sponge', action:'Idle',   h: wrapAnim(ANIM[1]) },
-  { key:'eldritchW',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Walk',   h: null },
-  { key:'eldritchA',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Attack', h: null },
-  { key:'eldritchD',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Die',    h: null },
+  { key:'eldritchW',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Walk',   h: null, cell:128, xkind:1 },
+  { key:'eldritchA',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Attack', h: null, cell:128, xkind:1 },
+  { key:'eldritchD',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Die',    h: null, cell:128, xkind:1 },
   { key:'psychoid', cat:'ENEMIES', unit:'Psychoid',        action:'Walk',   h: wrapAnim(ANIM[5]) },
-  { key:'psychoidI',cat:'ENEMIES', unit:'Psychoid',        action:'Idle',   h: null },
-  { key:'psychoidA',cat:'ENEMIES', unit:'Psychoid',        action:'Attack', h: null },
-  { key:'psychoidD',cat:'ENEMIES', unit:'Psychoid',        action:'Die',    h: null },
+  { key:'psychoidI',cat:'ENEMIES', unit:'Psychoid',        action:'Idle',   h: null, cell:128, xkind:5 },
+  { key:'psychoidA',cat:'ENEMIES', unit:'Psychoid',        action:'Attack', h: null, cell:128, xkind:5 },
+  { key:'psychoidD',cat:'ENEMIES', unit:'Psychoid',        action:'Die',    h: null, cell:128, xkind:5 },
   { key:'subterra', cat:'ENEMIES', unit:'Subterra',        action:'Idle',   h: wrapAnim(ANIM[4]) },
-  { key:'subterraW',cat:'ENEMIES', unit:'Subterra',        action:'Walk',   h: null },
-  { key:'subterraA',cat:'ENEMIES', unit:'Subterra',        action:'Attack', h: null },
-  { key:'subterraD',cat:'ENEMIES', unit:'Subterra',        action:'Die',    h: null },
+  { key:'subterraW',cat:'ENEMIES', unit:'Subterra',        action:'Walk',   h: null, cell:128, xkind:4 },
+  { key:'subterraA',cat:'ENEMIES', unit:'Subterra',        action:'Attack', h: null, cell:128, xkind:4 },
+  { key:'subterraD',cat:'ENEMIES', unit:'Subterra',        action:'Die',    h: null, cell:128, xkind:4 },
   { key:'xenoid',   cat:'ENEMIES', unit:'Xenoid',          action:'Walk',   h: wrapAnim(ANIM[0]) },
-  { key:'xenoidI',  cat:'ENEMIES', unit:'Xenoid',          action:'Idle',   h: null },
-  { key:'xenoidA',  cat:'ENEMIES', unit:'Xenoid',          action:'Attack', h: null },
-  { key:'xenoidD',  cat:'ENEMIES', unit:'Xenoid',          action:'Die',    h: null },
+  { key:'xenoidI',  cat:'ENEMIES', unit:'Xenoid',          action:'Idle',   h: null, cell:128, xkind:0 },
+  { key:'xenoidA',  cat:'ENEMIES', unit:'Xenoid',          action:'Attack', h: null, cell:128, xkind:0 },
+  { key:'xenoidD',  cat:'ENEMIES', unit:'Xenoid',          action:'Die',    h: null, cell:128, xkind:0 },
   { key:'xenoptera',cat:'ENEMIES', unit:'Xenoptera',       action:'Walk',   h: wrapAnim(ANIM[3]) },
-  { key:'xenopteraI',cat:'ENEMIES',unit:'Xenoptera',       action:'Idle',   h: null },
-  { key:'xenopteraA',cat:'ENEMIES',unit:'Xenoptera',       action:'Attack', h: null },
-  { key:'xenopteraD',cat:'ENEMIES',unit:'Xenoptera',       action:'Die',    h: null },
+  { key:'xenopteraI',cat:'ENEMIES',unit:'Xenoptera',       action:'Idle',   h: null, cell:128, xkind:3 },
+  { key:'xenopteraA',cat:'ENEMIES',unit:'Xenoptera',       action:'Attack', h: null, cell:128, xkind:3 },
+  { key:'xenopteraD',cat:'ENEMIES',unit:'Xenoptera',       action:'Die',    h: null, cell:128, xkind:3 },
   // BOSSES
   { key:'queen',    cat:'BOSSES',  unit:'Alien Queen',     action:'Idle',   h: wrapImg(IMGS.queen, 1) },
-  { key:'queenA',   cat:'BOSSES',  unit:'Alien Queen',     action:'Attack', h: null },
-  { key:'queenD',   cat:'BOSSES',  unit:'Alien Queen',     action:'Die',    h: null },
+  { key:'queenA',   cat:'BOSSES',  unit:'Alien Queen',     action:'Attack', h: null, cell:256 },
+  { key:'queenD',   cat:'BOSSES',  unit:'Alien Queen',     action:'Die',    h: null, cell:256 },
   { key:'praetIdle',cat:'BOSSES',  unit:'Praetorian',      action:'Idle',   h: wrapAnim(PRAET.idle) },
   { key:'praetAtk', cat:'BOSSES',  unit:'Praetorian',      action:'Attack', h: wrapAnim(PRAET.attack) },
   { key:'praetDie', cat:'BOSSES',  unit:'Praetorian',      action:'Die',    h: wrapAnim(PRAET.death) },
   // PLAYER
   { key:'soldier',  cat:'PLAYER',  unit:'Soldier',         action:'Fire',   h: wrapImg(IMGS.soldierAnim, 4) },
-  { key:'soldierW', cat:'PLAYER',  unit:'Soldier',         action:'Walk',   h: null },
-  { key:'soldierD', cat:'PLAYER',  unit:'Soldier',         action:'Die',    h: null },
+  { key:'soldierW', cat:'PLAYER',  unit:'Soldier',         action:'Walk',   h: null, cell:128 },
+  { key:'soldierD', cat:'PLAYER',  unit:'Soldier',         action:'Die',    h: null, cell:128 },
   // ITEMS
   { key:'tank',     cat:'ITEMS',   unit:'Ironclad Tank',   action:'Idle',   h: wrapImg(IMGS.tank, 1) },
   { key:'perkIcons',cat:'ITEMS',   unit:'Power-up Icons',  action:'Icons',  h: wrapImg(IMGS.perkIcons, 5) },
   { key:'wpnIcons', cat:'ITEMS',   unit:'Weapon Icons',    action:'Icons',  h: wrapImg(IMGS.weaponIcons, 5) },
 ];
-// apply saved sprite overrides (edited strips win over the shipped PNGs)
-for (const r of REG) { const s = savedSprites[r.key]; if (r.h && s && s.data) {
-  r.h.img.src = s.data; r.h.img.ok = true; if (s.frames) r.h.frames = s.frames; if (s.fps && r.h.fps !== undefined) r.h.fps = s.fps; } }
+// user-created slot: standalone holder (Image + frames + fps), wired into XANIM if it has a game hook
+function makeHolder(r, dataURL, frames, fps){
+  const im = new Image(); im.onload = () => im.ok = true; im.src = dataURL;
+  r.h = { img: im, frames: frames || 1, fps: fps || 8 };
+  if (r.xkind !== undefined) XANIM[r.xkind + ':' + r.action] = r.h;
+  return r.h;
+}
+// apply saved sprite overrides (edited strips win over the shipped PNGs; created slots come back to life)
+for (const r of REG) { const s = savedSprites[r.key]; if (!s || !s.data) continue;
+  if (r.h) { r.h.img.src = s.data; r.h.img.ok = true; if (s.frames) r.h.frames = s.frames; if (s.fps && r.h.fps !== undefined) r.h.fps = s.fps; }
+  else makeHolder(r, s.data, s.frames, s.fps); }
 function persistSprite(r){ const c=document.createElement('canvas'); const im=r.h.img;
   c.width=im.naturalWidth||im.width; c.height=im.naturalHeight||im.height;
   c.getContext('2d').drawImage(im,0,0);
@@ -1729,12 +1758,19 @@ function renderSprites(){
         REG.forEach((r,i)=>{ if (r.cat!==cat || r.unit!==u) return;
           if (r.h) h += `<button data-sp="${i}" style="display:inline-flex;align-items:center;gap:5px">
             <canvas data-th="${i}" width="26" height="26" style="image-rendering:pixelated"></canvas>${r.action} <span style="color:#f4f">${r.h.frames}f</span></button>`;
-          else h += `<span style="border:1px dashed #345;border-radius:6px;padding:4px 10px;color:#456;font-size:11px">${r.action} — empty</span>`; });
+          else h += `<button data-mk="${i}" style="border-style:dashed;border-color:#345;color:#6a8;background:none">＋ ${r.action}</button>`; });
         h += '</div>';
       }
     }
     body.innerHTML = h;
     body.querySelectorAll('[data-sp]').forEach(b=>b.onclick=()=>{ spriteSel=+b.dataset.sp; frameSel=0; loadWork(); renderSprites(); });
+    body.querySelectorAll('[data-mk]').forEach(b=>b.onclick=()=>{   // create a blank 1-frame strip and open the paint editor
+      const r = REG[+b.dataset.mk], c = document.createElement('canvas');
+      c.width = c.height = r.cell || 128;
+      savedSprites[r.key] = { data: c.toDataURL('image/png'), frames: 1, fps: 8 };   // persist straight from the canvas — the Image may not be decoded yet
+      try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); } catch(e) {}
+      makeHolder(r, savedSprites[r.key].data, 1, 8);
+      spriteSel = +b.dataset.mk; frameSel = 0; loadWork(); renderSprites(); });
     body.querySelectorAll('[data-th]').forEach(c=>{ const r=REG[+c.dataset.th]; const im=r.h.img;
       if(im&&(im.ok||im.complete)){ const cw=(im.naturalWidth||im.width)/Math.max(1,r.h.frames), chh=im.naturalHeight||im.height;
         try{c.getContext('2d').drawImage(im,0,0,cw,chh,0,0,26,26);}catch(e){} } });
@@ -1766,10 +1802,12 @@ function renderSprites(){
     a.href=work.toDataURL('image/png'); a.download=r.key+'_strip.png'; a.click(); };
   drawFrames(); drawPaint(); bindPaint();
 }
-function loadWork(){ const r=REG[spriteSel], im=r.h.img;
+function loadWork(){ const r=REG[spriteSel], im=r.h.img, cell=r.cell||128;
   work=document.createElement('canvas');
-  work.width=im.naturalWidth||im.width; work.height=im.naturalHeight||im.height;
-  work.getContext('2d').drawImage(im,0,0); work._frames=r.h.frames; undoStack=[]; }
+  work.width=im.naturalWidth||im.width||cell*r.h.frames;   // fallback: image not decoded yet (fresh slot)
+  work.height=im.naturalHeight||im.height||cell;
+  try{work.getContext('2d').drawImage(im,0,0);}catch(e){}  // blank strip stays blank
+  work._frames=r.h.frames; undoStack=[]; }
 function drawFrames(){ const r=REG[spriteSel], holder=body.querySelector('#spFrames'); if(!holder)return;
   holder.innerHTML=''; const cw=work.width/work._frames, chh=work.height;
   for(let f=0;f<work._frames;f++){ const c=document.createElement('canvas');
@@ -1807,9 +1845,11 @@ function frameOp(op){ const cw=work.width/work._frames, chh=work.height, n=work.
     if(op==='dup'&&f===frameSel){g.drawImage(work,f*cw,0,cw,chh,dst*cw,0,cw,chh);dst++;} }
   work=c2; work._frames=n2; frameSel=Math.min(frameSel,n2-1); undoStack=[];
   drawFrames(); drawPaint(); }
-function applyWork(){ const r=REG[spriteSel];
-  r.h.img.src=work.toDataURL('image/png'); r.h.img.ok=true; r.h.frames=work._frames;
-  persistSprite(r); alert('Saved — live in game now. DOWNLOAD + drop into assets/ to make it permanent in the repo.'); }
+function applyWork(){ const r=REG[spriteSel], data=work.toDataURL('image/png');
+  r.h.img.src=data; r.h.img.ok=true; r.h.frames=work._frames;
+  savedSprites[r.key]={data,frames:work._frames,fps:r.h.fps};   // persist from the work canvas, not the (maybe undecoded) Image
+  try{localStorage.setItem(SKEY,JSON.stringify(savedSprites));}catch(e){alert('Sprite too large for localStorage — use DOWNLOAD instead');}
+  alert('Saved — live in game now. DOWNLOAD + drop into assets/ to make it permanent in the repo.'); }
 }catch(err){ console.warn('FORGE disabled:', err); }
 })();
 
