@@ -1021,10 +1021,12 @@ const deathFx = [];                            // one-shot 'Die' strip playbacks
 // Naming convention: assets/env/L<level>_path.png (road tile), _bg.png (540x960 backdrop),
 // _side.png (side tile). Missing files are simply ignored — neon default stays.
 const ENVIMG = {};
+const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
+let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
 function loadEnv(level) {
   if (ENVIMG[level]) return ENVIMG[level];
   const mk = suffix => { const im = new Image(); im.onload = () => im.ok = true; im.onerror = () => im.ok = false;
-    im.src = 'assets/env/L' + level + '_' + suffix + '.png'; return im; };
+    im.src = ENV_OVR['L' + level + '_' + suffix] || ('assets/env/L' + level + '_' + suffix + '.png'); return im; };
   return ENVIMG[level] = { path: mk('path'), bg: mk('bg'), side: mk('side') };
 }
 function envNow() { return ENVIMG[G.level] || loadEnv(G.level); }
@@ -1207,7 +1209,12 @@ function draw() {
   // Pre-rendered cyberpunk backdrop + elevated perspective highway.
   cx.fillStyle = '#0a0518'; cx.fillRect(-10, -10, CFG.W + 20, CFG.H + 20);
   cx.drawImage(ART.backdrop, 0, 0);
-  { const env = envNow(); if (env.bg.ok) cx.drawImage(env.bg, 0, 0, CFG.W, CFG.H); }   // per-level backdrop art (FORGE WORLD)
+  { const env = envNow(); if (env.bg.ok) {                       // per-level backdrop art (FORGE WORLD)
+      const a = env.bg.width / env.bg.height;
+      if (a > 1.8) { const h = CFG.W / a;                        // wide skyline strip: sit it on the horizon
+        cx.drawImage(env.bg, 0, HORIZON_Y - h + 8, CFG.W, h); }
+      else cx.drawImage(env.bg, 0, 0, CFG.W, CFG.H);             // full-frame art: cover the canvas
+  } }
   // sparse drifting embers (subtle, not confetti)
   for(let i=0;i<10;i++){const x=(i*137+G.t*(10+i%4)*3)%CFG.W,y=(i*211+G.t*30)%CFG.H;
     cx.globalAlpha=.10+(i%3)*.05;cx.fillStyle=i%3?'#5cf':'#f84';cx.fillRect(x,y,2,2);}cx.globalAlpha=1;
@@ -1869,16 +1876,51 @@ function renderTab(){
       <div class="row">EVERY ${num('rollers.interval',0.5,44)}s &nbsp; ARMORED % ${num('rollers.pctArmored',5,44)} &nbsp; FROM LVL ${num('rollers.minLvl',1,36)}</div>
       <div class="row">HP ${num('rollers.hp',2,44)} + ${num('rollers.hpLvl',1,40)}/lvl &nbsp; SPEED ${num('rollers.speed',10,48)} &nbsp; SIZE ${num('rollers.size',2,40)} &nbsp; SQUAD DMG ${num('rollers.dmg',1,36)}</div>
       <div class="hint">Temp art for now — drop real sprites in SPRITES → ITEMS → Roller (Breakable) / (Armored).</div>
-      <div class="hint" style="color:#f4f;margin-top:14px">ENVIRONMENT — name each level; art auto-loads from <b>assets/env/</b> as
-        L&lt;n&gt;_path.png (road tile), L&lt;n&gt;_bg.png (540×960 backdrop), L&lt;n&gt;_side.png (side tile). Missing = neon default.</div>
+      <div class="hint" style="color:#f4f;margin-top:14px">ENVIRONMENT — name each level, then CLICK a slot to add/replace its art
+        (path = road tile, bg = skyline strip or full 540×960, side = off-road tile). Blank slot = current neon look, game ignores it.
+        Uploads go live instantly; ✕ clears back to blank. (assets/env/L&lt;n&gt;_*.png files also work as a fallback.)</div>
       <table><tr><th>LVL</th><th>NAME</th><th>PATH</th><th>BG</th><th>SIDE</th></tr>`;
-    for(let i=0;i<10;i++){ const th=s=>`<img src="assets/env/L${i+1}_${s}.png?${Date.now()}" style="height:22px;border:1px solid #333;border-radius:3px"
-        onerror="this.outerHTML='<span style=&quot;color:#456&quot;>—</span>'">`;
+    for(let i=0;i<10;i++){ const th=s=>{ const key=`L${i+1}_${s}`;
+        if (ENV_OVR[key]) return `<span style="white-space:nowrap"><img src="${ENV_OVR[key]}" data-up="${key}" title="click to replace"
+          style="height:26px;border:1px solid #4ff;border-radius:3px;cursor:pointer;vertical-align:middle">
+          <span data-clr="${key}" style="color:#f66;cursor:pointer;font-weight:900">✕</span></span>`;
+        return `<img src="assets/env/${key}.png" data-up="${key}" title="click to replace"
+          style="height:26px;border:1px solid #333;border-radius:3px;cursor:pointer;vertical-align:middle"
+          onerror="this.outerHTML='<button data-up=\\'${key}\\' style=\\'border-style:dashed;border-color:#345;color:#6a8;background:none\\'>＋ ${s}</button>'">`; };
       h += `<tr><td style="color:#4ff">${i+1}</td>
         <td><input type="text" data-env="${i}" value="${(EDIT.env[i]||{}).name||''}" style="width:150px"></td>
         <td>${th('path')}</td><td>${th('bg')}</td><td>${th('side')}</td></tr>`; }
-    body.innerHTML = h + '</table>';
+    h += `</table><input type="file" id="envFile" accept="image/*" style="display:none">`;
+    body.innerHTML = h;
     body.querySelectorAll('[data-env]').forEach(inp=>inp.oninput=()=>{ EDIT.env[+inp.dataset.env].name = inp.value; saveEdit(); });
+    if (!body._envWired) { body._envWired = true;      // one delegated listener, survives re-renders
+      body.addEventListener('click', ev => {
+        const t = ev.target, up = t.dataset && t.dataset.up, clr = t.dataset && t.dataset.clr;
+        if (clr) { delete ENV_OVR[clr];
+          try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); } catch(e) {}
+          const lvl = +clr.match(/^L(\d+)_/)[1]; delete ENVIMG[lvl]; renderTab(); return; }
+        if (!up) return;
+        const ef = body.querySelector('#envFile'); if (!ef) return;
+        ef.dataset.key = up; ef.value = ''; ef.click();
+      }); }
+    const envFile = body.querySelector('#envFile');
+    envFile.onchange = () => { const f = envFile.files[0], key = envFile.dataset.key; if (!f || !key) return;
+      const rd = new FileReader();
+      rd.onload = () => { const im = new Image();
+        im.onload = () => {
+          // downscale on import so 10 levels of art stay inside localStorage quota
+          const isBg = /_bg$/.test(key), max = isBg ? 1080 : 512;
+          const sc = Math.min(1, max / Math.max(im.width, im.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc);
+          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+          ENV_OVR[key] = c.toDataURL('image/png');
+          try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); }
+          catch(e) { delete ENV_OVR[key]; alert('Storage full — clear some env art or drop the file into assets/env/ instead.'); return; }
+          const lvl = +key.match(/^L(\d+)_/)[1]; delete ENVIMG[lvl];   // live reload for that level
+          renderTab(); };
+        im.src = rd.result; };
+      rd.readAsDataURL(f); };
   }
   else if (tab===5) renderSprites();
   else { // DATA
@@ -1886,16 +1928,20 @@ function renderTab(){
       <div class="row"><button id="fExp">⇩ EXPORT ALL (JSON)</button>
       <input type="file" id="fImp" accept=".json" style="display:none"><button id="fImpB">⇧ IMPORT JSON</button></div>
       <div class="row"><button class="warn" id="fRstV">RESET ALL VALUES</button>
-      <button class="warn" id="fRstS">RESET ALL SPRITES</button></div>`;
+      <button class="warn" id="fRstS">RESET ALL SPRITES</button>
+      <button class="warn" id="fRstE">RESET ENV ART</button></div>`;
     body.querySelector('#fExp').onclick=()=>{ const a=document.createElement('a');
-      a.href='data:application/json,'+encodeURIComponent(JSON.stringify({values:EDIT,sprites:savedSprites}));
+      a.href='data:application/json,'+encodeURIComponent(JSON.stringify({values:EDIT,sprites:savedSprites,env:ENV_OVR}));
       a.download='hiveswarm_forge_backup.json'; a.click(); };
+    body.querySelector('#fRstE').onclick=()=>{ if(confirm('Clear ALL uploaded environment art? (levels fall back to assets/env files or neon)')){
+      ENV_OVR={}; try{localStorage.removeItem(ENV_KEY);}catch(e){} for(const k in ENVIMG)delete ENVIMG[k]; renderTab(); } };
     body.querySelector('#fImpB').onclick=()=>body.querySelector('#fImp').click();
     body.querySelector('#fImp').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader();
       rd.onload=()=>{ try{ const j=JSON.parse(rd.result);
         if(j.values){EDIT=mergeEdit(editDefaults(),j.values);saveEdit();applyEditWeapons();}
         if(j.sprites){savedSprites=j.sprites;localStorage.setItem(SKEY,JSON.stringify(savedSprites));
-          for(const r of REG){const s=savedSprites[r.key];if(s&&s.data){r.h.img.src=s.data;if(s.frames)r.h.frames=s.frames;}}}
+          for(const r of REG){const s=savedSprites[r.key];if(s&&s.data){if(r.h){r.h.img.src=s.data;if(s.frames)r.h.frames=s.frames;}else makeHolder(r,s.data,s.frames,s.fps);}}}
+        if(j.env){ENV_OVR=j.env;localStorage.setItem(ENV_KEY,JSON.stringify(ENV_OVR));for(const k in ENVIMG)delete ENVIMG[k];}
         renderTab(); }catch(err){alert('Bad JSON: '+err.message);} }; rd.readAsText(f); };
     body.querySelector('#fRstV').onclick=()=>{ if(confirm('Reset ALL edited values to defaults?')){
       EDIT=editDefaults(); saveEdit(); applyEditWeapons(); renderTab(); } };
