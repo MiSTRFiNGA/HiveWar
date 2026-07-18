@@ -710,31 +710,46 @@ function update(dt) {
       if (Math.abs(e.x - n.x) < 140 && Math.abs(e.y - n.y) < 160) { e.buffed = 1; break; }
     }
     if (e.mode === 1) { if (e.t >= 0.8) { e.mode = 0; e.t = 0; sfx('elite'); } else return; }
-    // LANE-RELATIVE position: e.lane (-1..1) maps onto the road's perspective width, so enemies
-    // converge at the horizon and fan out as the road widens — they NEVER cross the pink/blue walls.
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
     const hw = roadHalfWidth(ez);
-    if (e.kind === 3) {                                // winged diver: wide swoop within the lane
-      const swoop = Math.sin(e.t * 4 + e.phase) * 0.35;
-      e.x = CFG.W/2 + Math.max(-0.95, Math.min(0.95, e.lane + swoop)) * hw;
-      e.y += e.vy * dt;
+    // per-enemy crowd offset so the swarm mobs the squad as a pack, not a single-file line
+    if (e.crowd === undefined) e.crowd = ((e.phase * 2.13) % 1 - 0.5) * 0.55;
+    if (e.mode === 2) {
+      // LATCHED: reached the squad — stay at the front line and keep attacking until killed
+      const tx = G.px + e.crowd * 150;                       // crowd around the squad, tracking its moves
+      e.x += (tx - e.x) * Math.min(1, 7 * dt);
+      const lunge = Math.max(0, Math.sin(e.t * 6 + e.phase)) * 14;   // rhythmic biting lunges
+      e.y += ((CFG.H - 145 + lunge) - e.y) * Math.min(1, 8 * dt);
+      e.atkT -= dt;
+      if (e.atkT <= 0) { e.atkT = 0.85;
+        const loss = Math.max(1, Math.round(([4,16,8,9,8,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
+        loseUnits(loss, e.x, e.y);
+        if (G.squad <= 0) return;
+      }
     } else {
-      if (e.wig === undefined) e.wig = 2.0 + (e.phase * 3.3) % 2.6;   // per-enemy skitter rate
-      const weave = Math.sin(e.t * e.wig + e.phase) * 0.05 + Math.sin(e.t * 0.7 + e.phase * 2.0) * 0.08;
-      e.lane += (((G.px - CFG.W/2) / Math.max(1, hw)) - e.lane) * 0.05 * dt;   // gentle drift toward the squad's lane
-      const lane = Math.max(-0.96, Math.min(0.96, e.lane + weave));
-      e.x = CFG.W/2 + lane * hw;
-      const crawl = 0.5 + 0.8 * Math.max(0, Math.sin(e.t * (2.3 + (e.phase % 1.0)) + e.phase));  // creep surges
-      e.y += e.vy * crawl * (e.buffed ? 1.45 : 1) * dt;
-    }
-    { const ehw = hw - e.r * 0.4; e.x = Math.max(CFG.W/2 - ehw, Math.min(CFG.W/2 + ehw, e.x)); }  // sprite-radius safety
-    if (e.y > CFG.H + 40) { enemies.release(e); return; }
-    // contact with squad zone
-    if (e.y > CFG.H - 150 && Math.abs(e.x - G.px) < 60) {
-      const loss = [4,16,8,9,8,6][e.kind] || 4;   // harder hits — enemies reaching you really hurt
-      loseUnits(loss, e.x, e.y); enemies.release(e);
-      if (G.squad <= 0) return;
-      return;
+      // LANE-RELATIVE position: e.lane (-1..1) maps onto the road's perspective width, so enemies
+      // converge at the horizon and fan out as the road widens — they NEVER cross the pink/blue walls.
+      // HIVE HOMING: the whole swarm funnels toward the squad, harder the closer it gets.
+      const targetLane = (G.px - CFG.W/2) / Math.max(1, hw) + e.crowd * (1 - ez) * 0.6;
+      const homing = (0.25 + 1.5 * ez) * (e.buffed ? 1.5 : 1);
+      if (e.kind === 3) {                                // winged diver: swoop, but dive AT the squad
+        const swoop = Math.sin(e.t * 4 + e.phase) * (0.35 * (1 - ez * 0.7));
+        e.lane += (targetLane - e.lane) * homing * 1.4 * dt;
+        e.x = CFG.W/2 + Math.max(-0.95, Math.min(0.95, e.lane + swoop)) * hw;
+        e.y += e.vy * dt;
+      } else {
+        if (e.wig === undefined) e.wig = 2.0 + (e.phase * 3.3) % 2.6;   // per-enemy skitter rate
+        const weave = Math.sin(e.t * e.wig + e.phase) * 0.06 + Math.sin(e.t * 0.7 + e.phase * 2.0) * 0.09;
+        e.lane += (targetLane - e.lane) * homing * dt;
+        const lane = Math.max(-0.96, Math.min(0.96, e.lane + weave));
+        e.x = CFG.W/2 + lane * hw;
+        const crawl = 0.5 + 0.8 * Math.max(0, Math.sin(e.t * (2.3 + (e.phase % 1.0)) + e.phase));  // creep surges
+        e.y += e.vy * crawl * (e.buffed ? 1.45 : 1) * dt;
+      }
+      { const ehw = hw - e.r * 0.4; e.x = Math.max(CFG.W/2 - ehw, Math.min(CFG.W/2 + ehw, e.x)); }  // sprite-radius safety
+      if (e.y > CFG.H + 40) { enemies.release(e); return; }
+      // reached the squad's front line → latch on and start attacking (first bite comes fast)
+      if (e.y > CFG.H - 155 && Math.abs(e.x - G.px) < 90) { e.mode = 2; e.atkT = 0.25; sfx('hit'); }
     }
     bullets.each(b => {
       const dx = e.x - b.x, dy = e.y - b.y, rr2 = (e.r + b.r) * (e.r + b.r);
