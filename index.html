@@ -8,8 +8,12 @@
   html,body{margin:0;padding:0;background:#07030f;overflow:hidden;touch-action:none;
     font-family:'Segoe UI',system-ui,sans-serif;-webkit-user-select:none;user-select:none}
   #game{display:block;margin:0 auto;background:#0a0518}
-  #hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#9ff;
-    font-weight:700;font-size:18px;text-shadow:0 0 8px #0ff;pointer-events:none;z-index:5}
+  #hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#9ff;white-space:nowrap;
+    font-weight:900;font-size:36px;pointer-events:none;z-index:5}
+  #hud .squad{color:#9ff;text-shadow:0 0 4px #0ff,0 0 12px #0ff,0 0 22px #0ff}
+  #hud .lvl  {color:#c46bff;text-shadow:0 0 4px #a03bff,0 0 12px #a03bff,0 0 22px #7a1bff}
+  #hud .cash {color:#4dff86;text-shadow:0 0 4px #17d94f,0 0 12px #17d94f,0 0 22px #0a9e33}
+  #hud .sep  {opacity:.35}
 </style>
 </head>
 <body>
@@ -122,6 +126,8 @@ const BAL = {
   start: { squad: 5, weapon: 0 },
 };
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
+// index into the perk_icons.png strip for each perk (undefined = no art, falls back to text only)
+const PERK_ICON = {'Chain Lightning':0,'Shield Matrix':1,'Orbital Laser':2,'Acid Rounds':3,'Drone Escort':4};
 const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16)
   {hp:2,  r:22, spd:70,  col:'#3f6', credits:1},    // 0 Xenoid
   {hp:26, r:24, spd:26,  col:'#a3e', credits:4},    // 1 Eldritch Sponge — 2x bigger
@@ -140,6 +146,55 @@ const CODEX = [
   {name:'Cephalo-Psychoid', cls:'Command Node', tip:'A coordination node — its psychic aura makes every nearby xeno surge faster. KILL IT FIRST and the swarm around it slows right back down.'},
 ];
 
+// ============================================================
+// HiVE FORGE — live-tunable overrides (edited by the GAME EDITOR window, F2)
+// Every gameplay number the editor exposes lives here; the game reads EDIT.*
+// so Eric can tweak + test without touching code. Persisted per-browser.
+// ============================================================
+const EDIT_KEY = 'hiveswarm_forge_v1';
+function editDefaults() { return {
+  player: { rofMul: 1, dmgMul: 1, armor: 0 },   // armor = % of squad-loss prevented (0-90)
+  // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
+  // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears
+  kinds: [
+    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:60,  minLvl:1 },
+    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:20,  minLvl:1 },
+    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:12,  minLvl:2 },
+    { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4 },
+    { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6 },
+    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3 },
+  ],
+  weapons: WEAPONS.map(w => ({ name:w.name, rof:w.rof, dmg:w.dmg, n:w.n, spread:w.spread })),
+  spawnRate: BAL.spawnRate.slice(),
+  bossHp: BAL.bossHp.slice(),
+  queen: Object.assign({}, BAL.queen),
+  bossY: 560,                                    // how far down the boss descends (bigger = closer to player)
+}; }
+function mergeEdit(base, saved) {                // deep-ish merge so new fields appear after updates
+  for (const k in saved) {
+    if (Array.isArray(base[k]) && Array.isArray(saved[k]))
+      base[k] = base[k].map((v, i) => (typeof v === 'object' && v ? Object.assign({}, v, saved[k][i] || {}) : (saved[k][i] !== undefined ? saved[k][i] : v)));
+    else if (typeof base[k] === 'object' && base[k] && typeof saved[k] === 'object') Object.assign(base[k], saved[k]);
+    else base[k] = saved[k];
+  }
+  return base;
+}
+let EDIT = (() => { try { return mergeEdit(editDefaults(), JSON.parse(localStorage.getItem(EDIT_KEY) || '{}')); }
+                    catch (e) { return editDefaults(); } })();
+function saveEdit() { try { localStorage.setItem(EDIT_KEY, JSON.stringify(EDIT)); } catch (e) {} }
+function applyEditWeapons() {                    // WEAPONS is read all over — mutate it in place
+  EDIT.weapons.forEach((w, i) => { if (WEAPONS[i]) { WEAPONS[i].rof = w.rof; WEAPONS[i].dmg = w.dmg; WEAPONS[i].n = w.n; WEAPONS[i].spread = w.spread; } });
+}
+applyEditWeapons();
+function pickKind(lvl) {                          // weighted spawn pick from editor weights (minLvl-gated)
+  let tot = 0; for (let k = 0; k < 6; k++) if (lvl >= EDIT.kinds[k].minLvl) tot += EDIT.kinds[k].weight;
+  if (tot <= 0) return 0;
+  let r = rng() * tot;
+  for (let k = 0; k < 6; k++) { if (lvl < EDIT.kinds[k].minLvl) continue; r -= EDIT.kinds[k].weight; if (r <= 0) return k; }
+  return 0;
+}
+function kindHp(k, lvl) { return Math.max(1, EDIT.kinds[k].hpBase + EDIT.kinds[k].hpLvl * lvl); }
+
 function load() {
   try { return Object.assign({dmg:0,squad:0,weapon:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true},
     JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
@@ -154,7 +209,11 @@ function save() {
 let dragX = null, testBot = /[?&]test=1/.test(location.search), debugCanvas=/[?&]dbg=1/.test(location.search);
 function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / scale; }
 function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.top)/scale; }
-function down(e) { botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
+function down(e) {
+  // clicks on the FORGE editor window / ⚒ button are UI, not gameplay — never let them
+  // start a run from the title screen or steer the squad mid-game
+  if (e.target && e.target.closest && e.target.closest('#forge,#forgeBtn')) return;
+  botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
   if (dragX>CFG.W-65&&gy<70) { G.meta.sfx=!G.meta.sfx; AUDIO.setMuted(!G.meta.sfx); save(); return; }
   if (G.state === 'title') {
     if (gy > 740 && gy < 800) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY button
@@ -226,9 +285,17 @@ const AUDIO = (() => {
       const p=a.play(); if(p) p.then(()=>{a.pause();a.currentTime=0;a.muted=false;}).catch(()=>{a.muted=false;}); else a.muted=false;
     }catch(_){} } }
   }
-  addEventListener('psdk:adstart', () => { muted = true; });
+  // looping engine track while tanks are on the field (25% quieter than a normal cue)
+  let tankLoop = null;
+  function loopTank(on) {
+    if (on && !muted) {
+      if (!tankLoop) { tankLoop = new Audio(SFX + 'tank-track.mp3'); tankLoop.loop = true; tankLoop.volume = 0.45; }
+      if (tankLoop.paused) { try { tankLoop.currentTime = 0; tankLoop.play().catch(() => {}); } catch (_) {} }
+    } else if (tankLoop) { try { tankLoop.pause(); } catch (_) {} }
+  }
+  addEventListener('psdk:adstart', () => { muted = true; loopTank(false); });
   addEventListener('psdk:adend', () => { muted = false; });
-  return { play, sample, resume, setMuted(v) { muted = !!v; } };
+  return { play, sample, resume, loopTank, setMuted(v) { muted = !!v; if (v) loopTank(false); } };
 })();
 function sfx(name) { AUDIO.play(name); }
 G.meta.sfx = true;                        // always start UNMUTED (a stuck muted save was silencing everything)
@@ -240,6 +307,11 @@ addEventListener('pointerdown', unlockAudio); addEventListener('keydown', unlock
 
 // ---------- run flow ----------
 function startRun(mode='campaign') {
+  // FRESH GAME — purchased run-upgrades never carry over between games (fixes tanks/etc.
+  // "leaking" in from a previous run). They persist only within a run (level → level via the shop).
+  // Permanent unlocks/records (codex, endless, bestScore, sfx) are intentionally kept.
+  Object.assign(G.meta, {dmg:0, squad:0, weapon:0, perkSlot:0, vehicleDrop:0, credits:0});
+  G.credits = 0; save(); AUDIO.loopTank(false);
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
   G.squad = startingSquad(); G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
@@ -325,11 +397,14 @@ function gatePass(g) {
   if (G.squad <= 0) die();
 }
 
+// ---------- deploy cues (big center-screen banner: "TANK INBOUND" etc.) ----------
+function announce(text, col) { G.cueText = text; G.cueCol = col || '#ffd75e'; G.cueT = 2.2; }
+
 // ---------- combat ----------
 let fireT = 0;
 function fire(dt) {
   const w = WEAPONS[G.weapon];
-  const rof = w.rof * (1 + 0.10 * (G.perks['Overclock'] || 0));
+  const rof = w.rof * (1 + 0.10 * (G.perks['Overclock'] || 0)) * EDIT.player.rofMul;   // FORGE fire-rate knob
   fireT -= dt;
   if (fireT > 0) return;
   fireT = 1 / rof;
@@ -345,8 +420,8 @@ function fire(dt) {
     b.vx = (CFG.W / 2 - b.x) * 0.55 + rr(-1, 1) * w.spread * 40;               // slight jitter per shot
     b.vy = -640;
     b.vis = true;                                    // EVERY soldier's bullet is visible now
-    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1);  // +10% damage (10% easier); multi-pellet folded in
-    b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false;
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1) * EDIT.player.dmgMul;  // +10% damage; FORGE dmg knob
+    b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false;   // pooled — clear the drone flag
   }
 }
 function perkWeapons(dt) {
@@ -357,10 +432,11 @@ function perkWeapons(dt) {
       G.droneT = Math.max(0.14, 0.32 - drones * 0.03);
       for (let i = 0; i < drones; i++) {
         const b = bullets.alloc(); if (!b) break;
-        const a = G.t * 2.4 + i * 6.283 / drones;
-        b.x = G.px + Math.cos(a) * 54; b.y = CFG.H - 120 + Math.sin(a) * 25;
+        const a = G.t * 2.6 + i * 6.283 / drones;              // EXACT same orbit as the drawn drones
+        b.x = G.px + Math.cos(a) * 82; b.y = CFG.H - 140 + Math.sin(a) * 34;
         b.vx = Math.sin(a) * 45; b.vy = -720; b.dmg = 2.2 + 1.2 * (G.perks['Drone Escort'] || 0);
         b.r = 4; b.tier = Math.min(4, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true;
+        b.purple = true;                                       // drone shots are PURPLE plasma
       }
     }
   }
@@ -381,13 +457,15 @@ function perkWeapons(dt) {
 function vehicleUpdate(dt) {
   const rank = Math.min(5, G.meta.vehicleDrop || 0); if (!rank) return;
   if (G.vehicleT <= 0) { G.vehicleCD -= dt; if (G.vehicleCD <= 0) {
-    G.vehicleT = 8; G.vehicleCD = Math.max(12, 24-rank*2); G.vehicleFire = 0; sfx('drone'); } return; }
+    G.vehicleT = 8; G.vehicleCD = Math.max(12, 24-rank*2); G.vehicleFire = 0; sfx('drone'); AUDIO.loopTank(true);
+    announce('⛨ TANK INBOUND', '#fb4'); } return; }
   G.vehicleT -= dt; G.vehicleFire -= dt;
+  if (G.vehicleT <= 0) AUDIO.loopTank(false);   // tanks left the field — cut the engine track
   // exactly TWO tanks (one per side) each LOB one heavy shell that detonates on impact
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
     for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
       b.x = G.px + side * 70; b.y = CFG.H - 172; b.vx = side * 26; b.vy = -320 - rank*18;
-      b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; } }
+      b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; } }
 }
 function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
   boom(b.x, b.y, 1.6);
@@ -401,18 +479,13 @@ function spawnWave(dt) {
   // WITHIN-LEVEL RAMP: start gentle (~30%) and build to full over the first ~18s, so the
   // player's early firepower isn't swamped. Difficulty rises smoothly as the wave progresses.
   const ramp = Math.min(1, 0.18 + G.levelT / 20);   // gentler start, builds over ~20s
-  spawnAcc += BAL.spawnRate[li] * endlessSpawn * ramp * dt;
+  spawnAcc += EDIT.spawnRate[li] * endlessSpawn * ramp * 1.1 * dt;   // +10% more enemies (rate editable in FORGE)
   if(enemies.count()>850){spawnAcc*=.35;return;}
   while (spawnAcc >= 1) {
     spawnAcc--;
     const e = enemies.alloc(); if (!e) return;
-    const roll = rng() * 100;
-    const eliteRoll = rng();
-    e.kind = (lvl >= 3 && eliteRoll < 0.020) ? 5           // Cephalo-Psychoid command node (rare)
-      : (lvl >= 6 && eliteRoll < 0.055) ? 4
-      : (lvl >= 4 && eliteRoll < 0.115) ? 3
-      : roll < BAL.mixCyb[li] ? 2 : (roll < BAL.mixCyb[li] + BAL.mixEld[li] ? 1 : 0);
-    const K = EKIND[e.kind];
+    e.kind = pickKind(lvl);                     // FORGE: weighted spawn %s, editable live
+    const K = EDIT.kinds[e.kind];
     if (G.clusterT === undefined || G.clusterT <= 0) {         // re-roll swarm cluster lane ~2s
       G.clusterLane = rr(-0.7, 0.7); G.clusterT = 1.6 + rng() * 1.2;
     }
@@ -422,10 +495,7 @@ function spawnWave(dt) {
     e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = 0; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
     e.x = CFG.W/2 + e.lane * roadHalfWidth(Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y)/(CFG.H - HORIZON_Y), 1/1.6))));
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
-    e.maxhp = e.hp = (e.kind < 3 ? [BAL.hp.bio, BAL.hp.eld, BAL.hp.cyb][e.kind](lvl)
-      : e.kind === 3 ? 30 + 7 * lvl
-      : e.kind === 4 ? 45 + 10 * lvl
-      : 40 + 14 * lvl);                                   // kind 5 psychoid: chunky priority target
+    e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
     e.r = K.r; e.t = 0; e.acidT = 0; e.buffed = 0;
   }
@@ -435,7 +505,7 @@ function spawnBoss() {
   const queen = G.level === CFG.levels, Q = BAL.queen;
   AUDIO.sample(queen ? 'queenroar' : 'boss');
   G.boss = { x: CFG.W/2, y: -140,
-             hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? Q.p1 + Q.p2 + Q.p3 : BAL.bossHp[G.level - 1]),
+             hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? EDIT.queen.p1 + EDIT.queen.p2 + EDIT.queen.p3 : EDIT.bossHp[G.level - 1]),
              maxhp: 0, phase: 0, t: 0, queen, eggT: 0 };
   G.boss.maxhp = G.boss.hp;
 }
@@ -448,7 +518,7 @@ function damageEnemy(e, dmg, x, y) {
     G.meta.codex[e.kind]++;
     G.streak++; G.streakT=0.5; G.streakPeak=Math.max(G.streakPeak,G.streak);   // tighter combo window — resets in lulls
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
-    const K = EKIND[e.kind];
+    const K = EDIT.kinds[e.kind];
     G.credits += Math.round(K.credits*(G.mode==='endless'?Math.pow(1.12,G.loop):1));
     if (e.kind >= 3) G.hitStop = 0.04;
     // throttled per-enemy death sound (~4/sec max, so a dense swarm doesn't machine-gun the SFX)
@@ -483,12 +553,13 @@ function queueBlast(x, y, r, dmg) {
   blastQueue.length = 0;
   blastDraining = false;
 }
-function die() { G.state='dead'; G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
+function die() { G.state='dead'; AUDIO.loopTank(false); G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
   if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
 function loseUnits(n, x, y) {
   if (G.graceT > 0) { fx(x, y, '#48f'); return; }    // brief grace after a loss — units die in ticks, not floods
   G.graceT = 0.28;                                   // shorter grace: a sustained swarm can actually overwhelm you
   const shield=G.perks['Shield Matrix']||0;if(shield&&G.shieldHits<shield){G.shieldHits++;fx(x,y,'#6ff');return;}
+  n = Math.round(n * (1 - Math.min(90, EDIT.player.armor) / 100));   // FORGE armor: % of losses prevented
   G.squad -= Math.max(1, n - (shield ? 1 : 0));
   G.squadFlash = 0.22; fx(x, y, '#48f');
   if (G.squad <= 0) die();
@@ -544,6 +615,7 @@ function pickPerk(gx, clientY) {
   if (i >= 0 && i < 3 && gy > 330) {
     const p = perkChoices[i]; if (!p) return;
     G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1); AUDIO.sample('perk');
+    announce('◈ ' + p.toUpperCase() + ' ONLINE', '#8ff');   // deploy cue (drones, laser, shield…)
     G.state = G.boss ? 'boss' : 'play';
   }
 }
@@ -581,6 +653,7 @@ function update(dt) {
   if (G.flashT > 0) G.flashT -= dt;
   if (G.squadFlash > 0) G.squadFlash -= dt;
   if(G.streakT>0)G.streakT-=dt;else{G.streak=0;G.streakAward=0;}
+  if(G.cueT>0)G.cueT-=dt;
   if((G.shieldT+=dt)>=5){G.shieldT=0;G.shieldHits=0;}
 
   if (testBot) {                                      // auto-play: chase best gate / dodge
@@ -715,27 +788,29 @@ function bossUpdate(dt) {
   const B = G.boss; if (!B) return;
   if (B.dead) return;
   B.t += dt;
-  if (B.y < 140) B.y += 60 * dt;
+  // descend all the way down to just above the squad — an in-your-face brawl, not a distant turret
+  const closeY = B.queen ? EDIT.bossY - 60 : EDIT.bossY;   // queen sprite is taller, stop a bit higher
+  if (B.y < closeY) B.y = Math.min(closeY, B.y + 60 * dt);
   B.x = CFG.W/2 + Math.sin(B.t * 0.7) * (CFG.W/2 - 150);
   const hpFrac = B.hp / B.maxhp;
   bossAttackUpdate(B, dt);
-  // minion pressure
+  // minion pressure — spawn them from ABOVE the boss so they still march the road's full length
   if (rng() < (B.queen ? 2.2 : 1.1) * dt) {
     const e = enemies.alloc();
-    if (e) { e.kind = 0; const K = EKIND[0];
-      e.x = B.x + rr(-90, 90); e.y = B.y + 80; e.vx = rr(-30,30); e.vy = K.spd + 90;
-      e.maxhp = e.hp = K.hp * (1 + G.level * 0.5); e.r = K.r; e.t = 0; }
+    if (e) { e.kind = 0; const K = EDIT.kinds[0];
+      e.x = B.x + rr(-90, 90); e.y = Math.min(B.y - 120, 260); e.vx = rr(-30,30); e.vy = K.spd + 90;
+      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r; e.t = 0; }
   }
-  if (B.queen) {          // egg phases per BAL.queen (p1 28k / p2 36k / p3 22k)
-    const Q = BAL.queen, total = Q.p1 + Q.p2 + Q.p3;
+  if (B.queen) {          // egg phases per EDIT.queen (p1 / p2 / p3, FORGE-editable)
+    const Q = EDIT.queen, total = Q.p1 + Q.p2 + Q.p3;
     if (B.hp < total - Q.p1 && B.phase === 0) { B.phase = 1; G.shake = 8; G.hitStop=.05; }
     if (B.hp < Q.p3 && B.phase === 1) { B.phase = 2; G.shake = 8; G.hitStop=.06; }
     if (B.phase < 2) {     // lay eggs -> hatchling floods
       B.eggT += dt;
       if (B.eggT >= Q.eggInt) { B.eggT = 0;
         for (let i = 0; i < Q.hatch; i++) { const e = enemies.alloc(); if (!e) break;
-          e.kind = 0; const K = EKIND[0];
-          e.x = B.x + rr(-100, 100); e.y = B.y + 90; e.vx = rr(-40, 40); e.vy = K.spd + 110;
+          e.kind = 0; const K = EDIT.kinds[0];
+          e.x = B.x + rr(-100, 100); e.y = Math.min(B.y - 110, 300); e.vx = rr(-40, 40); e.vy = K.spd + 110;
           e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8; e.t = 0; } }
     }
   }
@@ -887,7 +962,7 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=7';                                 // bump to bust the browser cache when sprites change
+  const V='?v=8';                                 // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
   ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — idle/ooze
@@ -898,6 +973,8 @@ const ANIM={};
   const heroLoad=(src)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return im;};
   IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
   IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
+  IMGS.perkIcons=heroLoad('assets/perk_icons.png');    // 5 square power-up icons (128px cells)
+  IMGS.weaponIcons=heroLoad('assets/weapon_icons.png');// 5 gun icons (128px cells) for weapon gates
   // Praetorian mini-boss animations: idle loop / attack / death sequence
   window.PRAET={idle:load('assets/praet_idle.png',4,4), attack:load('assets/praet_attack.png',5,10), death:load('assets/praet_death.png',5,9)};
 })();
@@ -1028,17 +1105,24 @@ function draw() {
     const cxm = (xTL + xTR) / 2, cym = topY + wallH * 0.42;
     cx.save(); cx.shadowColor = good ? '#0ff' : '#f44'; cx.shadowBlur = 10;
     cx.fillStyle = good ? '#eaffff' : '#ffe0e0'; cx.font = 'bold ' + Math.round(22 + 18 * z) + 'px Segoe UI'; cx.textAlign = 'center';
-    const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
-                : g.kind === 'mul' ? 'x' + g.val
-                : 'WPN+' + (1 + g.val);
-    cx.fillText(label, cxm, cym);
+    if (g.kind === 'wpn' && IMGS.weaponIcons && IMGS.weaponIcons.ok) {
+      const wi = Math.min(4, G.weapon + 1 + g.val), cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
+      cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
+      cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
+      cx.fillText('WEAPON ↑', cxm, baseY - 6);
+    } else {
+      const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
+                  : g.kind === 'mul' ? 'x' + g.val
+                  : 'WPN+' + (1 + g.val);
+      cx.fillText(label, cxm, cym);
+    }
     if (g.locked) { cx.font = 'bold ' + Math.round(10 + 4 * z) + 'px Segoe UI'; cx.fillStyle = good ? '#bff' : '#fbb'; cx.fillText('🔒 LOCKED', cxm, baseY - 6); }
     cx.restore();
   }
   // pickups + enemies: sprite-rendered, clipped to the road
   cx.save(); roadClip();
   pickups.each(p => {
-    const col = p.kind === 0 ? '#3f6' : '#0cf';
+    const col = p.kind === 0 ? '#39f' : '#2f8';   // mutation orbs = blue, money orbs = green
     cx.save(); cx.shadowColor = col; cx.shadowBlur = 7; cx.fillStyle = col;
     cx.beginPath(); cx.arc(p.x, p.y, 4.5, 0, 7); cx.fill();          // ~25% smaller
     cx.fillStyle = 'rgba(255,255,255,.75)'; cx.beginPath(); cx.arc(p.x - 1.5, p.y - 1.5, 1.5, 0, 7); cx.fill(); cx.restore();
@@ -1126,7 +1210,7 @@ function draw() {
       cx.fillStyle = 'rgba(255,180,60,.35)'; cx.beginPath(); cx.arc(b.x, b.y + 14, b.r * 1.3, 0, 7); cx.fill();
       return;
     }
-    if(!b.vis) return; const col=WEAPONS[b.tier].col;
+    if(!b.vis) return; const col=b.purple?'#c4f':WEAPONS[b.tier].col;   // drone plasma = purple
     const len=21, nx=b.vx/700, ny=b.vy/700;   // shot streak half length
     cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=10;cx.lineWidth=4;
     cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
@@ -1153,14 +1237,26 @@ function draw() {
     cx.font = 'bold 16px Segoe UI'; cx.textAlign = 'center'; cx.fillText(d.val, d.x, d.y); cx.globalAlpha = 1; });
   if(G.streak>1&&G.streakT>0){const pop=1+Math.min(.18,G.streak*.002);cx.save();cx.translate(CFG.W/2,430);cx.scale(pop,pop);cx.textAlign='center';cx.font='900 54px Segoe UI';cx.lineWidth=7;cx.strokeStyle='#130524';cx.strokeText(G.streak,0,0);cx.fillStyle='#fff';cx.shadowColor='#8f4';cx.shadowBlur=16;cx.fillText(G.streak,0,0);cx.font='bold 15px Segoe UI';cx.fillStyle='#9ff';cx.fillText('KILL STREAK',0,25);cx.restore();}
 
+  // deploy cue banner — "TANK INBOUND" / "<PERK> ONLINE": punch in, hold, fade out
+  if (G.cueT > 0 && G.cueText) {
+    const k = G.cueT / 2.2, aIn = Math.min(1, (1 - k) * 8), aOut = Math.min(1, k * 3);
+    const pop = 1 + 0.25 * Math.max(0, (k - 0.88) / 0.12);
+    cx.save(); cx.translate(CFG.W / 2, 330); cx.scale(pop, pop); cx.globalAlpha = Math.min(aIn, aOut);
+    cx.textAlign = 'center'; cx.font = '900 40px Segoe UI'; cx.lineWidth = 8; cx.strokeStyle = '#130524';
+    cx.strokeText(G.cueText, 0, 0);
+    cx.shadowColor = G.cueCol; cx.shadowBlur = 22; cx.fillStyle = G.cueCol; cx.fillText(G.cueText, 0, 0);
+    cx.restore(); cx.globalAlpha = 1;
+  }
   cx.drawImage(ART.vignette, 0, 0);
   if (G.state === 'perk') drawPerks();
   if(G.flashT>0){cx.globalAlpha=Math.min(.7,G.flashT*4);cx.fillStyle=G.flashT>.2?'#fff':'#6ff';cx.fillRect(0,0,CFG.W,CFG.H);cx.globalAlpha=1;}
   if(debugCanvas)drawDebugCanvas();
   cx.restore();
 
-  document.getElementById('hud').textContent =
-    `⬡ ${G.squad}          LEVEL ${G.level} · ${WEAPONS[G.weapon].name}          💰 ${G.credits}`;
+  document.getElementById('hud').innerHTML =
+    `<span class="squad">⬡ ${G.squad}</span><span class="sep">   </span>` +
+    `<span class="lvl">LEVEL ${G.level} · ${WEAPONS[G.weapon].name}</span><span class="sep">   </span>` +
+    `<span class="cash">💰 ${G.credits}</span>`;
 }
 function drawDebugCanvas(){
   const d=window.__dbg?window.__dbg():{};cx.save();cx.globalAlpha=.88;cx.fillStyle='#02040d';cx.fillRect(8,58,244,106);cx.globalAlpha=1;cx.strokeStyle='#4ff';cx.strokeRect(8,58,244,106);cx.fillStyle='#bff';cx.font='bold 13px monospace';cx.textAlign='left';
@@ -1181,7 +1277,7 @@ function drawSquad() {
     cx.strokeStyle='#5ff';cx.shadowColor='#0ff';cx.shadowBlur=14;cx.lineWidth=4;cx.beginPath();cx.ellipse(x,y+15,21,9,0,0,7);cx.stroke();
     if(G.squadFlash>0){cx.globalAlpha=.85;cx.globalCompositeOperation='lighter';}
     if(IMGS.soldierAnim&&IMGS.soldierAnim.ok){                 // animated rear-view trooper (fire loop)
-      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%4, sz=58;
+      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58;
       cx.drawImage(IMGS.soldierAnim, f*cs,0,cs,cs, x-sz/2, y-sz+10+bob, sz, sz);
     } else {
       cx.drawImage(ART.trooper, x-24, y-42+bob, 48, 63);
@@ -1210,14 +1306,17 @@ function drawBossAttack(B){const tele=B.attack==='acid'?.9:.75,active=B.attack==
   cx.save();cx.globalAlpha=B.attackClock<tele?.3:.78;if(B.attack==='acid'){cx.fillStyle='#7f3';cx.fillRect(B.attackX-42,0,84,CFG.H);}
   else{const p=Math.max(0,Math.min(1,(B.attackClock-tele)/active)),x=B.attackSide<0?CFG.W-p*CFG.W:p*CFG.W;
     cx.fillStyle=B.attack==='rush'?'#f55':'#d5f';cx.fillRect(x-32,CFG.H-190,64,120);}cx.restore();}
-function drawBossHud(B){
-  cx.fillStyle = '#111'; cx.fillRect(70, 30, CFG.W - 140, 12);
+function drawBossHud(B, topY){
+  // HP bar floats just above the boss's head (was pinned top-of-screen, hidden behind the HUD)
+  const bw = 240, bx = Math.max(20, Math.min(CFG.W - 20 - bw, B.x - bw / 2));
+  const by = Math.max(150, (topY !== undefined ? topY : B.y - 150) - 30);
+  cx.fillStyle = 'rgba(6,3,18,.75)'; cx.fillRect(bx - 3, by - 3, bw + 6, 16);
+  cx.fillStyle = '#111'; cx.fillRect(bx, by, bw, 10);
   cx.fillStyle = B.queen ? '#f3c' : '#a5f';
-  cx.fillRect(70, 30, (CFG.W - 140) * Math.max(0, B.hp / B.maxhp), 12);
-  cx.strokeStyle = '#fff'; cx.strokeRect(70, 30, CFG.W - 140, 12);
+  cx.fillRect(bx, by, bw * Math.max(0, B.hp / B.maxhp), 10);
+  cx.strokeStyle = '#fff'; cx.strokeRect(bx, by, bw, 10);
   cx.fillStyle = '#fff'; cx.font = 'bold 14px Segoe UI'; cx.textAlign = 'center';
-  cx.fillText(B.queen ? '👑 ALIEN QUEEN' : 'HIVE GUARDIAN L' + G.level, CFG.W / 2, 26);
-
+  cx.fillText(B.queen ? '👑 ALIEN QUEEN' : 'HIVE GUARDIAN L' + G.level, bx + bw / 2, by - 8);
 }
 function drawBoss() {
   const B = G.boss;
@@ -1232,7 +1331,7 @@ function drawBoss() {
     const ph = 300 * breathe, pw = ph * (cs / cs);
     cx.save(); cx.shadowColor = '#a4f'; cx.shadowBlur = 26;
     cx.drawImage(a.img, f * cs, 0, cs, cs, B.x - ph / 2, B.y - ph / 2, ph, ph); cx.restore();
-    drawBossHud(B); return;
+    drawBossHud(B, B.y - ph / 2); return;
   }
   const bossImg = B.queen ? IMGS.queen : IMGS.praet;  // Alien Queen (final)
   if (bossImg && bossImg.ok) {
@@ -1240,7 +1339,7 @@ function drawBoss() {
     const ph = (B.queen ? 420 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
     cx.save(); cx.shadowColor = B.queen ? '#4f6' : '#a4f'; cx.shadowBlur = 30;
     cx.drawImage(bossImg, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
-    drawBossHud(B); return;
+    drawBossHud(B, B.y - ph / 2); return;
   }
   cx.fillStyle = B.queen ? '#c3f' : '#93e';
   cx.beginPath();
@@ -1264,8 +1363,15 @@ function drawPerks() {
     const y = 330 + i * 110;
     cx.fillStyle = 'rgba(40,255,220,0.1)'; cx.fillRect(60, y, CFG.W - 120, 90);
     cx.strokeStyle = '#2fd'; cx.strokeRect(60, y, CFG.W - 120, 90);
-    cx.fillStyle = '#cff'; cx.font = 'bold 22px Segoe UI';
-    cx.fillText(p + (G.perks[p] ? ' ' + '★'.repeat(G.perks[p]) : ''), CFG.W / 2, y + 52);
+    const ic = PERK_ICON[p];                                    // real power-up icon (replaces the plain box)
+    let tx = CFG.W / 2;
+    if (ic !== undefined && IMGS.perkIcons && IMGS.perkIcons.ok) {
+      const cs = IMGS.perkIcons.height, s = 74;
+      cx.drawImage(IMGS.perkIcons, ic * cs, 0, cs, cs, 74, y + 8, s, s);
+      tx = CFG.W / 2 + 40;                                      // nudge text right of the icon
+    }
+    cx.fillStyle = '#cff'; cx.font = 'bold 22px Segoe UI'; cx.textAlign = 'center';
+    cx.fillText(p + (G.perks[p] ? ' ' + '★'.repeat(G.perks[p]) : ''), tx, y + 52);
   });
 }
 function drawShop() {
@@ -1348,7 +1454,10 @@ function screenText(big, small, col) {
 // ---------- loop ----------
 function frame(ts) {
   const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
-  if(!testBot)update(dt); draw();
+  const dbg = window.FORGE_DBG;                       // FORGE transport: pause / ×4 fast-forward
+  if (!testBot && !(dbg && dbg.pause))
+    for (let i = 0, n = dbg ? dbg.speed : 1; i < n; i++) update(dt);
+  draw();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -1360,6 +1469,349 @@ if (testBot) { G.state = 'title';
   setTimeout(()=>{if(testBot){startRun();advanceTest(20);}},600);
   setTimeout(()=>{if(testBot)advanceTest(40);},30000);
 }
+
+// ============================================================
+// ⬡ HiVE FORGE — MiSTRFiNGA INTERNAL GAME EDITOR (F2 or the ⚒ button)
+// Floating window: every unit, weapon, boss and sprite frame is editable live.
+// Values persist in localStorage (per-browser). Sprites: paint frames, add/
+// remove frames, download the strip PNG to bake it into assets/ permanently.
+// This is Eric's private tool — one of these ships inside every game we build.
+// ============================================================
+(function FORGE(){
+try{
+if (typeof document === 'undefined' || !document.body || testBot) return;
+const SKEY = 'hiveswarm_forge_sprites_v1';
+let savedSprites = {}; try { savedSprites = JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch(e){}
+
+// ---- sprite registry: everything paintable, one uniform wrapper ----
+function wrapAnim(a){ return { get img(){return a.img;}, get frames(){return a.frames;}, set frames(v){a.frames=v;},
+                              get fps(){return a.fps;}, set fps(v){a.fps=v;} }; }
+function wrapImg(im, defFrames){ return { get img(){return im;}, get frames(){return im.frames||defFrames;}, set frames(v){im.frames=v;} }; }
+// cat/unit/action grid: every unit shows ALL action slots; empty slot (h:null) = no
+// asset yet — the game simply ignores it, and FORGE shows it greyed as a placeholder.
+const REG = [
+  // ENEMIES (alphabetical)
+  { key:'cyber',    cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Idle',   h: wrapAnim(ANIM[2]) },
+  { key:'cyberW',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Walk',   h: null },
+  { key:'cyberA',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Attack', h: null },
+  { key:'cyberD',   cat:'ENEMIES', unit:'Cyber-Mutant',    action:'Die',    h: null },
+  { key:'eldritch', cat:'ENEMIES', unit:'Eldritch Sponge', action:'Idle',   h: wrapAnim(ANIM[1]) },
+  { key:'eldritchW',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Walk',   h: null },
+  { key:'eldritchA',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Attack', h: null },
+  { key:'eldritchD',cat:'ENEMIES', unit:'Eldritch Sponge', action:'Die',    h: null },
+  { key:'psychoid', cat:'ENEMIES', unit:'Psychoid',        action:'Walk',   h: wrapAnim(ANIM[5]) },
+  { key:'psychoidI',cat:'ENEMIES', unit:'Psychoid',        action:'Idle',   h: null },
+  { key:'psychoidA',cat:'ENEMIES', unit:'Psychoid',        action:'Attack', h: null },
+  { key:'psychoidD',cat:'ENEMIES', unit:'Psychoid',        action:'Die',    h: null },
+  { key:'subterra', cat:'ENEMIES', unit:'Subterra',        action:'Idle',   h: wrapAnim(ANIM[4]) },
+  { key:'subterraW',cat:'ENEMIES', unit:'Subterra',        action:'Walk',   h: null },
+  { key:'subterraA',cat:'ENEMIES', unit:'Subterra',        action:'Attack', h: null },
+  { key:'subterraD',cat:'ENEMIES', unit:'Subterra',        action:'Die',    h: null },
+  { key:'xenoid',   cat:'ENEMIES', unit:'Xenoid',          action:'Walk',   h: wrapAnim(ANIM[0]) },
+  { key:'xenoidI',  cat:'ENEMIES', unit:'Xenoid',          action:'Idle',   h: null },
+  { key:'xenoidA',  cat:'ENEMIES', unit:'Xenoid',          action:'Attack', h: null },
+  { key:'xenoidD',  cat:'ENEMIES', unit:'Xenoid',          action:'Die',    h: null },
+  { key:'xenoptera',cat:'ENEMIES', unit:'Xenoptera',       action:'Walk',   h: wrapAnim(ANIM[3]) },
+  { key:'xenopteraI',cat:'ENEMIES',unit:'Xenoptera',       action:'Idle',   h: null },
+  { key:'xenopteraA',cat:'ENEMIES',unit:'Xenoptera',       action:'Attack', h: null },
+  { key:'xenopteraD',cat:'ENEMIES',unit:'Xenoptera',       action:'Die',    h: null },
+  // BOSSES
+  { key:'queen',    cat:'BOSSES',  unit:'Alien Queen',     action:'Idle',   h: wrapImg(IMGS.queen, 1) },
+  { key:'queenA',   cat:'BOSSES',  unit:'Alien Queen',     action:'Attack', h: null },
+  { key:'queenD',   cat:'BOSSES',  unit:'Alien Queen',     action:'Die',    h: null },
+  { key:'praetIdle',cat:'BOSSES',  unit:'Praetorian',      action:'Idle',   h: wrapAnim(PRAET.idle) },
+  { key:'praetAtk', cat:'BOSSES',  unit:'Praetorian',      action:'Attack', h: wrapAnim(PRAET.attack) },
+  { key:'praetDie', cat:'BOSSES',  unit:'Praetorian',      action:'Die',    h: wrapAnim(PRAET.death) },
+  // PLAYER
+  { key:'soldier',  cat:'PLAYER',  unit:'Soldier',         action:'Fire',   h: wrapImg(IMGS.soldierAnim, 4) },
+  { key:'soldierW', cat:'PLAYER',  unit:'Soldier',         action:'Walk',   h: null },
+  { key:'soldierD', cat:'PLAYER',  unit:'Soldier',         action:'Die',    h: null },
+  // ITEMS
+  { key:'tank',     cat:'ITEMS',   unit:'Ironclad Tank',   action:'Idle',   h: wrapImg(IMGS.tank, 1) },
+  { key:'perkIcons',cat:'ITEMS',   unit:'Power-up Icons',  action:'Icons',  h: wrapImg(IMGS.perkIcons, 5) },
+  { key:'wpnIcons', cat:'ITEMS',   unit:'Weapon Icons',    action:'Icons',  h: wrapImg(IMGS.weaponIcons, 5) },
+];
+// apply saved sprite overrides (edited strips win over the shipped PNGs)
+for (const r of REG) { const s = savedSprites[r.key]; if (r.h && s && s.data) {
+  r.h.img.src = s.data; r.h.img.ok = true; if (s.frames) r.h.frames = s.frames; if (s.fps && r.h.fps !== undefined) r.h.fps = s.fps; } }
+function persistSprite(r){ const c=document.createElement('canvas'); const im=r.h.img;
+  c.width=im.naturalWidth||im.width; c.height=im.naturalHeight||im.height;
+  c.getContext('2d').drawImage(im,0,0);
+  savedSprites[r.key]={data:c.toDataURL('image/png'),frames:r.h.frames,fps:r.h.fps};
+  try{localStorage.setItem(SKEY,JSON.stringify(savedSprites));}catch(e){alert('Sprite too large for localStorage — use DOWNLOAD instead');}}
+
+// ---- window chrome / styling ----
+const css = document.createElement('style');
+css.textContent = `
+#forgeBtn{position:fixed;left:10px;bottom:10px;z-index:40;width:44px;height:44px;border-radius:10px;
+  background:linear-gradient(135deg,#0c0620,#1a0a35);border:1px solid #4ff;color:#4ff;font-size:22px;
+  cursor:pointer;box-shadow:0 0 12px rgba(0,255,255,.35);display:flex;align-items:center;justify-content:center;user-select:none}
+#forgeBtn:hover{box-shadow:0 0 20px rgba(255,0,255,.5);border-color:#f4f;color:#f4f}
+#forge{position:fixed;left:24px;top:24px;z-index:50;width:600px;height:82vh;min-width:420px;min-height:300px;
+  resize:both;overflow:hidden;display:none;flex-direction:column;
+  background:linear-gradient(160deg,#0a0618 0%,#120a28 100%);border:1px solid #4ff;border-radius:12px;
+  box-shadow:0 0 34px rgba(0,255,255,.25),0 0 60px rgba(255,0,255,.12);color:#cdf;font-family:'Segoe UI',monospace;font-size:13px}
+#forge.open{display:flex}
+#forgeHead{cursor:move;padding:10px 14px;border-bottom:1px solid rgba(0,255,255,.3);display:flex;align-items:center;gap:10px;
+  background:repeating-linear-gradient(90deg,rgba(0,255,255,.05) 0 2px,transparent 2px 6px)}
+#forgeHead b{color:#4ff;font-size:17px;text-shadow:0 0 10px #0ff;letter-spacing:1px}
+#forgeHead small{color:#f4f;text-shadow:0 0 8px #f0f;letter-spacing:2px;font-size:9px}
+#forgeHead .x{margin-left:auto;cursor:pointer;color:#f66;font-weight:900;font-size:16px;padding:0 6px}
+#forge .dbgBtn{margin-left:4px;cursor:pointer;color:#8ff;border:1px solid rgba(0,255,255,.4);border-radius:6px;padding:1px 8px;font-size:13px;user-select:none}
+#forge .dbgBtn.on{color:#ff4;border-color:#ff4;box-shadow:0 0 8px rgba(255,255,0,.5)}
+#forgeTabs{display:flex;gap:2px;padding:6px 10px 0}
+#forgeTabs div{padding:6px 12px;cursor:pointer;border:1px solid rgba(0,255,255,.25);border-bottom:none;
+  border-radius:8px 8px 0 0;color:#8ac;letter-spacing:1px;font-size:11px;font-weight:700}
+#forgeTabs div.on{background:rgba(0,255,255,.12);color:#4ff;text-shadow:0 0 8px #0ff}
+#forgeBody{overflow-y:auto;padding:12px 14px;flex:1}
+#forge table{width:100%;border-collapse:collapse}
+#forge th{color:#f4f;font-size:10px;text-align:left;letter-spacing:1px;padding:3px 4px;border-bottom:1px solid rgba(255,0,255,.3)}
+#forge td{padding:3px 4px;border-bottom:1px solid rgba(0,255,255,.08)}
+#forge input[type=number],#forge input[type=text]{width:58px;background:#060312;border:1px solid #2a6;border-radius:4px;
+  color:#6fe;padding:3px 4px;font-family:monospace}
+#forge input[type=number]:focus{border-color:#4ff;outline:none;box-shadow:0 0 6px rgba(0,255,255,.5)}
+#forge .hint{color:#7a90b8;font-size:10px;margin:4px 0 10px}
+#forge .hpprev{color:#ffd75e;font-size:10px;font-family:monospace}
+#forge .pct{color:#4dff86;font-weight:700}
+#forge button{background:linear-gradient(135deg,#0c2030,#103a50);border:1px solid #4ff;color:#8ff;border-radius:6px;
+  padding:4px 10px;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:1px;margin:2px}
+#forge button:hover{box-shadow:0 0 10px rgba(0,255,255,.6)}
+#forge button.warn{border-color:#f66;color:#f88;background:linear-gradient(135deg,#300c10,#501020)}
+#forge .frames{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0}
+#forge .frames canvas{border:1px solid #333;border-radius:4px;cursor:pointer;background:#111;image-rendering:pixelated}
+#forge .frames canvas.sel{border-color:#f4f;box-shadow:0 0 8px rgba(255,0,255,.7)}
+#forgePaint{border:1px solid #4ff;border-radius:6px;background:
+  repeating-conic-gradient(#222 0 25%,#333 0 50%) 0 0/16px 16px;touch-action:none;cursor:crosshair}
+#forge .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+#forge .kthumb{width:40px;height:40px;image-rendering:pixelated;border:1px solid rgba(0,255,255,.3);border-radius:4px;background:#111}
+`;
+document.head.appendChild(css);
+const btn = document.createElement('div'); btn.id='forgeBtn'; btn.textContent='⚒'; btn.title='HiVE FORGE — Game Editor (F2)';
+document.body.appendChild(btn);
+const win = document.createElement('div'); win.id='forge';
+win.innerHTML = `<div id="forgeHead"><b>⬡ HiVE FORGE</b><small>MiSTRFiNGA INTERNAL // GAME EDITOR v1</small>
+  <span id="fPause" class="dbgBtn" title="Pause game">⏸</span>
+  <span id="fFF" class="dbgBtn" title="Fast-forward ×4">⏩</span>
+  <span id="fSkip" class="dbgBtn" title="Skip to next level">⏭</span>
+  <span class="x">✕</span></div>
+  <div id="forgeTabs"></div><div id="forgeBody"></div>`;
+document.body.appendChild(win);
+// ---- debug transport: pause / fast-forward / level skip (read by the main loop) ----
+window.FORGE_DBG = { pause: false, speed: 1 };
+const dbgBtn = id => win.querySelector('#' + id);
+function syncDbg(){ const p = dbgBtn('fPause'), f = dbgBtn('fFF');
+  p.classList.toggle('on', FORGE_DBG.pause); p.textContent = FORGE_DBG.pause ? '▶' : '⏸';
+  f.classList.toggle('on', FORGE_DBG.speed > 1); }
+dbgBtn('fPause').onclick = () => { FORGE_DBG.pause = !FORGE_DBG.pause; syncDbg(); };
+dbgBtn('fFF').onclick = () => { FORGE_DBG.speed = FORGE_DBG.speed === 1 ? 4 : 1; syncDbg(); };
+dbgBtn('fSkip').onclick = () => {
+  if (G.state === 'boss' && G.boss && !G.boss.dead) { bossKill(); return; }   // finish the boss the normal way
+  if (G.state === 'perk') { G.state = G.boss ? 'boss' : 'play'; return; }     // dismiss a blocking perk screen
+  if (G.state === 'play') { enemies.each(e => enemies.release(e)); G.boss = null; nextLevel(); }  // straight to next level (shop)
+};
+const body = win.querySelector('#forgeBody'), tabsEl = win.querySelector('#forgeTabs');
+function openForge(){ win.classList.add('open'); FORGE_DBG.pause = true; syncDbg(); renderTab(); }   // opening FORGE freezes the game — press ▶ to run
+function closeForge(){ win.classList.remove('open'); FORGE_DBG.pause = false; syncDbg(); }
+function toggleForge(){ win.classList.contains('open') ? closeForge() : openForge(); }
+win.querySelector('.x').onclick = closeForge;
+btn.onclick = toggleForge;
+addEventListener('keydown', e => { if (e.key === 'F2') toggleForge(); });
+if (/[?&]forge=1/.test(location.search)) setTimeout(() => {
+  const m = location.search.match(/[?&]ftab=(\d)/); if (m) tab = Math.min(TABS.length - 1, +m[1]);
+  openForge(); }, 400);   // auto-open for quick tuning sessions (?forge=1&ftab=4 deep-links a tab)
+// drag by the header
+(function(){ const head = win.querySelector('#forgeHead'); let sx,sy,ox,oy,drag=false;
+  head.addEventListener('pointerdown', e => { if (e.target.classList.contains('x') || e.target.classList.contains('dbgBtn')) return;   // don't capture clicks meant for buttons
+    drag=true; sx=e.clientX; sy=e.clientY; const r=win.getBoundingClientRect(); ox=r.left; oy=r.top; head.setPointerCapture(e.pointerId); });
+  head.addEventListener('pointermove', e => { if(!drag) return;
+    win.style.left = Math.max(0, ox + e.clientX - sx) + 'px'; win.style.top = Math.max(0, oy + e.clientY - sy) + 'px'; });
+  head.addEventListener('pointerup', () => drag = false); })();
+
+// ---- data binding: <input data-p="kinds.2.hpBase"> writes straight into EDIT ----
+function getP(p){ return p.split('.').reduce((o,k)=>o[k], EDIT); }
+function setP(p,v){ const ks=p.split('.'), last=ks.pop(); ks.reduce((o,k)=>o[k],EDIT)[last]=v; }
+body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) return;
+  const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
+  setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
+
+const TABS = ['UNITS','PLAYER','WEAPONS','WAVES + BOSS','SPRITES','DATA'];
+let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false};
+TABS.forEach((t,i)=>{ const d=document.createElement('div'); d.textContent=t;
+  d.onclick=()=>{tab=i;spriteSel=-1;renderTab();}; tabsEl.appendChild(d); });
+
+function hpPreview(k){ let s=''; for(let L=1;L<=10;L++) s+=`L${L}:${Math.round(kindHp(k,L))} `; return s; }
+function pctShare(k){ let tot=0; for(let i=0;i<6;i++) tot+=EDIT.kinds[i].weight;
+  return tot>0 ? (100*EDIT.kinds[k].weight/tot).toFixed(1)+'%' : '—'; }
+function refreshComputed(){
+  body.querySelectorAll('[data-hp]').forEach(el=>el.textContent=hpPreview(+el.dataset.hp));
+  body.querySelectorAll('[data-pct]').forEach(el=>el.textContent=pctShare(+el.dataset.pct));
+}
+function num(p,step,w){ return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} data-p="${p}" value="${getP(p)}">`; }
+
+function renderTab(){
+  tabsEl.querySelectorAll('div').forEach((d,i)=>d.classList.toggle('on', i===tab));
+  if (tab===0){ // UNITS
+    let h = `<div class="hint">HP = BASE + PER-LVL × level. WEIGHT = spawn share (live %). MIN-LVL = first level it appears. Changes apply INSTANTLY — tweak mid-run and test.</div>
+      <table><tr><th></th><th>UNIT</th><th>HP BASE</th><th>HP/LVL</th><th>SPD</th><th>SIZE</th><th>💰</th><th>WEIGHT</th><th>%</th><th>MIN-LVL</th></tr>`;
+    EDIT.kinds.forEach((k,i)=>{ h+=`<tr><td><canvas class="kthumb" data-kt="${i}" width="40" height="40"></canvas></td>
+      <td style="color:#4ff">${k.name}</td>
+      <td>${num('kinds.'+i+'.hpBase',1)}</td><td>${num('kinds.'+i+'.hpLvl',0.5)}</td>
+      <td>${num('kinds.'+i+'.spd',1,44)}</td><td>${num('kinds.'+i+'.r',1,40)}</td>
+      <td>${num('kinds.'+i+'.credits',1,36)}</td><td>${num('kinds.'+i+'.weight',0.5,44)}</td>
+      <td class="pct" data-pct="${i}"></td><td>${num('kinds.'+i+'.minLvl',1,36)}</td></tr>
+      <tr><td></td><td colspan="9" class="hpprev" data-hp="${i}"></td></tr>`; });
+    body.innerHTML = h + '</table>';
+    body.querySelectorAll('[data-kt]').forEach(c=>{ const a=ANIM[+c.dataset.kt];
+      if(a&&a.img.ok){const cs=a.img.height;c.getContext('2d').drawImage(a.img,0,0,cs,cs,0,0,40,40);} });
+  }
+  else if (tab===1){ // PLAYER
+    body.innerHTML = `<div class="hint">Global player combat knobs — multiply on top of weapons/shop upgrades.</div>
+      <div class="row">FIRE RATE × ${num('player.rofMul',0.05)}</div>
+      <div class="row">DAMAGE × ${num('player.dmgMul',0.05)}</div>
+      <div class="row">ARMOR (% squad-loss prevented, 0-90) ${num('player.armor',5)}</div>`;
+  }
+  else if (tab===2){ // WEAPONS
+    let h = `<div class="hint">Per-weapon tuning. DMG is per pellet; N = pellets per shot; SPREAD = aim jitter.</div>
+      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>N</th><th>SPREAD</th></tr>`;
+    EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
+      <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
+      <td>${num('weapons.'+i+'.n',1,36)}</td><td>${num('weapons.'+i+'.spread',0.02)}</td></tr>`; });
+    body.innerHTML = h + '</table>';
+  }
+  else if (tab===3){ // WAVES + BOSS
+    let h = `<div class="hint">SPAWN/s = enemies per second per level. BOSS HP per level. BOSS RANGE = how far down the boss walks (bigger = closer to you).</div><table><tr><th>LVL</th>`;
+    for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SPAWN/s</th>';
+    for(let i=0;i<10;i++)h+=`<td>${num('spawnRate.'+i,1,34)}</td>`; h+='</tr><tr><th>BOSS HP</th>';
+    for(let i=0;i<10;i++)h+=`<td>${num('bossHp.'+i,500,48)}</td>`; h+='</tr></table>';
+    h += `<div class="row" style="margin-top:10px">BOSS RANGE ${num('bossY',10)} <span class="hint">(560 = right above the squad)</span></div>
+      <div class="hint" style="margin-top:8px;color:#f4f">ALIEN QUEEN</div>
+      <div class="row">P1 ${num('queen.p1',1000)} P2 ${num('queen.p2',1000)} P3 ${num('queen.p3',1000)}</div>
+      <div class="row">EGG INTERVAL ${num('queen.eggInt',0.2)} EGG HP ${num('queen.eggHp',10)} HATCH ${num('queen.hatch',1,36)}</div>`;
+    body.innerHTML = h;
+  }
+  else if (tab===4) renderSprites();
+  else { // DATA
+    body.innerHTML = `<div class="hint">Values live in <b>localStorage</b> (this browser). Export JSON to keep a copy or move between machines. Edited sprites: use DOWNLOAD on the sprite to bake the PNG into assets/ permanently.</div>
+      <div class="row"><button id="fExp">⇩ EXPORT ALL (JSON)</button>
+      <input type="file" id="fImp" accept=".json" style="display:none"><button id="fImpB">⇧ IMPORT JSON</button></div>
+      <div class="row"><button class="warn" id="fRstV">RESET ALL VALUES</button>
+      <button class="warn" id="fRstS">RESET ALL SPRITES</button></div>`;
+    body.querySelector('#fExp').onclick=()=>{ const a=document.createElement('a');
+      a.href='data:application/json,'+encodeURIComponent(JSON.stringify({values:EDIT,sprites:savedSprites}));
+      a.download='hiveswarm_forge_backup.json'; a.click(); };
+    body.querySelector('#fImpB').onclick=()=>body.querySelector('#fImp').click();
+    body.querySelector('#fImp').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader();
+      rd.onload=()=>{ try{ const j=JSON.parse(rd.result);
+        if(j.values){EDIT=mergeEdit(editDefaults(),j.values);saveEdit();applyEditWeapons();}
+        if(j.sprites){savedSprites=j.sprites;localStorage.setItem(SKEY,JSON.stringify(savedSprites));
+          for(const r of REG){const s=savedSprites[r.key];if(s&&s.data){r.h.img.src=s.data;if(s.frames)r.h.frames=s.frames;}}}
+        renderTab(); }catch(err){alert('Bad JSON: '+err.message);} }; rd.readAsText(f); };
+    body.querySelector('#fRstV').onclick=()=>{ if(confirm('Reset ALL edited values to defaults?')){
+      EDIT=editDefaults(); saveEdit(); applyEditWeapons(); renderTab(); } };
+    body.querySelector('#fRstS').onclick=()=>{ if(confirm('Discard ALL edited sprites? (reload restores originals)')){
+      savedSprites={}; localStorage.removeItem(SKEY); location.reload(); } };
+  }
+  refreshComputed();
+}
+
+// ---- SPRITES: strip browser + per-frame paint editor with add/remove ----
+function cellW(r){ const im=r.h.img; return Math.round((im.naturalWidth||im.width)/Math.max(1,r.h.frames)); }
+function renderSprites(){
+  if (spriteSel < 0){
+    let h = `<div class="hint">Pick an action slot. Paint frames, +/− frames, then SAVE (live) or DOWNLOAD the strip PNG to bake into assets/. Greyed slots have no asset yet — the game ignores them until art lands.</div>`;
+    const cats = ['ENEMIES','BOSSES','PLAYER','ITEMS'];
+    for (const cat of cats) {
+      h += `<div class="hint" style="color:#f4f;font-size:11px;letter-spacing:2px;margin-top:10px">▸ ${cat}</div>`;
+      const units = [...new Set(REG.filter(r=>r.cat===cat).map(r=>r.unit))].sort();
+      for (const u of units) {
+        h += `<div class="row" style="border-bottom:1px solid rgba(0,255,255,.08);padding-bottom:4px">
+          <b style="color:#4ff;width:120px">${u}</b>`;
+        REG.forEach((r,i)=>{ if (r.cat!==cat || r.unit!==u) return;
+          if (r.h) h += `<button data-sp="${i}" style="display:inline-flex;align-items:center;gap:5px">
+            <canvas data-th="${i}" width="26" height="26" style="image-rendering:pixelated"></canvas>${r.action} <span style="color:#f4f">${r.h.frames}f</span></button>`;
+          else h += `<span style="border:1px dashed #345;border-radius:6px;padding:4px 10px;color:#456;font-size:11px">${r.action} — empty</span>`; });
+        h += '</div>';
+      }
+    }
+    body.innerHTML = h;
+    body.querySelectorAll('[data-sp]').forEach(b=>b.onclick=()=>{ spriteSel=+b.dataset.sp; frameSel=0; loadWork(); renderSprites(); });
+    body.querySelectorAll('[data-th]').forEach(c=>{ const r=REG[+c.dataset.th]; const im=r.h.img;
+      if(im&&(im.ok||im.complete)){ const cw=(im.naturalWidth||im.width)/Math.max(1,r.h.frames), chh=im.naturalHeight||im.height;
+        try{c.getContext('2d').drawImage(im,0,0,cw,chh,0,0,26,26);}catch(e){} } });
+    return;
+  }
+  const r = REG[spriteSel];
+  let h = `<div class="row"><button id="spBack">◀ ALL SPRITES</button><b style="color:#4ff">${r.unit} · ${r.action}</b>
+    ${r.h.fps!==undefined?`FPS <input type="number" id="spFps" style="width:44px" value="${r.h.fps}">`:''}</div>
+    <div class="frames" id="spFrames"></div>
+    <div class="row"><button id="spDup">+ DUP FRAME</button><button id="spDel" class="warn">− DEL FRAME</button>
+      <button id="spUndo">↩ UNDO</button><button id="spSave">💾 SAVE LIVE</button>
+      <button id="spRev" class="warn">REVERT</button><button id="spDl">⇩ DOWNLOAD PNG</button></div>
+    <div class="row">🎨 <input type="color" id="spCol" value="${brush.col}"> SIZE <input type="range" id="spSize" min="1" max="24" value="${brush.size}">
+      <button id="spErase">${brush.erase?'✏ PAINT':'⌫ ERASE'}</button></div>
+    <canvas id="forgePaint"></canvas>`;
+  body.innerHTML = h;
+  body.querySelector('#spBack').onclick=()=>{spriteSel=-1;renderSprites();};
+  const fpsEl=body.querySelector('#spFps'); if(fpsEl)fpsEl.oninput=()=>{const v=parseFloat(fpsEl.value);if(v>0){r.h.fps=v;persistSprite(r);}};
+  body.querySelector('#spCol').oninput=e=>{brush.col=e.target.value;brush.erase=false;body.querySelector('#spErase').textContent='⌫ ERASE';};
+  body.querySelector('#spSize').oninput=e=>brush.size=+e.target.value;
+  body.querySelector('#spErase').onclick=e=>{brush.erase=!brush.erase;e.target.textContent=brush.erase?'✏ PAINT':'⌫ ERASE';};
+  body.querySelector('#spDup').onclick=()=>frameOp('dup');
+  body.querySelector('#spDel').onclick=()=>frameOp('del');
+  body.querySelector('#spUndo').onclick=undo;
+  body.querySelector('#spSave').onclick=applyWork;
+  body.querySelector('#spRev').onclick=()=>{ if(confirm('Revert this sprite to the shipped PNG?')){
+    delete savedSprites[r.key]; localStorage.setItem(SKEY,JSON.stringify(savedSprites)); location.reload(); } };
+  body.querySelector('#spDl').onclick=()=>{ const a=document.createElement('a');
+    a.href=work.toDataURL('image/png'); a.download=r.key+'_strip.png'; a.click(); };
+  drawFrames(); drawPaint(); bindPaint();
+}
+function loadWork(){ const r=REG[spriteSel], im=r.h.img;
+  work=document.createElement('canvas');
+  work.width=im.naturalWidth||im.width; work.height=im.naturalHeight||im.height;
+  work.getContext('2d').drawImage(im,0,0); work._frames=r.h.frames; undoStack=[]; }
+function drawFrames(){ const r=REG[spriteSel], holder=body.querySelector('#spFrames'); if(!holder)return;
+  holder.innerHTML=''; const cw=work.width/work._frames, chh=work.height;
+  for(let f=0;f<work._frames;f++){ const c=document.createElement('canvas');
+    const s=Math.min(64/cw,64/chh); c.width=Math.max(24,cw*s); c.height=chh*s;
+    c.getContext('2d').drawImage(work,f*cw,0,cw,chh,0,0,c.width,c.height);
+    if(f===frameSel)c.classList.add('sel');
+    c.onclick=()=>{frameSel=f;drawFrames();drawPaint();}; holder.appendChild(c); } }
+function drawPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return;
+  const cw=work.width/work._frames, chh=work.height, scale=Math.min(520/cw, 380/chh);
+  pc.width=cw*scale; pc.height=chh*scale; pc._scale=scale;
+  const g=pc.getContext('2d'); g.imageSmoothingEnabled=false;
+  g.clearRect(0,0,pc.width,pc.height); g.drawImage(work,frameSel*cw,0,cw,chh,0,0,pc.width,pc.height); }
+function pushUndo(){ const cw=work.width/work._frames;
+  undoStack.push(work.getContext('2d').getImageData(frameSel*cw,0,cw,work.height));
+  if(undoStack.length>25)undoStack.shift(); }
+function undo(){ if(!undoStack.length)return; const cw=work.width/work._frames;
+  work.getContext('2d').putImageData(undoStack.pop(),frameSel*cw,0); drawFrames(); drawPaint(); }
+function bindPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return; let painting=false;
+  const dot=(e)=>{ const rct=pc.getBoundingClientRect(), s=pc._scale, cw=work.width/work._frames;
+    const x=frameSel*cw+(e.clientX-rct.left)/s, y=(e.clientY-rct.top)/s;
+    const g=work.getContext('2d'); g.save();
+    if(brush.erase){g.globalCompositeOperation='destination-out';g.fillStyle='#000';}
+    else g.fillStyle=brush.col;
+    g.beginPath(); g.arc(x,y,brush.size/2,0,7); g.fill(); g.restore(); drawPaint(); };
+  pc.addEventListener('pointerdown',e=>{painting=true;pushUndo();dot(e);pc.setPointerCapture(e.pointerId);});
+  pc.addEventListener('pointermove',e=>{if(painting)dot(e);});
+  pc.addEventListener('pointerup',()=>{painting=false;drawFrames();}); }
+function frameOp(op){ const cw=work.width/work._frames, chh=work.height, n=work._frames;
+  if(op==='del'&&n<=1)return alert('A sprite needs at least 1 frame');
+  const n2=op==='dup'?n+1:n-1;
+  const c2=document.createElement('canvas'); c2.width=cw*n2; c2.height=chh; const g=c2.getContext('2d');
+  let dst=0;
+  for(let f=0;f<n;f++){ if(op==='del'&&f===frameSel)continue;
+    g.drawImage(work,f*cw,0,cw,chh,dst*cw,0,cw,chh); dst++;
+    if(op==='dup'&&f===frameSel){g.drawImage(work,f*cw,0,cw,chh,dst*cw,0,cw,chh);dst++;} }
+  work=c2; work._frames=n2; frameSel=Math.min(frameSel,n2-1); undoStack=[];
+  drawFrames(); drawPaint(); }
+function applyWork(){ const r=REG[spriteSel];
+  r.h.img.src=work.toDataURL('image/png'); r.h.img.ok=true; r.h.frames=work._frames;
+  persistSprite(r); alert('Saved — live in game now. DOWNLOAD + drop into assets/ to make it permanent in the repo.'); }
+}catch(err){ console.warn('FORGE disabled:', err); }
+})();
 
 // ---------- debug ----------
 window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: G.weapon,

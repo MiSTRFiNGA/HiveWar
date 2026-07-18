@@ -37,6 +37,28 @@ into `assets/*.png` strips; the game's `ANIM[kind]` + `PRAET` registries cycle f
 - Scale reference honored (Eric's `ENEMY_SCALE_REFERENCE.png`): cyber big, sponge/subterra small, etc.
 - Sound wired (pulse-rifle/grenade/explosion/lightning/money(50% orbs)/perk/boss). Coin now audible.
 
+## NEW (2026-07-18 session, pass 2)
+- Boss HP bar floats above the boss's head (follows B.x/B.y, clamped on-screen) — no longer hidden under the top HUD.
+- FORGE header debug transport: ⏸ pause, ⏩ ×4 fast-forward, ⏭ level skip (boss→bossKill, play→nextLevel, perk→dismiss). `window.FORGE_DBG` read by main loop.
+- SPRITES tab: vertical categorized grid (ENEMIES/BOSSES/PLAYER/ITEMS, alpha-sorted) — every unit shows Walk/Attack/Die/Idle slots w/ thumbnails; empty slots greyed placeholders (game ignores until art lands). Deep-link `?forge=1&ftab=4`.
+- Alien Queen "missing assets" = she only HAS queen_hero.png (Idle 1f); Attack/Die slots await art.
+- Praet death "doubled" frame = frame idx2 is ONE connected sprite (CC-verified, 17k px blob) — a hunched collapse pose that reads as two figures. Not splittable by cutting; repaint/DEL it in FORGE if unwanted.
+
+## NEW (2026-07-18 session)
+- **HiVE FORGE game editor** (F2 / ⚒ button / `?forge=1`): floating branded window. Tabs: UNITS
+  (per-enemy hpBase+hpLvl w/ L1-L10 preview, spd/size/credits, spawn WEIGHT w/ live %, minLvl),
+  PLAYER (rofMul/dmgMul/armor%), WEAPONS (rof/dmg/n/spread), WAVES+BOSS (spawnRate[10], bossHp[10],
+  bossY, queen), SPRITES (per-frame paint editor, +dup/−del frames, save-live via localStorage
+  dataURL override, DOWNLOAD strip to bake into assets/), DATA (export/import JSON, resets).
+  Game reads `EDIT.*` (localStorage `hiveswarm_forge_v1`, sprites `hiveswarm_forge_sprites_v1`).
+  Self-disables headless (try/catch on document.head). SOP: every future game embeds a FORGE.
+- Fresh-run reset: startRun() zeroes shop meta (dmg/squad/weapon/perkSlot/vehicleDrop/credits) — no tank leak.
+- Boss descends to EDIT.bossY≈560 (close-quarters); minions/eggs spawn ABOVE the boss now.
+- Deploy cues: announce() banner — "TANK INBOUND", "<PERK> ONLINE". Drone shots purple + orbit-synced.
+- Tank = Ironclad sprite (slice_items.py) + looping tank-track.mp3 @0.45. Perk icons in MUTATION,
+  weapon icons on WPN gates. HUD 2x w/ glow (squad cyan/level purple/money green). Orbs: money=green, mutation=blue.
+- Cyber-Mutant legs fixed + Praetorian green blades kept (alpha-key slicing, sprites ?v=8).
+
 ## OPEN / NEXT (art + mechanics)
 - **Alien Queen mechanics**: egg cluster + hatchlings + tail-swing (Eggs Open.mp3 waits on this). Queen still a still image (Queen02 transparent available → could animate).
 - **Aurorean** enemy sheet exists (green) — not yet wired (possible extra/replacement enemy).

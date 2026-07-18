@@ -45,6 +45,63 @@ def key_dark(a):                                            # tight key on the (
     return already | panel                                  # soldier's dark joints (not this exact hue) stay connected
 
 
+def key_alpha(a):                                          # transparent-background sheets: key ONLY the alpha
+    return a[..., 3] < 128                                  # (never green — green may be blades/slime/energy)
+
+
+def strip_box_green(a):
+    """Erase bright PURE-green frame-outline boxes (the ones drawn around each cell)
+    without touching the creature's teal/energy green. Pure box green is very saturated
+    green with low red AND low blue; creature green is teal-ish (higher blue)."""
+    r, g, b = a[..., 0].astype(int), a[..., 1].astype(int), a[..., 2].astype(int)
+    box = (g > 170) & (r < 150) & (b < 130) & (g - b > 90)
+    a = a.copy(); a[box, 3] = 0
+    return a
+
+
+def clean_praet(band):
+    """Praetorian attack/death rows keep ALL blobs (to save the blade-arcs), so the baked
+    green row-LABEL text at the very top of the band would survive — erase that top strip."""
+    b = strip_box_green(band)
+    b = b.copy(); b[:int(b.shape[0] * 0.12), :, 3] = 0
+    return b
+
+
+def auto_strip_alpha(sheet, region, out_name, take=None, cell=128, minw=40,
+                     largest=False, preclean=None):
+    """Like auto_strip but keys on ALPHA (transparent bg), optionally precleans the band
+    (e.g. remove green frame-boxes) and can keep ALL blobs (largest=False) so detached
+    blade-arcs / slime survive."""
+    im = Image.open(fr"{SRC}\{sheet}").convert("RGBA")
+    W, H = im.size
+    x0, y0, x1, y1 = int(region[0]*W), int(region[1]*H), int(region[2]*W), int(region[3]*H)
+    band = np.array(im.crop((x0, y0, x1, y1)))
+    if preclean is not None:
+        band = preclean(band)
+    solid = band[..., 3] >= 128
+    colhas = solid.sum(axis=0) > (band.shape[0] * 0.02)
+    runs, s = [], None
+    for x in range(len(colhas)):
+        if colhas[x] and s is None: s = x
+        elif not colhas[x] and s is not None:
+            if x - s >= minw: runs.append((s, x))
+            s = None
+    if s is not None and len(colhas) - s >= minw: runs.append((s, len(colhas)))
+    sprites = []
+    for idx, (cs, ce) in enumerate(runs):
+        if take is not None and idx not in take: continue
+        sp = cell_sprite(Image.fromarray(band[:, cs:ce]), key_alpha, largest)
+        if sp: sprites.append(sp)
+    if not sprites:
+        print("NO SPRITES for", out_name, "(runs=", len(runs), ")"); return
+    strip = Image.new("RGBA", (cell*len(sprites), cell), (0, 0, 0, 0))
+    for i, sp in enumerate(sprites):
+        s2 = sp.copy(); s2.thumbnail((cell-8, cell-8))
+        strip.paste(s2, (i*cell+(cell-s2.width)//2, (cell-s2.height)//2), s2)
+    strip.save(fr"{OUT}\{out_name}")
+    print(f"{out_name}: {len(sprites)}/{len(runs)} frames -> {strip.size}")
+
+
 def cell_sprite(cell_rgba, keyfn, largest=True):
     """Return a trimmed RGBA of the cell's content. largest=True keeps only the
     biggest blob (drops labels/insets) + erodes the color halo; largest=False just
@@ -140,8 +197,10 @@ def make_strip(sheet, region, cols, keyfn, frames, out_name, cell=128, largest=T
 make_strip(E+"Xenoid.png", (0.0, 0.055, 1.0, 0.30), 4, key_green, [0, 1, 2, 3], "xeno_walk.png")
 # Psychoid (kind 5): 4x2 grid, swim loop = row 0 frames 0-3
 make_strip(E+"Psychoid 02.png", (0.0, 0.06, 1.0, 0.50), 4, key_green, [0, 1, 2, 3], "psychoid_swim.png")
-# Cyber Mutant (kind 2): top idle row = 4 frames — taller band so the LEGS aren't cut off
-make_strip(E+"Cyber Mutant.png", (0.0, 0.012, 1.0, 0.27), 4, key_green, [0, 1, 2, 3], "cyber_idle.png")
+# Cyber Mutant (kind 2): TRANSPARENT sheet, top idle row = 5 evenly-spaced boxed frames.
+# Key on ALPHA; taller band (0.035..0.375) captures the LEGS/FEET (fixes knee cutoff);
+# largest-blob keeps only the creature per cell, auto-dropping the thin frame-box lines + label.
+make_strip(E+"Cyber Mutant.png", (0.0, 0.035, 1.0, 0.375), 5, key_alpha, [0, 1, 2, 3], "cyber_idle.png")
 # Eldritch Sponge (kind 1): auto-detect top-row frames, take idle + ooze (first 4) as the loop
 auto_strip(E+"Eldritch Sponge.png", (0.0, 0.05, 1.0, 0.52), key_green, "eldritch_ooze.png", take=[0,1,2,3])
 # Subterra (burrower, kind 4): scanning row = 5 frames (head weaving); gray-keyed
@@ -150,9 +209,11 @@ make_strip(E+"Subterra.png", (0.0, 0.365, 1.0, 0.55), 5, key_green_flood, [0, 1,
 make_strip(E+"Xenoptera02.png", (0.0, 0.06, 1.0, 0.34), 4, key_green_flood, [0, 1, 2, 3], "xenoptera_fly.png")
 # Player soldier (rear view): shooting loop = top row 4 frames (dark bg -> flood)
 make_strip("Player soilders.png", (0.0, 0.045, 1.0, 0.33), 4, key_dark, [0, 1, 2, 3], "soldier_fire.png")
-# Praetorian mini-boss ANIMATIONS (green bg + green eyes -> flood): idle / attack / death rows
-auto_strip(E+"Mini boss Praetorian02.png", (0.0, 0.015, 1.0, 0.205), key_green_flood, "praet_idle.png",   cell=192, minw=120)
-auto_strip(E+"Mini boss Praetorian02.png", (0.0, 0.225, 1.0, 0.395), key_green_flood, "praet_attack.png", cell=192, minw=120)
-auto_strip(E+"Mini boss Praetorian02.png", (0.0, 0.775, 1.0, 0.99),  key_green_flood, "praet_death.png",  cell=192, minw=120)
+# Praetorian mini-boss ANIMATIONS. TRANSPARENT sheet: key on ALPHA (NOT green) so the green
+# blade-arcs / slime energy survive. Preclean removes the pure-green baked row LABELS. Attack &
+# death keep ALL blobs (largest=False) so the detached slash arcs / ground splat aren't dropped.
+auto_strip_alpha(E+"Mini boss Praetorian02.png", (0.0, 0.015, 1.0, 0.205), "praet_idle.png",   cell=192, minw=120, largest=True,  preclean=strip_box_green)
+auto_strip_alpha(E+"Mini boss Praetorian02.png", (0.0, 0.215, 1.0, 0.395), "praet_attack.png", cell=192, minw=120, largest=False, preclean=clean_praet)
+auto_strip_alpha(E+"Mini boss Praetorian02.png", (0.0, 0.765, 1.0, 0.99),  "praet_death.png",  cell=192, minw=120, largest=False, preclean=clean_praet)
 # Queen hero still (Praetorian uses its animation, not a still)
 auto_strip(E+"Alien  Queen02.png", (0.0, 0.05, 1.0, 0.95), key_green_flood, "queen_hero.png", take=[0], cell=256, minw=150)
