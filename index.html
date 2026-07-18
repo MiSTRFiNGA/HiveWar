@@ -169,6 +169,10 @@ function editDefaults() { return {
   bossHp: BAL.bossHp.slice(),
   queen: Object.assign({}, BAL.queen),
   bossY: 560,                                    // how far down the boss descends (bigger = closer to player)
+  gateInterval: Array.from({length:10}, (_,i) => Math.max(12, 18 - 0.4*i)),   // sec between barrier pairs, per level
+  env: Array.from({length:10}, (_,i) => ({      // per-level theming; art drops into assets/env/L<n>_*.png
+    name: i === 0 ? 'City Streets' : i === 9 ? 'Inside the Hive' : 'Sector ' + (i+1) })),
+  rollers: { interval: 8, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 4, minLvl: 2 },
 }; }
 function mergeEdit(base, saved) {                // deep-ish merge so new fields appear after updates
   for (const k in saved) {
@@ -330,7 +334,11 @@ function nextLevel() {
 }
 // starting squad each level: ~5-20, higher with more Start-Squad shop upgrades and higher level
 function startingSquad() { return Math.max(5, 5 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.8) + (Math.random() * 4 | 0)); }
-function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad(); }
+function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
+  rollers.length = 0; G.rollT = 5;
+  loadEnv(G.level);
+  const nm = (EDIT.env[G.level - 1] || {}).name; if (nm) announce('◆ ' + nm.toUpperCase(), '#9fd4ff');
+}
 function endlessScore(){return Math.floor(G.kills*10+G.runBosses*500+G.maxSquad*2+G.loop*2000+
   Math.max(0,G.credits-G.creditsStart)*.25+(G.weapon+1)*100);}
 async function attemptRevive(){if(G.reviveUsed)return;let ok=false;try{ok=!!(window.PSDK&&await PSDK.rewarded());}catch(_){}
@@ -671,10 +679,11 @@ function update(dt) {
   fire(dt);
   perkWeapons(dt);
   vehicleUpdate(dt);
+  rollerUpdate(dt);
 
   if (G.state === 'play') {
     spawnWave(dt);
-    gateT -= dt; if (gateT <= 0) { spawnGatePair(); gateT = BAL.gates.interval(G.level); }
+    gateT -= dt; if (gateT <= 0) { spawnGatePair(); gateT = EDIT.gateInterval[G.level - 1] || 15; }   // FORGE: barrier frequency per level
     if (G.levelT >= BAL.waveSec[G.level - 1]) spawnBoss();
   } else bossUpdate(dt);
 
@@ -1005,7 +1014,100 @@ const ANIM={};
 // FORGE-authored optional strips: `${kind}:${action}` → {img,frames,fps}. Slots the user
 // hasn't created simply aren't here — the game ignores them and uses the shipped defaults.
 const XANIM = {};
+const XSPRITE = {};                            // FORGE-authored item art (rollers etc.), key → holder
 const deathFx = [];                            // one-shot 'Die' strip playbacks at kill spots
+
+// ---------- per-level environment art (FORGE WORLD tab) ----------
+// Naming convention: assets/env/L<level>_path.png (road tile), _bg.png (540x960 backdrop),
+// _side.png (side tile). Missing files are simply ignored — neon default stays.
+const ENVIMG = {};
+function loadEnv(level) {
+  if (ENVIMG[level]) return ENVIMG[level];
+  const mk = suffix => { const im = new Image(); im.onload = () => im.ok = true; im.onerror = () => im.ok = false;
+    im.src = 'assets/env/L' + level + '_' + suffix + '.png'; return im; };
+  return ENVIMG[level] = { path: mk('path'), bg: mk('bg'), side: mk('side') };
+}
+function envNow() { return ENVIMG[G.level] || loadEnv(G.level); }
+
+// ---------- rolling hazards (FORGE WORLD tab: interval / %armored / hp / speed / size / dmg) ----------
+const rollers = [];
+const ART_ROLL = {};
+function rollerArt(armored) {                   // temp art until Eric's sprites land in FORGE ITEMS
+  const key = armored ? 'a' : 'b';
+  if (ART_ROLL[key]) return ART_ROLL[key];
+  return ART_ROLL[key] = mkCanvas(96, 96, g => {
+    g.translate(48, 48);
+    if (armored) {                              // ARMORED: dark spiked steel ball, purple rim
+      for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283;
+        g.fillStyle = '#3a3a48'; g.beginPath();
+        g.moveTo(Math.cos(a - .18) * 34, Math.sin(a - .18) * 34);
+        g.lineTo(Math.cos(a) * 47, Math.sin(a) * 47);
+        g.lineTo(Math.cos(a + .18) * 34, Math.sin(a + .18) * 34); g.closePath(); g.fill(); }
+      const gr = g.createRadialGradient(-10, -10, 4, 0, 0, 36);
+      gr.addColorStop(0, '#8a8aa0'); gr.addColorStop(.6, '#4a4a5c'); gr.addColorStop(1, '#26262f');
+      g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 34, 0, 7); g.fill();
+      g.strokeStyle = '#c4f'; g.lineWidth = 3; g.globalAlpha = .8;
+      g.beginPath(); g.arc(0, 0, 30, 0, 7); g.stroke(); g.globalAlpha = 1;
+      g.fillStyle = '#1c1c24'; for (let i = 0; i < 5; i++) { const a = i / 5 * 6.283 + .5;
+        g.beginPath(); g.arc(Math.cos(a) * 17, Math.sin(a) * 17, 4, 0, 7); g.fill(); }
+    } else {                                    // BREAKABLE: rusty cracked boulder-crate
+      const gr = g.createRadialGradient(-12, -12, 6, 0, 0, 44);
+      gr.addColorStop(0, '#b8865a'); gr.addColorStop(.6, '#8a5c34'); gr.addColorStop(1, '#5a3a1e');
+      g.fillStyle = gr; g.beginPath();
+      for (let i = 0; i < 9; i++) { const a = i / 9 * 6.283, rr2 = 38 + (i % 2 ? 5 : -3);
+        g.lineTo(Math.cos(a) * rr2, Math.sin(a) * rr2); } g.closePath(); g.fill();
+      g.strokeStyle = '#3a2410'; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(-26, -8); g.lineTo(-4, 2); g.lineTo(8, -18); g.stroke();
+      g.beginPath(); g.moveTo(6, 26); g.lineTo(2, 6); g.lineTo(22, -2); g.stroke();
+      g.fillStyle = 'rgba(255,220,160,.25)'; g.beginPath(); g.arc(-14, -16, 10, 0, 7); g.fill();
+    }
+  });
+}
+function rollerUpdate(dt) {
+  const R = EDIT.rollers;
+  if (G.state === 'play' && G.level >= R.minLvl) {
+    G.rollT = (G.rollT === undefined ? 5 : G.rollT) - dt;
+    if (G.rollT <= 0) { G.rollT = R.interval * rr(0.7, 1.3);
+      if (rollers.length < 10) rollers.push({ lane: rr(-0.75, 0.75), y: HORIZON_Y + 6, rot: 0,
+        armored: rng() * 100 < R.pctArmored, hp: R.hp + R.hpLvl * G.level, maxhp: R.hp + R.hpLvl * G.level }); }
+  }
+  for (let i = rollers.length - 1; i >= 0; i--) { const r = rollers[i];
+    const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, r.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
+    const hw = roadHalfWidth(ez);
+    r.x = CFG.W/2 + r.lane * (hw - 20);
+    r.size = R.size * (0.35 + 0.85 * ez);       // grows as it rolls toward the camera
+    r.y += R.speed * (0.35 + 0.75 * ez) * dt;
+    r.rot += dt * (2.2 + 3 * ez);
+    let smashed = false;
+    bullets.each(b => { if (smashed) return;
+      const dx = r.x - b.x, dy = r.y - b.y, rad = r.size / 2 + b.r;
+      if (dx*dx + dy*dy < rad*rad) {
+        if (b.grenade) { b.x = r.x; b.y = r.y; grenadeBlast(b); }
+        bullets.release(b);
+        if (r.armored) { fx(r.x, r.y, '#aaf'); return; }          // shots spark off armor
+        r.hp -= b.dmg; fx(r.x, r.y, '#fa6');
+        if (r.hp <= 0) smashed = true;
+      } });
+    if (smashed) { boom(r.x, r.y, 1.1); G.credits += 5; AUDIO.sample('grenade'); rollers.splice(i, 1); continue; }
+    if (r.y > CFG.H - 150 && Math.abs(r.x - G.px) < r.size / 2 + 42) {   // plows into the squad
+      loseUnits(R.dmg, r.x, r.y); boom(r.x, r.y, 1.2); G.shake = Math.max(G.shake, 5); rollers.splice(i, 1); continue; }
+    if (r.y > CFG.H + 60) rollers.splice(i, 1);
+  }
+}
+function drawRollers() {
+  for (const r of rollers) {
+    const hold = XSPRITE[r.armored ? 'rollerA' : 'rollerB'];
+    const img = (hold && hold.img.ok) ? hold.img : rollerArt(r.armored);
+    const cs = img.height || 96, fr = hold && hold.frames > 1 ? Math.floor(r.rot * 2) % hold.frames : 0;
+    cx.save(); cx.translate(r.x, r.y); cx.rotate(r.rot);
+    cx.drawImage(img, fr * cs, 0, cs, cs, -r.size/2, -r.size/2, r.size, r.size);
+    cx.restore();
+    if (!r.armored && r.hp < r.maxhp) {         // damage bar on breakables
+      cx.fillStyle = '#300'; cx.fillRect(r.x - 20, r.y - r.size/2 - 9, 40, 4);
+      cx.fillStyle = '#fa4'; cx.fillRect(r.x - 20, r.y - r.size/2 - 9, 40 * Math.max(0, r.hp / r.maxhp), 4);
+    }
+  }
+}
 function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
   const w=XANIM[e.kind+':Walk'];               // user-made Walk strip wins over the default anim
   const a=(w&&w.img.ok)?w:ANIM[e.kind]; if(!a||!a.img.ok) return false;
@@ -1039,8 +1141,21 @@ function roadClip(){
 }
 function drawPerspectiveRoad(){
   const bot=roadHalfWidth(1),top=roadHalfWidth(0);
+  const env=envNow();
+  // per-level SIDE tiles: scrolling pattern filling the off-road areas (FORGE WORLD art)
+  if(env.side.ok){ try{ const pat=cx.createPattern(env.side,'repeat');
+    cx.save(); cx.fillStyle=pat; cx.translate(0,(G.t*90)%env.side.height);
+    cx.beginPath();
+    cx.moveTo(-10,HORIZON_Y-960); cx.lineTo(CFG.W/2-top,HORIZON_Y-960); cx.lineTo(CFG.W/2-bot,CFG.H+960); cx.lineTo(-10,CFG.H+960); cx.closePath();
+    cx.moveTo(CFG.W+10,HORIZON_Y-960); cx.lineTo(CFG.W/2+top,HORIZON_Y-960); cx.lineTo(CFG.W/2+bot,CFG.H+960); cx.lineTo(CFG.W+10,CFG.H+960); cx.closePath();
+    cx.fill(); cx.restore(); }catch(e){} }
   const grad=cx.createLinearGradient(0,HORIZON_Y,0,CFG.H);grad.addColorStop(0,'#17132b');grad.addColorStop(1,'#21183a');
   cx.fillStyle=grad;cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.fill();
+  // per-level PATH tile: scrolling pattern clipped to the road trapezoid (FORGE WORLD art)
+  if(env.path.ok){ try{ const pat=cx.createPattern(env.path,'repeat');
+    cx.save(); cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.clip();
+    cx.fillStyle=pat; cx.globalAlpha=.9; cx.translate(0,(G.t*90)%env.path.height);
+    cx.fillRect(-10,HORIZON_Y-960,CFG.W+20,CFG.H-HORIZON_Y+1920); cx.restore(); }catch(e){} }
   cx.save();cx.globalCompositeOperation='lighter';for(const side of [-1,1]){cx.strokeStyle=side<0?'#f3c':'#2ef';cx.shadowColor=cx.strokeStyle;cx.shadowBlur=12;cx.lineWidth=4;cx.beginPath();cx.moveTo(CFG.W/2+side*top,HORIZON_Y);cx.lineTo(CFG.W/2+side*bot,CFG.H);cx.stroke();}cx.restore();
   const phase=(G.t*.16)%1;for(let i=0;i<13;i++){const z=(i/13+phase)%1,y=roadY(z),hw=roadHalfWidth(z);cx.globalAlpha=.12+.3*z;cx.strokeStyle='#7cf';cx.lineWidth=1+z*2;cx.beginPath();cx.moveTo(CFG.W/2-hw,y);cx.lineTo(CFG.W/2+hw,y);cx.stroke();}cx.globalAlpha=1;
   cx.strokeStyle='rgba(255,255,255,.2)';cx.setLineDash([18,24]);cx.beginPath();cx.moveTo(CFG.W/2,HORIZON_Y);cx.lineTo(CFG.W/2,CFG.H);cx.stroke();cx.setLineDash([]);
@@ -1092,6 +1207,7 @@ function draw() {
   // Pre-rendered cyberpunk backdrop + elevated perspective highway.
   cx.fillStyle = '#0a0518'; cx.fillRect(-10, -10, CFG.W + 20, CFG.H + 20);
   cx.drawImage(ART.backdrop, 0, 0);
+  { const env = envNow(); if (env.bg.ok) cx.drawImage(env.bg, 0, 0, CFG.W, CFG.H); }   // per-level backdrop art (FORGE WORLD)
   // sparse drifting embers (subtle, not confetti)
   for(let i=0;i<10;i++){const x=(i*137+G.t*(10+i%4)*3)%CFG.W,y=(i*211+G.t*30)%CFG.H;
     cx.globalAlpha=.10+(i%3)*.05;cx.fillStyle=i%3?'#5cf':'#f84';cx.fillRect(x,y,2,2);}cx.globalAlpha=1;
@@ -1206,6 +1322,7 @@ function draw() {
     }
   });
   drawDeathFx(window.FORGE_DBG && FORGE_DBG.pause ? 0 : 1/60);   // FORGE 'Die' strips play out where enemies fell (frozen while paused)
+  drawRollers();                                                  // rolling hazards share the road clip
   cx.restore();
   // boss
   if (G.boss) drawBoss();
@@ -1573,12 +1690,15 @@ const REG = [
   { key:'tank',     cat:'ITEMS',   unit:'Ironclad Tank',   action:'Idle',   h: wrapImg(IMGS.tank, 1) },
   { key:'perkIcons',cat:'ITEMS',   unit:'Power-up Icons',  action:'Icons',  h: wrapImg(IMGS.perkIcons, 5) },
   { key:'wpnIcons', cat:'ITEMS',   unit:'Weapon Icons',    action:'Icons',  h: wrapImg(IMGS.weaponIcons, 5) },
+  { key:'rollerB',  cat:'ITEMS',   unit:'Roller (Breakable)', action:'Idle', h: null, cell:96, xitem:'rollerB' },
+  { key:'rollerA',  cat:'ITEMS',   unit:'Roller (Armored)',   action:'Idle', h: null, cell:96, xitem:'rollerA' },
 ];
 // user-created slot: standalone holder (Image + frames + fps), wired into XANIM if it has a game hook
 function makeHolder(r, dataURL, frames, fps){
   const im = new Image(); im.onload = () => im.ok = true; im.src = dataURL;
   r.h = { img: im, frames: frames || 1, fps: fps || 8 };
   if (r.xkind !== undefined) XANIM[r.xkind + ':' + r.action] = r.h;
+  if (r.xitem) XSPRITE[r.xitem] = r.h;
   return r.h;
 }
 // apply saved sprite overrides (edited strips win over the shipped PNGs; created slots come back to life)
@@ -1685,7 +1805,7 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
   setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
 
-const TABS = ['UNITS','PLAYER','WEAPONS','WAVES + BOSS','SPRITES','DATA'];
+const TABS = ['UNITS','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false};
 TABS.forEach((t,i)=>{ const d=document.createElement('div'); d.textContent=t;
   d.onclick=()=>{tab=i;spriteSel=-1;renderTab();}; tabsEl.appendChild(d); });
@@ -1740,7 +1860,27 @@ function renderTab(){
       <div class="row">EGG INTERVAL ${num('queen.eggInt',0.2)} EGG HP ${num('queen.eggHp',10)} HATCH ${num('queen.hatch',1,36)}</div>`;
     body.innerHTML = h;
   }
-  else if (tab===4) renderSprites();
+  else if (tab===4){ // WORLD: barriers + rolling hazards + per-level environment
+    let h = `<div class="hint" style="color:#f4f">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>
+      <table><tr><th>LVL</th>`;
+    for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SEC</th>';
+    for(let i=0;i<10;i++)h+=`<td>${num('gateInterval.'+i,0.5,40)}</td>`; h+='</tr></table>';
+    h += `<div class="hint" style="color:#f4f;margin-top:14px">ROLLING HAZARDS — tumble down the path; breakables die to gunfire, armored ones must be dodged</div>
+      <div class="row">EVERY ${num('rollers.interval',0.5,44)}s &nbsp; ARMORED % ${num('rollers.pctArmored',5,44)} &nbsp; FROM LVL ${num('rollers.minLvl',1,36)}</div>
+      <div class="row">HP ${num('rollers.hp',2,44)} + ${num('rollers.hpLvl',1,40)}/lvl &nbsp; SPEED ${num('rollers.speed',10,48)} &nbsp; SIZE ${num('rollers.size',2,40)} &nbsp; SQUAD DMG ${num('rollers.dmg',1,36)}</div>
+      <div class="hint">Temp art for now — drop real sprites in SPRITES → ITEMS → Roller (Breakable) / (Armored).</div>
+      <div class="hint" style="color:#f4f;margin-top:14px">ENVIRONMENT — name each level; art auto-loads from <b>assets/env/</b> as
+        L&lt;n&gt;_path.png (road tile), L&lt;n&gt;_bg.png (540×960 backdrop), L&lt;n&gt;_side.png (side tile). Missing = neon default.</div>
+      <table><tr><th>LVL</th><th>NAME</th><th>PATH</th><th>BG</th><th>SIDE</th></tr>`;
+    for(let i=0;i<10;i++){ const th=s=>`<img src="assets/env/L${i+1}_${s}.png?${Date.now()}" style="height:22px;border:1px solid #333;border-radius:3px"
+        onerror="this.outerHTML='<span style=&quot;color:#456&quot;>—</span>'">`;
+      h += `<tr><td style="color:#4ff">${i+1}</td>
+        <td><input type="text" data-env="${i}" value="${(EDIT.env[i]||{}).name||''}" style="width:150px"></td>
+        <td>${th('path')}</td><td>${th('bg')}</td><td>${th('side')}</td></tr>`; }
+    body.innerHTML = h + '</table>';
+    body.querySelectorAll('[data-env]').forEach(inp=>inp.oninput=()=>{ EDIT.env[+inp.dataset.env].name = inp.value; saveEdit(); });
+  }
+  else if (tab===5) renderSprites();
   else { // DATA
     body.innerHTML = `<div class="hint">Values live in <b>localStorage</b> (this browser). Export JSON to keep a copy or move between machines. Edited sprites: use DOWNLOAD on the sprite to bake the PNG into assets/ permanently.</div>
       <div class="row"><button id="fExp">⇩ EXPORT ALL (JSON)</button>
