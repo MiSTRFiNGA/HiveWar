@@ -333,6 +333,7 @@ function startRun(mode='campaign') {
   Object.assign(G.meta, {dmg:0, squad:0, weapon:0, perkSlot:0, vehicleDrop:0, credits:0});
   G.credits = 0; save(); AUDIO.loopTank(false);
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
+  { const m=location.search.match(/[?&]lvl=(\d+)/); if(m) G.level=Math.min(CFG.levels,Math.max(1,+m[1])); } // debug/screenshot jump
   G.squad = startingSquad(); G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
