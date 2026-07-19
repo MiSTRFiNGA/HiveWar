@@ -37,6 +37,40 @@ into `assets/*.png` strips; the game's `ANIM[kind]` + `PRAET` registries cycle f
 - Scale reference honored (Eric's `ENEMY_SCALE_REFERENCE.png`): cyber big, sponge/subterra small, etc.
 - Sound wired (pulse-rifle/grenade/explosion/lightning/money(50% orbs)/perk/boss). Coin now audible.
 
+## ▶ NEXT SESSION (2026-07-19+): LEVEL / ENVIRONMENT LOOKS
+Eric is building per-level art. Everything below is already wired — next chat is about
+dropping in art + making each level look distinct:
+- **Env pipeline (done)**: FORGE (F2) → WORLD tab → per-level clickable slots **＋ path / ＋ bg / ＋ side**
+  (upload → localStorage override, live instantly, ✕ clears; auto-downscale tiles 512 / bg 1080).
+  Fallback = files `assets/env/L<n>_{path,bg,side}.png` (see assets/env/README.txt). FORGE upload wins.
+- **Path = TRUE perspective tiling**: always 4 tiles across the road, rows foreshortened, scrolls toward
+  player. Density knob = `S=13` in `drawPerspectiveRoad` (not yet in FORGE — expose if Eric wants).
+- **bg**: wide strips (aspect >1.8) anchor on the horizon; full 540×960 covers canvas. **side**: pattern-fills
+  off-road areas, scrolls.
+- Eric HAS art ready for L1 (City Streets: neon road tile + purple skyline) and L10 (Inside the Hive:
+  green alien tile + biomech strip) — he uploads via WORLD slots, or hands me files to bake into assets/env/.
+- Level names in WORLD tab (announced at level start). L2-L9 still "Sector N" placeholders.
+- When a set is final: bake into assets/env/ + commit, so it ships (localStorage is per-browser).
+
+## NEW (2026-07-18 session, pass 3)
+- Swarm AI: two-phase flow — spawns blanket the road full-width, NO player-homing above
+  `FUNNEL_Y = CFG.H-330`, hard converge + latch-attack below (bites every .85s until killed).
+  Harder than before (harness dies L1) — tune via FORGE armor/HP/spawn if needed.
+- Far-horde indicator band halved + raised (z .02-.19, kill line z=.20).
+- HUD in-run buttons top-right: ⟳ RESTART, ⏸/▶ PAUSE (freeze+dim+banner, tap resumes), ⚙ mute.
+  Mute = HARD stop (pauses+rewinds all playing samples + tank loop instantly).
+- WORLD tab (FORGE): barrier interval per level (EDIT.gateInterval), rolling hazards
+  (EDIT.rollers: interval/%armored/hp+lvl/speed/size/dmg/minLvl2; breakable=hp+credits,
+  armored=dodge-only; temp procedural art; real sprites via SPRITES→ITEMS→Roller slots),
+  per-level env (EDIT.env names + upload slots).
+- FORGE core (earlier passes): auto-pause on open, resizable/draggable, transport ⏸⏩⏭,
+  UNITS/PLAYER/WEAPONS/WAVES+BOSS/WORLD/SPRITES/DATA. Sprite frame paint editor +
+  creatable slots (XANIM Walk override + Die one-shot; XSPRITE rollers). `?forge=1&ftab=N`.
+- Boss: descends to EDIT.bossY≈560 (close combat), HP bar floats above boss head.
+- Praet death frame idx2 = ONE connected sprite (looks like 2; CC-verified) — repaint/DEL in FORGE if wanted.
+- Repo: private GitHub **MiSTRFiNGA/HiveSwarm**; mirror = `D:\Drive\AI\My apps\HiveSwarm`
+  (robocopy /MIR /XD .git __pycache__ after each pass). ZeldaForge shipped separately (D:\Dev\ZeldaForge).
+
 ## NEW (2026-07-18 session, pass 2)
 - Boss HP bar floats above the boss's head (follows B.x/B.y, clamped on-screen) — no longer hidden under the top HUD.
 - FORGE header debug transport: ⏸ pause, ⏩ ×4 fast-forward, ⏭ level skip (boss→bossKill, play→nextLevel, perk→dismiss). `window.FORGE_DBG` read by main loop.
