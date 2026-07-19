@@ -37,9 +37,17 @@ into `assets/*.png` strips; the game's `ANIM[kind]` + `PRAET` registries cycle f
 - Scale reference honored (Eric's `ENEMY_SCALE_REFERENCE.png`): cyber big, sponge/subterra small, etc.
 - Sound wired (pulse-rifle/grenade/explosion/lightning/money(50% orbs)/perk/boss). Coin now audible.
 
-## ▶ NEXT SESSION (2026-07-19+): LEVEL / ENVIRONMENT LOOKS
-Eric is building per-level art. Everything below is already wired — next chat is about
-dropping in art + making each level look distinct:
+## ▶ 2026-07-19: PER-LEVEL ENVIRONMENT ART — BAKED (all 10 levels)
+Eric delivered breakdown sheets `Desktop\HiVE Swarm\assets\Environment\Level N.png`
+(each = mockup + bg horizon + 4-wide path tile + side wall panel). `slice_env.py`
+crops the three panels per level → **`assets/env/L1..L10_{bg,path,side}.png`** (all 30 baked,
+caption/border trimmed, bg≤1080 tiles≤512). Shared tilesets copied to `assets/env/shared/`
+(Tile_cyber01, Tile_Hive01, Wall_City01 city skyline strip, Wall_Hive01). `Level 4b.png` is an
+alternate L4 strip — unused. Level names now real (EDIT.env): Security Outpost / City Ruins /
+Commercial District / Central Spire / Overrun Factory / Reactor Nursery / Hive Gate /
+Chitin Fields / Brood Caverns / Queen's Chamber. `?v=9`. Re-crop = edit boxes in slice_env.py.
+
+## Env pipeline reference (wired earlier)
 - **Env pipeline (done)**: FORGE (F2) → WORLD tab → per-level clickable slots **＋ path / ＋ bg / ＋ side**
   (upload → localStorage override, live instantly, ✕ clears; auto-downscale tiles 512 / bg 1080).
   Fallback = files `assets/env/L<n>_{path,bg,side}.png` (see assets/env/README.txt). FORGE upload wins.

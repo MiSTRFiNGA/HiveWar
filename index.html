@@ -171,7 +171,8 @@ function editDefaults() { return {
   bossY: 560,                                    // how far down the boss descends (bigger = closer to player)
   gateInterval: Array.from({length:10}, (_,i) => Math.max(12, 18 - 0.4*i)),   // sec between barrier pairs, per level
   env: Array.from({length:10}, (_,i) => ({      // per-level theming; art drops into assets/env/L<n>_*.png
-    name: i === 0 ? 'City Streets' : i === 9 ? 'Inside the Hive' : 'Sector ' + (i+1) })),
+    name: ['Security Outpost','City Ruins','Commercial District','Central Spire','Overrun Factory',
+           'Reactor Nursery','Hive Gate','Chitin Fields','Brood Caverns',"Queen's Chamber"][i] })),
   rollers: { interval: 8, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 4, minLvl: 2 },
 }; }
 function mergeEdit(base, saved) {                // deep-ish merge so new fields appear after updates
@@ -1012,7 +1013,7 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=8';                                 // bump to bust the browser cache when sprites change
+  const V='?v=9';                                 // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
   ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — idle/ooze

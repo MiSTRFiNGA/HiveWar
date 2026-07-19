@@ -185,3 +185,17 @@ STILL TODO (art-heavy / mechanics — next loop):
 - Ground tile (Environment/Tile_*) tiled along the path; Tank swap (Items/Ironclad Centurion).
 - Correct bestiary LOG images (Enemies/Log - *.png) instead of sprite crops.
 - Transparent 02 assets: USE THEM (best for bounding boxes — no keying). Re-slice bosses from 02.
+
+## 2026-07-19 — Claude (Fable 5): per-level environment art baked (L1–L10)
+- Eric delivered 10 per-level breakdown sheets (`Desktop\HiVE Swarm\assets\Environment\Level N.png`),
+  each containing a background horizon, a 4-wide path tile segment, and a side wall panel,
+  plus shared tilesets (Tile_cyber01, Tile_Hive01, Wall_City01, Wall_Hive01).
+- New `slice_env.py`: hand-tuned crop boxes per sheet → `assets/env/L{n}_{bg,path,side}.png`
+  (30 files; captions/borders/watermark frames trimmed; bg capped 1080, tiles 512).
+  Shared tilesets copied to `assets/env/shared/`. `Level 4b.png` = alternate L4 strip, unused.
+- Level names wired into `EDIT.env` (announced at level start + FORGE WORLD tab):
+  Security Outpost, City Ruins, Commercial District, Central Spire, Overrun Factory,
+  Reactor Nursery, Hive Gate, Chitin Fields, Brood Caverns, Queen's Chamber.
+- Cache bump `?v=9`. Headless 10-level harness runs clean (dies L1 = known difficulty, no errors).
+- The game's env loader (`loadEnv`) picks the baked files up automatically; FORGE WORLD
+  uploads still override via localStorage.
