@@ -10,6 +10,7 @@ cd /d/Dev/HiveSwarm
 python regen_extract.py          # re-extract game JS after editing index.html
 node _headless_harness.js        # full 10-level sim, throws on any error (canvas stubbed + non-finite guards)
 node _chain_test.js              # cyber-mutant chain-explosion stress test
+# per-level env screenshot: headless Brave, URL ?test=1&lvl=N (debug level-jump param), 540x960
 python slice_enemies.py          # re-slice enemy/boss/soldier sprite strips from Desktop sheets
 ```
 Verify visually in Brave via claude-in-chrome on `http://127.0.0.1:8791/index.html?v=N` (bump N to bust cache).
