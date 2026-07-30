@@ -415,14 +415,32 @@ function nextLevel() {
 function startingSquad() { return Math.max(10, 10 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.5) + (Math.random() * 3 | 0)); }
 // random per-level loadout (owner request 2026-07-30): every level hands the squad a fresh
 // weapon so runs feel varied, never the same weapon twice in a row.
-function pickRandomWeapon(exclude) {
-  if (WEAPONS.length <= 1) return 0;
-  let idx; do { idx = Math.floor(rng() * WEAPONS.length); } while (idx === exclude);
+// Weapons wider than this scatter badly against a single-point boss hitbox — most of the volley
+// simply misses. Rolling one onto the Queen finale tripled her time-to-kill (533s -> 823s in
+// _queen_test.js), which reads as "my gun stopped working", not as difficulty. Boss levels therefore
+// draw only from the tight-grouping weapons.
+// Tuned empirically, not guessed. 0.15 was tried first and made things WORSE (Queen 823s -> 997s):
+// it also excluded Orbital Link, which despite 0.18 spread has the highest raw DPS of the five
+// (9 rof x 0.89 dmg x 5 shots). Scatter Rail is the genuine outlier — widest spread AND mediocre
+// damage — so the threshold sits just above Orbital Link.
+const BOSS_MAX_SPREAD = 0.20;   // excludes Scatter Rail (0.22) only
+
+function pickRandomWeapon(exclude, level) {
+  // On the Queen finale, restrict the pool to accurate weapons.
+  const bossLevel = level === CFG.levels;
+  const pool = [];
+  for (let i = 0; i < WEAPONS.length; i++) {
+    if (bossLevel && WEAPONS[i].spread > BOSS_MAX_SPREAD) continue;
+    pool.push(i);
+  }
+  if (!pool.length) return 0;                       // never leave the player unarmed
+  if (pool.length === 1) return pool[0];
+  let idx; do { idx = pool[Math.floor(rng() * pool.length)]; } while (idx === exclude);
   return idx;
 }
 function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
-  G.weapon = pickRandomWeapon(G.weapon);              // fresh random loadout — never a back-to-back repeat
+  G.weapon = pickRandomWeapon(G.weapon, G.level);     // fresh random loadout — never a back-to-back repeat
   loadEnv(G.level);
   const nm = (EDIT.env[G.level - 1] || {}).name, wpnTag = '⚔ ' + WEAPONS[G.weapon].name.toUpperCase();
   announce(nm ? '◆ ' + nm.toUpperCase() + '  ·  ' + wpnTag : wpnTag, '#9fd4ff');
