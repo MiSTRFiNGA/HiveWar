@@ -1,0 +1,58 @@
+name: iOS scaffold (INERT)
+
+# INERT until Eric has an Apple Developer Program membership ($99/yr) and adds
+# signing secrets. macOS runners are free for public repos — this workflow is
+# ready but does NOT produce an installable IPA without those secrets.
+#
+# Secrets Eric must add later (do NOT create accounts from CI):
+#   APPLE_CERTIFICATE_BASE64
+#   APPLE_CERTIFICATE_PASSWORD
+#   APPLE_PROVISIONING_PROFILE_BASE64
+#   APPLE_TEAM_ID
+#
+# See mobile/IOS_CI.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      attempt_archive:
+        description: 'Set true only after Apple secrets exist (default false = dry scaffold)'
+        required: false
+        default: 'false'
+
+jobs:
+  ios-scaffold:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Scaffold Capacitor iOS project (always)
+        env:
+          APP_NAME: 'HiVE Swarm'
+          APP_ID: 'com.empiregames.hiveswarm'
+        run: |
+          set -euo pipefail
+          WORK="${{ runner.temp }}/cap-ios"
+          mkdir -p "$WORK/www"
+          cp index.html "$WORK/www/"
+          for d in assets sounds; do
+            if [ -d "$d" ]; then cp -a "$d" "$WORK/www/"; fi
+          done
+          cd "$WORK"
+          npm init -y
+          npm i @capacitor/cli@latest @capacitor/core@latest @capacitor/ios@latest
+          npx cap init "$APP_NAME" "$APP_ID" --web-dir=www
+          npx cap add ios
+          npx cap sync ios
+          echo "iOS project scaffolded at $WORK/ios"
+          ls -la ios || true
+
+      - name: Archive (blocked unless secrets present)
+        if: github.event.inputs.attempt_archive == 'true'
+        run: |
+          echo "Archive requires Apple secrets — failing closed if missing."
+          test -n "${{ secrets.APPLE_TEAM_ID }}" || (echo "APPLE_TEAM_ID missing — INERT" && exit 1)

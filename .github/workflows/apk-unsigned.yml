@@ -1,0 +1,79 @@
+name: APK unsigned (tag)
+
+# Builds an UNSIGNED release APK via Capacitor + Gradle and uploads it as a
+# workflow artifact + GitHub Release asset (on tag).
+#
+# SIGNING KEY POLICY (Eric / Claude / Grok):
+# Do NOT put empire-release.jks or its password in GitHub Secrets.
+# CI deliberately produces UNSIGNED APKs. Local signed builds stay on the
+# HiVEMiND machine via D:\Dev\_mobile\build_apk.ps1.
+# If Eric later wants signed CI builds, HE adds the keystore secrets himself:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# and edits this workflow — that is not done automatically.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  apk-unsigned:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Scaffold Capacitor project + assembleRelease (unsigned)
+        env:
+          APP_NAME: 'HiVE Swarm'
+          APP_ID: 'com.empiregames.hiveswarm'
+        run: |
+          set -euo pipefail
+          WORK="${{ runner.temp }}/cap-app"
+          mkdir -p "$WORK/www"
+          cp index.html "$WORK/www/"
+          for d in assets sounds; do
+            if [ -d "$d" ]; then cp -a "$d" "$WORK/www/"; fi
+          done
+          cd "$WORK"
+          npm init -y
+          npm i @capacitor/cli@latest @capacitor/core@latest @capacitor/android@latest
+          npx cap init "$APP_NAME" "$APP_ID" --web-dir=www
+          npx cap add android
+          npx cap sync android
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          UNSIGNED=$(find app/build/outputs/apk -name '*release*.apk' | head -n1)
+          echo "UNSIGNED=$UNSIGNED"
+          test -f "$UNSIGNED"
+          mkdir -p "${{ github.workspace }}/ci-out"
+          cp "$UNSIGNED" "${{ github.workspace }}/ci-out/${{ github.event.repository.name }}-unsigned.apk"
+          ls -la "${{ github.workspace }}/ci-out"
+
+      - name: Upload unsigned APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-unsigned
+          path: ci-out/*.apk
+
+      - name: Attach to GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ci-out/*.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

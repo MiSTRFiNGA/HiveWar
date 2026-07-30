@@ -1,0 +1,15 @@
+{
+  "appId": "com.empiregames.hiveswarm",
+  "appName": "HiVE Swarm",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
