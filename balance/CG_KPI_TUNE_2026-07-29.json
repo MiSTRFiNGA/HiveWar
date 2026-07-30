@@ -1,0 +1,123 @@
+{
+  "game": "HiVE SWARM",
+  "date": "2026-07-29",
+  "author": "Grok",
+  "status": "NUMBERS ONLY — Claude applies; do not confuse with live index.html until merged",
+  "cg_context": {
+    "source": "Bone Crush CG Basic Launch rejection (same three KPIs)",
+    "desktop": { "playtime": "2m43s (1/5)", "d1": "2.63% (2/5)", "conversion": "56.25% (1/5)", "total": "4/15 REJECTED" },
+    "mobile": { "playtime": "8m27s (3/5)", "d1": "0.00% (1/5)", "conversion": "46.15% (2/5)", "total": "6/15 BANNED MOBILE" },
+    "benchmarks": { "playtime_min": 10, "d1_pct": "10-15 (avg 6.7)", "conversion_pct": 80 },
+    "conversion_def": "% of players still playing after 60 seconds"
+  },
+  "squadMax": {
+    "decision": 300,
+    "rationale": "Live index.html CFG.squadMax is 300 (army feel + meta shop stacks). 100 is the original soft-army design (STATUS doc). 1100 appears only as pass drift and must NOT be used — it flattens column pressure math and makes L1-2 feel empty rather than fair. Eric can override; curve below is built on 300.",
+    "alternatives_rejected": {
+      "100": "meta Start-Squad shop can't show meaningful growth; feels tiny on vertical canvas",
+      "1100": "experimental drift; kills readability and confuses gate +/– feedback"
+    }
+  },
+  "current_live": {
+    "squadMax": 300,
+    "spawnRate": [3, 4, 6, 9, 13, 18, 25, 35, 47, 62],
+    "ramp": "min(1, 0.18 + levelT/20) * 1.1",
+    "startingSquad": "max(5, 5 + meta.squad*8 + floor(level*0.8) + rand(0..3))",
+    "EKIND_hp": [2, 26, 7, 12, 20, 55],
+    "EKIND_r": [22, 24, 32, 18, 13, 28],
+    "gates_minus_L1": [-15, -6],
+    "problem": "L1 minus gates can delete a 5–9 unit starter squad in one touch → harness/new-player death on L1. That is the conversion killer, not raw spawnRate."
+  },
+  "recommended": {
+    "CFG.squadMax": 300,
+    "BAL.spawnRate": [2, 3, 5, 8, 12, 17, 24, 33, 44, 56],
+    "spawnWave.ramp": "Math.min(1, 0.12 + G.levelT / 28)",
+    "spawnWave.rateMul": 1.0,
+    "startingSquad": "Math.max(10, 10 + (G.meta.squad||0)*8 + Math.floor(G.level*0.5) + (Math.random()*3|0))",
+    "BAL.gates.minus": [
+      [-4, -1],
+      [-6, -2],
+      [-10, -4],
+      [-16, -7],
+      [-24, -10],
+      [-34, -14],
+      [-46, -18],
+      [-58, -24],
+      [-70, -30],
+      [-85, -40]
+    ],
+    "BAL.gates.plus": [
+      [2, 6],
+      [3, 9],
+      [4, 12],
+      [6, 16],
+      [8, 22],
+      [10, 28],
+      [13, 34],
+      [16, 42],
+      [20, 52],
+      [24, 64]
+    ],
+    "BAL.gates.interval": "L => Math.max(14.0, 20.0 - 0.35*(L-1))",
+    "EKIND": [
+      { "kind": 0, "name": "Xenoid", "hp": 1, "r": 22, "note": "one-shot fodder L1–2" },
+      { "kind": 1, "name": "Eldritch", "hp": 22, "r": 24, "note": "-4 vs live 26; still sponge" },
+      { "kind": 2, "name": "Cyber", "hp": 6, "r": 32, "note": "-1" },
+      { "kind": 3, "name": "Xenoptera", "hp": 10, "r": 18, "note": "-2; keep speed threat" },
+      { "kind": 4, "name": "Subterra", "hp": 18, "r": 13, "note": "-2" },
+      { "kind": 5, "name": "Cephalo", "hp": 48, "r": 28, "note": "-7; still elite" }
+    ],
+    "BAL.mixEld": [0, 4, 8, 14, 18, 22, 26, 28, 30, 32],
+    "BAL.mixCyb": [0, 0, 3, 8, 12, 16, 20, 23, 25, 27],
+    "BAL.waveSec": [75, 78, 82, 86, 90, 94, 98, 102, 106, 60],
+    "BAL.bossHp": [3600, 5600, 8800, 12800, 18000, 25000, 30000, 40000, 52000, 0]
+  },
+  "kpi_mapping": {
+    "conversion_60s": {
+      "target": ">=80% still playing at 60s",
+      "changes": [
+        "startingSquad floor 10 (was 5) — survives contact + one soft minus gate",
+        "L1–2 spawnRate 2/3 (was 3/4) + slower ramp (28s to full vs 20s)",
+        "L1 minus gates [-4,-1] not [-15,-6] — never deletes the run in second 15",
+        "mixEld/mixCyb zeroed on L1 — only fodder for the first minute",
+        "EKIND[0].hp = 1 — new player gets kill feedback immediately"
+      ],
+      "first_real_death": "L3–L4 (boss or stacked minus+eld), not L1"
+    },
+    "playtime_10min": {
+      "estimate_live_full_10_levels_min": "14–22 with shops (waveSec sum ~875s combat + shop 12–25s each)",
+      "estimate_after_tune_min": "16–24",
+      "endless": {
+        "keep": "spawn * 1.07**loop, boss scaling from BAL",
+        "change": "After campaign clear, auto-offer Endless with +1 Start Squad credit and a 'one more loop' banner — session extender, not a stall",
+        "stall_fix": "If endless loop 1 TTK of near-band exceeds 90s without perk agency, cut spawn mult to 1.05**k"
+      },
+      "if_run_under_10min": "Raise BAL.waveSec L1–6 by +8s each and ensure shop cannot be fully skipped without a 3s confirm (prevents speedrun bounce that tanks median)"
+    },
+    "retention_d1": {
+      "target": ">=10% D1",
+      "shop_meta_verdict": "Start Squad / Weapon / Armor meta is a real return hook IF a run earns >=1 meaningful upgrade. Soft L1–2 guarantees first-session credit income.",
+      "daily_login_bonus": {
+        "day_1": "+8 starter squad next run",
+        "day_2": "+1 weapon tier next run (cap 1 free tier)",
+        "day_3": "rare perk ticket (pick 1 of 3, expires end of day)",
+        "day_4_plus_streak": "credits = 15 * streak (cap 5) on menu claim"
+      },
+      "daily_quest": [
+        "Clear L3 once → 40 credits",
+        "Kill 1 boss → 60 credits",
+        "Survive 3:00 in Endless → perk ticket"
+      ],
+      "ftue": "Cold-open into play (skip heavy menu). First death offers 'try L1 again with +5 squad' once — conversion safety net without teaching bad habits forever."
+    }
+  },
+  "headless_expect": {
+    "before": "node _headless_harness.js dies on L1 (minus gates / thin squad)",
+    "after_apply": "bot should reach at least L3; first death modal around L3–4; full clear possible with auto-perk picks"
+  },
+  "apply_notes_for_claude": [
+    "Only edit index.html (and mirror _game_extract.js if harness uses it) — Grok did not touch either.",
+    "Re-run: node _headless_harness.js and node _progress_test.js",
+    "Do not resubmit as a 'patch' of a rejected title; ship as NEW game listing when ready."
+  ]
+}
