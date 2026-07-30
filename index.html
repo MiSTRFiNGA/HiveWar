@@ -34,7 +34,9 @@
 
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
-  laneMargin: 60,
+  // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
+  // enough margin that the trooper sprite (~24-29px half-width) isn't clipped off-screen
+  laneMargin: 28,
   scrollSpd: 170,                 // px/s world scroll
   squadCapVisible: 5,
   squadMax: 300,                  // hard cap — big-army feel; meta upgrades actually stack toward it
@@ -97,12 +99,21 @@ const G = {
   meta: load(),
 };
 // Weapon DPS ratios follow balance/balance.json dpsMult [1,1.55,2.3,3.4,5]
+// sfx/sfxRate/sfxVol/sfxMinGap + shape/len/wid are the FORGE-adjacent "look and sound
+// different" data (owner request 2026-07-30): every weapon repurposes an existing
+// assets/SFX sample (tuned by pitch/volume so it reads as its own gun, not the sample's
+// original effect) and gets a distinct bullet silhouette so it's identifiable on sight.
 const WEAPONS = [
-  {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,  col:'#5ef'},   // slow single shots until powerups
-  {name:'Twin Plasma', rof:10, dmg: 0.62, n:2, spread:0.06, col:'#4cf'},
-  {name:'Scatter Rail',rof:12, dmg: 0.38, n:4, spread:0.22, col:'#c6f'},
-  {name:'Heavy Plasma',rof:11, dmg: 0.82, n:3, spread:0.10, col:'#f80'},
-  {name:'Orbital Link',rof: 9, dmg: 0.89, n:5, spread:0.18, col:'#ff4'},
+  {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,    col:'#5ef',   // slow single shots until powerups
+   sfx:'gun',         sfxRate:1.0,  sfxVol:.22, sfxMinGap:0,     shape:'bolt',   len:22, wid:4},
+  {name:'Twin Plasma', rof:10,   dmg: 0.62, n:2, spread:0.06, col:'#4cf',
+   sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3},
+  {name:'Scatter Rail',rof:12,   dmg: 0.38, n:4, spread:0.22, col:'#c6f',
+   sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2},
+  {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.10, col:'#f80',
+   sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8},
+  {name:'Orbital Link',rof: 9,   dmg: 0.89, n:5, spread:0.18, col:'#ff4',
+   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ring',   len:18, wid:6},
 ];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
@@ -287,14 +298,25 @@ const AUDIO = (() => {
     xenohit:[SFX+'xeno attack.mp3',.4,4], subterrahit:[SFX+'subterrahit.mp3',.4,3],
     xenopterahit:[SFX+'xenotera hit.mp3',.4,3], eldritchdie:[SFX+'eldritch sponge death.mp3',.5,2],
     mg:[SFX+'light-machine-gun.mp3',.3,3],
+    // dedicated weapon-fire pools (separate from 'lightning', which the Chain Lightning perk
+    // already hammers) so per-weapon pitch/volume tuning never fights other SFX for voices
+    lightning01:[SFX+'lightning01.mp3',.35,3], lightning02:[SFX+'lightning02.mp3',.32,3],
   };
-  const pool={};
-  function sample(name){
+  const pool={}, lastPlay={};
+  function sample(name, opt){
     if(muted||!SAMPLES[name])return;
+    if (opt && opt.minGap) {                 // per-weapon throttle: a repurposed sample fired at
+      const t = (typeof performance!=='undefined'?performance.now():Date.now());  // high rof shouldn't machine-gun-overlap itself
+      if (lastPlay[name] !== undefined && t - lastPlay[name] < opt.minGap * 1000) return;
+      lastPlay[name] = t;
+    }
     try{
       const [src,vol,psz]=SAMPLES[name];
       const arr=pool[name]||(pool[name]=Array.from({length:psz},()=>{const a=new Audio(src);a.volume=vol;return a;}));
-      const a=arr.find(x=>x.paused)||arr[0];a.currentTime=0;a.play().catch(()=>{});
+      const a=arr.find(x=>x.paused)||arr[0];a.currentTime=0;
+      a.volume = (opt && opt.vol !== undefined) ? opt.vol : vol;
+      try { a.playbackRate = (opt && opt.rate !== undefined) ? opt.rate : 1; } catch(_){}
+      a.play().catch(()=>{});
     }catch(_){}
   }
   function resume(){ try{ const ac=ensure(); if(ac.state==='suspended')ac.resume(); }catch(_){}
@@ -358,10 +380,19 @@ function nextLevel() {
 }
 // starting squad each level: ~5-20, higher with more Start-Squad shop upgrades and higher level
 function startingSquad() { return Math.max(10, 10 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.5) + (Math.random() * 3 | 0)); }
+// random per-level loadout (owner request 2026-07-30): every level hands the squad a fresh
+// weapon so runs feel varied, never the same weapon twice in a row.
+function pickRandomWeapon(exclude) {
+  if (WEAPONS.length <= 1) return 0;
+  let idx; do { idx = Math.floor(rng() * WEAPONS.length); } while (idx === exclude);
+  return idx;
+}
 function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
+  G.weapon = pickRandomWeapon(G.weapon);              // fresh random loadout — never a back-to-back repeat
   loadEnv(G.level);
-  const nm = (EDIT.env[G.level - 1] || {}).name; if (nm) announce('◆ ' + nm.toUpperCase(), '#9fd4ff');
+  const nm = (EDIT.env[G.level - 1] || {}).name, wpnTag = '⚔ ' + WEAPONS[G.weapon].name.toUpperCase();
+  announce(nm ? '◆ ' + nm.toUpperCase() + '  ·  ' + wpnTag : wpnTag, '#9fd4ff');
 }
 function endlessScore(){return Math.floor(G.kills*10+G.runBosses*500+G.maxSquad*2+G.loop*2000+
   Math.max(0,G.credits-G.creditsStart)*.25+(G.weapon+1)*100);}
@@ -369,10 +400,12 @@ async function attemptRevive(){if(G.reviveUsed)return;let ok=false;try{ok=!!(win
   if(ok){G.reviveUsed=true;G.squad=Math.max(BAL.ads.reviveMin,Math.floor(G.maxSquad*BAL.ads.reviveFrac));G.state=G.boss?'boss':'play';}}
 
 // ---------- gates ----------
+let gatePairSeq = 0;    // shared id so a pair's two gates can find each other — never inferred from array position
 function spawnGatePair() {
   const y = -60, wPair = (CFG.W - 2 * CFG.laneMargin) / 2 - 10, wFull = CFG.W - 2 * CFG.laneMargin;
   const li = G.level - 1, GB = BAL.gates;
   const lockedLive = gates.some(g => g.live && g.locked);   // only ONE locked gate on screen at a time
+  const pairId = ++gatePairSeq;
   const mk = (lane, allowLocked) => {
     const roll = rng();
     let kind, val, need, locked = false;
@@ -385,7 +418,7 @@ function spawnGatePair() {
     // Only one exists at a time — steer around it.
     if (allowLocked && rng() < 0.22) { locked = true; kind = 'add';
       val = -Math.round(rr(GB.minus[li][1] * -2.2, GB.minus[li][1] * -1.4)); need = 1; }
-    return { lane, y, h: 46, kind, val, shot: 0, need, live: true, locked };  // x/w derived from perspective via gateRect()
+    return { lane, y, h: 46, kind, val, shot: 0, need, live: true, locked, pairId, spent: false };  // x/w derived from perspective via gateRect()
   };
   // ~40% single gate (dodge-or-take), else a pair (pick a side). Only one lane may be locked.
   if (rng() < 0.40) {
@@ -401,12 +434,12 @@ function spawnGatePair() {
   // never a plain double-negative (both drain you): flip the right to a positive add
   if (isNeg(g1) && isNeg(g2) && !impassable(g1)) {
     const r = GB.plus[li];
-    g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false };
+    g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false, pairId, spent: false };
   }
   gates.push(g1, g2);
 }
 function gateHit(g, dmg) {           // shooting a gate improves it
-  if (g.locked) return;             // locked gates can't be changed — you must move around them
+  if (g.locked || g.spent) return;  // locked = can't shoot it; spent = its sibling was already collected, it's inert
   g.shot += dmg;
   const li = G.level - 1, GB = BAL.gates;
   while (g.shot >= g.need) {
@@ -417,6 +450,9 @@ function gateHit(g, dmg) {           // shooting a gate improves it
   }
 }
 function gatePass(g) {
+  // GATE EXCLUSIVITY: once a gate's sibling has been collected, it's spent — worth zero,
+  // no squad effect. Locked hazards are exempt (see below) so they stay lethal to dodge.
+  if (g.spent) { const gr = gateRect(g); fx(gr.x + gr.w / 2, g.y + g.h, '#888'); return; }
   // a single gate never grants more than +gateAddMax units; total squad capped at squadMax
   if (g.kind === 'add') G.squad = Math.max(g.val < 0 ? 1 : 0, G.squad + Math.min(CFG.gateAddMax, g.val));
   else if (g.kind === 'mul') { const gain = Math.min(CFG.gateAddMax, Math.round(G.squad * g.val) - G.squad);
@@ -426,6 +462,12 @@ function gatePass(g) {
   { const gr = gateRect(g); fx(gr.x + gr.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44'); }
   G.flashT = 0.16;
   sfx('gate');
+  // Neuter this gate's still-live sibling — UNLESS this was a locked hazard hit (those never
+  // "collect", they just hurt) or the sibling is itself locked (a locked gate must stay a
+  // real threat even after its sibling was already grabbed — it's not something you "collect").
+  if (!g.locked) {
+    for (const o of gates) if (o !== g && o.pairId === g.pairId && o.live && !o.locked && !o.spent) { o.spent = true; o.val = 0; }
+  }
   if (G.squad <= 0) die();
 }
 
@@ -440,7 +482,7 @@ function fire(dt) {
   fireT -= dt;
   if (fireT > 0) return;
   fireT = 1 / rof;
-  AUDIO.sample('gun');                               // one gun report per volley (throttled by rof)
+  AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
   // EXACTLY one bullet per soldier owned (20 soldiers → 20 bullets). Cap 200 for perf.
   const cols = Math.min(G.squad, 15);   // 1 bullet per soldier, capped at 15 streams (perf: 10 men=10, 100 men=15)
   for (let c = 0; c < cols; c++) {
@@ -892,8 +934,13 @@ function bossKill() {
 }
 
 // ---------- render ----------
-const HORIZON_Y=125;
-function roadHalfWidth(z){return 40+210*z;}
+// Perspective re-parameterisation (owner spec 2026-07-30): horizon sits 25% down from the
+// top, and the road is exactly as wide as the screen at the very bottom (was 500px on a
+// 540-wide screen, stopping short of the edges). Both derived from CFG.W/CFG.H so the
+// geometry survives a canvas resize; the near-horizon end keeps the old 40px/250px
+// near:far ratio (scaled up to the new 270px far width) so the vanishing-point look holds.
+const HORIZON_Y = CFG.H * 0.25;                    // 240 on a 960-tall screen
+function roadHalfWidth(z){ const near = CFG.W * 0.08, far = CFG.W / 2; return near + (far - near) * z; }  // 43.2 -> 270
 function roadY(z){return HORIZON_Y+(CFG.H-HORIZON_Y)*Math.pow(z,1.6);}
 // Map a gate to the road's PERSPECTIVE at its current depth: narrow near the horizon,
 // widening as it travels down the corridor toward the squad. Lane = 'L' | 'R' | 'full'.
@@ -1282,6 +1329,7 @@ function draw() {
   // Base sits on the road (perspective width); the wall RISES vertically, taller
   // as it nears. A thin top cap + side edge give it real wall thickness.
   for (const g of gates) if (g.live) {
+    const spent = !!g.spent;    // sibling already collected — dead, worth zero, drawn desaturated
     const good = (g.kind === 'add' && g.val >= 0) || (g.kind === 'mul' && g.val >= 1) || g.kind === 'wpn';
     const baseY = g.y + g.h;                          // wall FOOT on the road (nearer edge)
     const br = gateRect({ lane: g.lane, y: baseY });
@@ -1292,13 +1340,17 @@ function draw() {
     const xTL = c + (xBL - c) * shrink, xTR = c + (xBR - c) * shrink;
     const face = () => { cx.beginPath(); cx.moveTo(xTL, topY); cx.lineTo(xTR, topY); cx.lineTo(xBR, baseY); cx.lineTo(xBL, baseY); cx.closePath(); };
     // front face (bright at the base, fading up) — reads as a glowing energy wall
+    // (spent gates get a flat grey panel instead of the good/bad colour so the rule reads
+    // as a rule — "this one's dead" — rather than looking like an ordinary weak gate)
     const grad = cx.createLinearGradient(0, topY, 0, baseY);
-    if (good) { grad.addColorStop(0, 'rgba(40,220,255,0.10)'); grad.addColorStop(1, 'rgba(40,220,255,0.5)'); }
-    else      { grad.addColorStop(0, 'rgba(255,40,40,0.12)');  grad.addColorStop(1, 'rgba(255,60,60,0.58)'); }
+    if (spent)     { grad.addColorStop(0, 'rgba(120,120,130,0.06)'); grad.addColorStop(1, 'rgba(120,120,130,0.26)'); }
+    else if (good) { grad.addColorStop(0, 'rgba(40,220,255,0.10)'); grad.addColorStop(1, 'rgba(40,220,255,0.5)'); }
+    else           { grad.addColorStop(0, 'rgba(255,40,40,0.12)');  grad.addColorStop(1, 'rgba(255,60,60,0.58)'); }
     cx.fillStyle = grad; face(); cx.fill();
     // vertical scan bars on the face (energy) — locked walls get solid steel bars
     cx.save(); cx.clip(); face();
-    cx.strokeStyle = g.locked ? (good ? 'rgba(190,240,255,.9)' : 'rgba(255,190,190,.95)')
+    cx.strokeStyle = spent ? 'rgba(170,170,180,.16)'
+                    : g.locked ? (good ? 'rgba(190,240,255,.9)' : 'rgba(255,190,190,.95)')
                               : (good ? 'rgba(120,240,255,.28)' : 'rgba(255,140,140,.3)');
     cx.lineWidth = g.locked ? 4 : 2;
     for (let t = 0.1; t <= 0.9; t += (g.locked ? 0.16 : 0.11)) {
@@ -1307,16 +1359,19 @@ function draw() {
     }
     cx.restore();
     // glowing frame + bright top rail (the cap of the wall)
-    cx.save(); cx.shadowColor = good ? '#2fd' : '#f44'; cx.shadowBlur = 16;
-    cx.strokeStyle = good ? '#7ff' : '#f66'; cx.lineWidth = 3; face(); cx.stroke();
-    cx.strokeStyle = good ? '#dffff' : '#fbb'; cx.lineWidth = 4;
+    cx.save(); cx.shadowColor = spent ? '#777' : (good ? '#2fd' : '#f44'); cx.shadowBlur = spent ? 5 : 16;
+    cx.strokeStyle = spent ? 'rgba(150,150,160,.55)' : (good ? '#7ff' : '#f66'); cx.lineWidth = 3; face(); cx.stroke();
+    cx.strokeStyle = spent ? 'rgba(170,170,180,.55)' : (good ? '#dffff' : '#fbb'); cx.lineWidth = 4;
     cx.beginPath(); cx.moveTo(xTL, topY); cx.lineTo(xTR, topY); cx.stroke();   // top cap
     cx.restore();
     // label on the standing face
     const cxm = (xTL + xTR) / 2, cym = topY + wallH * 0.42;
-    cx.save(); cx.shadowColor = good ? '#0ff' : '#f44'; cx.shadowBlur = 10;
-    cx.fillStyle = good ? '#eaffff' : '#ffe0e0'; cx.font = 'bold ' + Math.round(22 + 18 * z) + 'px Segoe UI'; cx.textAlign = 'center';
-    if (g.kind === 'wpn' && IMGS.weaponIcons && IMGS.weaponIcons.ok) {
+    cx.save(); cx.shadowColor = spent ? '#777' : (good ? '#0ff' : '#f44'); cx.shadowBlur = spent ? 4 : 10;
+    cx.fillStyle = spent ? 'rgba(195,195,200,.6)' : (good ? '#eaffff' : '#ffe0e0'); cx.font = 'bold ' + Math.round(22 + 18 * z) + 'px Segoe UI'; cx.textAlign = 'center';
+    if (spent) {
+      cx.fillText('0', cxm, cym);
+      cx.font = 'bold ' + Math.round(10 + 4 * z) + 'px Segoe UI'; cx.fillText('SPENT', cxm, baseY - 6);
+    } else if (g.kind === 'wpn' && IMGS.weaponIcons && IMGS.weaponIcons.ok) {
       const wi = Math.min(4, G.weapon + 1 + g.val), cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
       cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
       cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
@@ -1423,12 +1478,51 @@ function draw() {
       cx.fillStyle = 'rgba(255,180,60,.35)'; cx.beginPath(); cx.arc(b.x, b.y + 14, b.r * 1.3, 0, 7); cx.fill();
       return;
     }
-    if(!b.vis) return; const col=b.purple?'#c4f':WEAPONS[b.tier].col;   // drone plasma = purple
-    const len=21, nx=b.vx/700, ny=b.vy/700;   // shot streak half length
-    cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=10;cx.lineWidth=4;
-    cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
-    cx.strokeStyle='rgba(255,255,255,.9)';cx.lineWidth=1.6;
-    cx.beginPath();cx.moveTo(b.x,b.y+len*.25);cx.lineTo(b.x+nx*len*.8,b.y+ny*len*.8);cx.stroke(); });
+    if(!b.vis) return;
+    const w = WEAPONS[b.tier] || WEAPONS[0], col = b.purple ? '#c4f' : w.col;   // drone plasma = purple
+    const nx=b.vx/700, ny=b.vy/700, len=w.len||21, wid=w.wid||4;
+    // Per-weapon silhouette (owner request 2026-07-30): shape/length/width differ enough to
+    // read the weapon from the bullets alone, not just the tint.
+    switch (w.shape) {
+      case 'twin': {                                    // Twin Plasma: two thin parallel streaks
+        const px=-ny, py=nx;
+        for (const off of [-3, 3]) {
+          const ox=b.x+px*off, oy=b.y+py*off;
+          cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=8;cx.lineWidth=wid;
+          cx.beginPath();cx.moveTo(ox,oy+len*.3);cx.lineTo(ox+nx*len,oy+ny*len);cx.stroke();
+        }
+        cx.strokeStyle='rgba(255,255,255,.85)';cx.lineWidth=1.2;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.2);cx.lineTo(b.x+nx*len*.7,b.y+ny*len*.7);cx.stroke();
+        break;
+      }
+      case 'pellet': {                                  // Scatter Rail: short crackly dart + bright pellet tip
+        cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=9;cx.lineWidth=wid;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.5);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+        cx.fillStyle='#fff';cx.beginPath();cx.arc(b.x,b.y,2.1,0,7);cx.fill();
+        break;
+      }
+      case 'orb': {                                     // Heavy Plasma: fat glowing orb + thick fiery trail
+        cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=16;cx.lineWidth=wid;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.5);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+        cx.fillStyle='#fff8e8';cx.shadowBlur=10;
+        cx.beginPath();cx.arc(b.x,b.y,wid*0.55,0,7);cx.fill();
+        break;
+      }
+      case 'ring': {                                    // Orbital Link: streak + a small trailing energy ring
+        cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=14;cx.lineWidth=3;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+        cx.beginPath();cx.arc(b.x+nx*len*0.5,b.y+ny*len*0.5,wid,0,7);cx.stroke();
+        cx.fillStyle='rgba(255,255,255,.9)';cx.beginPath();cx.arc(b.x,b.y,2,0,7);cx.fill();
+        break;
+      }
+      default: {                                        // Blaster: single crisp needle bolt
+        cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=10;cx.lineWidth=wid;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+        cx.strokeStyle='rgba(255,255,255,.9)';cx.lineWidth=1.6;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.25);cx.lineTo(b.x+nx*len*.8,b.y+ny*len*.8);cx.stroke();
+      }
+    }
+  });
   cx.restore();
   // squad
   drawSquad();
