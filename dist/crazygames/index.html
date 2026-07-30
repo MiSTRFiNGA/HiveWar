@@ -235,6 +235,23 @@ function pickKind(lvl) {                          // weighted spawn pick from ed
   return 0;
 }
 function kindHp(k, lvl) { return Math.max(1, EDIT.kinds[k].hpBase + EDIT.kinds[k].hpLvl * lvl); }
+// Enemies pulled from the pool (makePool) are NOT zeroed on alloc() — every field a spawner
+// doesn't explicitly set keeps whatever the slot's PREVIOUS occupant left behind, or stays
+// `undefined` if the slot has never been used. spawnWave() sets e.lane itself, but the boss's
+// minion trickle and the Queen's egg hatchlings only ever set x/y/vx/vy/hp/r/t — leaving
+// e.lane undefined on a fresh slot. The lane-homing math in update() (`e.lane += (targetLane
+// - e.lane) * homing * dt`) then computes `undefined - undefined` = NaN, which survives the
+// `* 0` from `homing` (NaN propagates through multiplication by zero) and poisons e.x. That
+// NaN enemy later feeds a gore/splat effect, which throws `createRadialGradient non-finite`
+// when drawn. Fix at the source: any enemy spawned outside spawnWave must get the same
+// lane derivation spawnWave uses, plus a reset of the other per-spawn fields spawnWave also
+// initializes, so no stale pool state leaks into a new enemy's first frame.
+function initEnemySpawnFields(e) {
+  const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1 / 1.6)));
+  e.lane = e.lane0 = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W / 2) / Math.max(1, roadHalfWidth(ez))));
+  e.baseX = 0; e.phase = rr(0, 6.283); e.mode = 0; e.acidT = 0; e.buffed = 0;
+  e.crowd = undefined; e.wig = undefined;   // recomputed lazily from the fresh e.phase above
+}
 
 // NOTE: the localStorage key below ('hiveswarm_v1') predates the HiVE WAR rename and is
 // intentionally NOT renamed — it is load-bearing for every existing player's save data.
@@ -988,7 +1005,8 @@ function bossUpdate(dt) {
     const e = enemies.alloc();
     if (e) { e.kind = 0; const K = EDIT.kinds[0];
       e.x = B.x + rr(-90, 90); e.y = Math.min(B.y - 120, 260); e.vx = rr(-30,30); e.vy = K.spd + 90;
-      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r; e.t = 0; }
+      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r; e.t = 0;
+      initEnemySpawnFields(e); }
   }
   if (B.queen) {          // egg phases per EDIT.queen (p1 / p2 / p3, FORGE-editable)
     const Q = EDIT.queen, total = Q.p1 + Q.p2 + Q.p3;
@@ -1000,7 +1018,8 @@ function bossUpdate(dt) {
         for (let i = 0; i < Q.hatch; i++) { const e = enemies.alloc(); if (!e) break;
           e.kind = 0; const K = EDIT.kinds[0];
           e.x = B.x + rr(-100, 100); e.y = Math.min(B.y - 110, 300); e.vx = rr(-40, 40); e.vy = K.spd + 110;
-          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8; e.t = 0; } }
+          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8; e.t = 0;
+          initEnemySpawnFields(e); } }
     }
   }
 }
