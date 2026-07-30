@@ -1,12 +1,13 @@
-# HiVE SWARM — Resume Brief (compact context)
+# HiVE WAR — Resume Brief (compact context)
 
-Single-file web game: `D:\Dev\HiveSwarm\index.html`. Cyberpunk swarm-shooter (Bone Crush follow-up).
-Launch: **`Launch HiVE Swarm.bat`** (starts a local http server + opens browser — `file://` breaks
-the `?v=` sprite URLs). Desktop shortcut: `Desktop\My Apps\HiVE Swarm.lnk`. Latest commit `08c2044`.
+Single-file web game: `D:\Dev\HiveWar\index.html`. Cyberpunk swarm-shooter (Bone Crush follow-up).
+Launch: **`Launch HiVE War.bat`** (starts a local http server + opens browser — `file://` breaks
+the `?v=` sprite URLs). Desktop shortcut: `Desktop\My Apps\HiVE Swarm.lnk` (not yet renamed —
+lives outside this repo). Latest commit `08c2044`.
 
 ## How to work on it
 ```bash
-cd /d/Dev/HiveSwarm
+cd /d/Dev/HiveWar
 python regen_extract.py          # re-extract game JS after editing index.html
 node _headless_harness.js        # full 10-level sim, throws on any error (canvas stubbed + non-finite guards)
 node _chain_test.js              # cyber-mutant chain-explosion stress test
@@ -34,7 +35,7 @@ into `assets/*.png` strips; the game's `ANIM[kind]` + `PRAET` registries cycle f
 - Explosions = fireball + colored ember particles + shockwave (boom()). Gates = upright 3D walls.
 - Difficulty: low early spawn + within-level ramp; +10% dmg; harsher contact; each level starts
   with a scaled squad ~5-20 (Start-Squad shop +8). Gate value grows as fast as you shoot it.
-- 1 bullet per soldier, capped 15 streams. Bestiary (X/ESC close). Death screen "SWARM WON" + frozen clock.
+- 1 bullet per soldier, capped 15 streams. Bestiary (X/ESC close). Death screen "HIVE WON" + frozen clock.
 - Scale reference honored (Eric's `ENEMY_SCALE_REFERENCE.png`): cyber big, sponge/subterra small, etc.
 - Sound wired (pulse-rifle/grenade/explosion/lightning/money(50% orbs)/perk/boss). Coin now audible.
 
@@ -77,7 +78,7 @@ Chitin Fields / Brood Caverns / Queen's Chamber. `?v=9`. Re-crop = edit boxes in
   creatable slots (XANIM Walk override + Die one-shot; XSPRITE rollers). `?forge=1&ftab=N`.
 - Boss: descends to EDIT.bossY≈560 (close combat), HP bar floats above boss head.
 - Praet death frame idx2 = ONE connected sprite (looks like 2; CC-verified) — repaint/DEL in FORGE if wanted.
-- Repo: private GitHub **MiSTRFiNGA/HiveSwarm**; mirror = `D:\Drive\AI\My apps\HiveSwarm`
+- Repo: private GitHub **MiSTRFiNGA/HiveWar** (renamed 2026-07-30, was HiveSwarm); mirror = `D:\Drive\AI\My apps\HiveSwarm`
   (robocopy /MIR /XD .git __pycache__ after each pass). ZeldaForge shipped separately (D:\Dev\ZeldaForge).
 
 ## NEW (2026-07-18 session, pass 2)
@@ -114,3 +115,22 @@ Chitin Fields / Brood Caverns / Queen's Chamber. `?v=9`. Re-crop = edit boxes in
 - `BAL.spawnRate[]` + the `ramp` in `spawnWave` (difficulty). `BAL.gates.interval` (gate frequency).
 - `EKIND[k].r` (enemy sizes, from scale sheet). `startingSquad()` (per-level start). Bullet dmg *1.1 in `fire()`.
 - Boss HP `BAL.bossHp[]`; Praetorian death length `bossKillT` (1.6s) in `bossKill()`.
+
+## 2026-07-30 (Claude): rename to HiVE WAR + soldier/weapon tier + rating prompt
+- Product renamed HiVE SWARM → HiVE WAR everywhere player-facing/docs (repo + Pages already
+  moved). Death banner "SWARM WON" → "HIVE WON". `hiveswarm_v1`-family localStorage keys and
+  `build.py`'s `hiveswarm-poki.zip`/`__HIVESWARM_PLATFORM__` token deliberately untouched
+  (save-breaking / qa-test-breaking respectively).
+- New persistent (survives `startRun()`'s per-run meta reset) `G.meta.soldierTier` /
+  `G.meta.weaponTier`, tier 1-5, +12%/tier, multiplied into `fire()`'s `b.dmg`. Tier 1 = 1.0x
+  so baseline balance (incl. Queen ~823s TTK) is unchanged until bought in the shop
+  (`SOLDIER_TIER_MAX`/`WEAPON_TIER_MAX` in the WEAPONS block). Soldier tier renders as a
+  ring-colour/scale/chevron-insignia change in `drawSquad()` — see `SOLDIER_TIER_COLORS`.
+- New rating-prompt module (search `RATING_PORTAL_URL`): queues on level-clear/boss-kill/new
+  endless best, never on launch or death, one-tap dismiss, decline persists forever
+  (`G.meta.ratingAsked`/`ratingDeclined`).
+- **Found, not fixed:** `_progress_test.js`/`_headless_harness.js` intermittently (~1/3 runs)
+  throw a `createRadialGradient non-finite` from a pre-existing NaN-lane enemy spawn bug —
+  confirmed present on the pre-rename baseline too (`git stash` + identical repro at step
+  807/1305). `startingSquad()` uses unseeded `Math.random()` so runs aren't fully
+  deterministic; worth a dedicated fix pass before the next CG submission.

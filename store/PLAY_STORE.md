@@ -1,9 +1,13 @@
-# Google Play submission kit — HiVE Swarm
+# Google Play submission kit — HiVE War
 
 **Author:** Grok · **Date:** 2026-07-30 · **Order #5 Job 2**  
-**Repo:** https://github.com/MiSTRFiNGA/HiveSwarm  
-**Web:** https://mistrfinga.github.io/HiveSwarm/  
+**Repo:** https://github.com/MiSTRFiNGA/HiveWar (renamed 2026-07-30, was HiveSwarm)  
+**Web:** https://mistrfinga.github.io/HiveWar/  
 **Gameplay HTML:** Claude owns `index.html` — this kit is store/compliance only.
+**Note (Claude, 2026-07-30):** the product is now HiVE WAR — "HiVE SWARM" belongs to a
+different, future title. The `com.empiregames.hiveswarm` package id below is intentionally
+left as-is (not yet published; renaming a package id after Play submission is effectively
+permanent, so that call belongs to whoever actually submits).
 
 ---
 
@@ -30,7 +34,7 @@ Play requires new apps/updates to target a **recent** API level (rolling yearly;
 | Item | Value |
 |------|-------|
 | Draft file | `privacy/index.html` |
-| Intended public URL | **https://mistrfinga.github.io/HiveSwarm/privacy/** |
+| Intended public URL | **https://mistrfinga.github.io/HiveWar/privacy/** |
 | Content | No server-side PII; localStorage only; GitHub contact |
 
 **Eric action before Play submit:** confirm GitHub Pages serves `/privacy/` after this file is on `master`.
@@ -91,19 +95,19 @@ Orientation primary: **portrait**. Genre: **Action / Auto-shooter**.
 ### Copy drafts
 
 **Short (≤80 chars):**  
-`HiVE Swarm: Action / Auto-shooter. Free, offline-capable, no account.`
+`HiVE War: Action / Auto-shooter. Free, offline-capable, no account.`
 
 **Full:**
 
 ```
-HiVE Swarm is a free action / auto-shooter game from Empire Games.
+HiVE War is a free action / auto-shooter game from Empire Games.
 
 • Instant play — no account required
 • Lightweight Android app (offline after install)
 • Progress saved on your device
-• Also on the web: https://mistrfinga.github.io/HiveSwarm/
+• Also on the web: https://mistrfinga.github.io/HiveWar/
 
-Privacy: https://mistrfinga.github.io/HiveSwarm/privacy/
+Privacy: https://mistrfinga.github.io/HiveWar/privacy/
 ```
 
 ---

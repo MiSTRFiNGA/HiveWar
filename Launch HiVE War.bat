@@ -1,9 +1,9 @@
 @echo off
-title HiVE SWARM
+title HiVE WAR
 cd /d "%~dp0"
 echo.
 echo   ============================
-echo     HiVE SWARM  -  launching
+echo     HiVE WAR  -  launching
 echo   ============================
 echo.
 REM Start a tiny local server so sprites/assets load correctly (file:// breaks them).

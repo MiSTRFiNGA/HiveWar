@@ -10,7 +10,7 @@ from PIL import Image
 from scipy import ndimage
 
 SRC = r"C:\Users\MiSTRFiNGA\Desktop\HiVE Swarm\assets"
-OUT = r"D:\Dev\HiveSwarm\assets"
+OUT = r"D:\Dev\HiveWar\assets"   # repo path — updated for the 2026-07-30 HiveSwarm->HiveWar folder rename
 E = "Enemies\\"          # enemy sheets live in the Enemies subfolder
 
 

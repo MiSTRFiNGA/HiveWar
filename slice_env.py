@@ -13,7 +13,7 @@ import os
 from PIL import Image
 
 SRC = r"C:\Users\MiSTRFiNGA\Desktop\HiVE Swarm\assets\Environment"
-DST = r"D:\Dev\HiveSwarm\assets\env"
+DST = r"D:\Dev\HiveWar\assets\env"   # repo path — updated for the 2026-07-30 HiveSwarm->HiveWar folder rename
 
 # level: {slot: (file, (l, t, r, b))}  in original pixel coords
 CROPS = {

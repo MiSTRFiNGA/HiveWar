@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 
 SRC = r"C:\Users\MiSTRFiNGA\Desktop\HiVE Swarm\assets\Items"
-OUT = r"D:\Dev\HiveSwarm\assets"
+OUT = r"D:\Dev\HiveWar\assets"   # repo path — updated for the 2026-07-30 HiveSwarm->HiveWar folder rename
 
 
 def _trim(a):

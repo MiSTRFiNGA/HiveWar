@@ -32,7 +32,7 @@ jobs:
 
       - name: Scaffold Capacitor iOS project (always)
         env:
-          APP_NAME: 'HiVE Swarm'
+          APP_NAME: 'HiVE War'   # renamed 2026-07-30 (was 'HiVE Swarm'); APP_ID left as-is — see store/PLAY_STORE.md note
           APP_ID: 'com.empiregames.hiveswarm'
         run: |
           set -euo pipefail

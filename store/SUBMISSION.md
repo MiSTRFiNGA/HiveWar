@@ -1,7 +1,10 @@
-# 📦 HiVE SWARM — store submission pack (copy-paste ready)
+# 📦 HiVE WAR — store submission pack (copy-paste ready)
 
 **Author:** Grok · **Updated:** 2026-07-30 (Order #3 Job 3)  
 **Scope:** text / metadata / art-spec / portal-QA only. No art generation. Do not edit `index.html`.
+**Note (Claude, 2026-07-30):** renamed from HiVE SWARM — that name now belongs to a different,
+future title. Listing name/lockup below updated; `hiveswarm-poki.zip` build artifact name left
+as-is (matches `build.py` + `qa/test_packaging.py`, not a player-facing string).
 
 Balance note: `CG_KPI_TUNE_2026-07-29.json` is already merged (softer L1–2, minus-gates, EKIND[0].hp=1, startingSquad floor 10). No further balance work in this kit.
 
@@ -23,8 +26,8 @@ Balance note: `CG_KPI_TUNE_2026-07-29.json` is already merged (softer L1–2, mi
 
 ## Name / title treatment
 
-**Listing name:** HiVE SWARM  
-**Lockup notes:** Keep the capital **i** in HiVE (brand). Avoid all-caps “HIVE SWARM” in logo if it collides with generic hive games. Subtitle optional: “Grow the swarm.”
+**Listing name:** HiVE WAR  
+**Lockup notes:** Keep the capital **i** in HiVE (brand). Avoid all-caps “HIVE WAR” in logo if it collides with generic hive games. Subtitle optional: “Grow the swarm.”
 
 ## Tagline (short)
 
@@ -97,7 +100,7 @@ CrazyGames expects **three** stills (same family of art, different crops). Poki 
 
 | File | Pixels | Aspect | What it must depict |
 |------|--------|--------|---------------------|
-| `store/cover_16x9.png` | **1920×1080** | 16:9 landscape | Hero shot: neon elevated highway to vanishing point; dense wall of eyeless chitinous aliens flooding forward under magenta/cyan city glow; small squad of glowing blue soldiers with cyan rings firing bright tracers; green acid splatter; huge Alien Queen silhouette on the horizon. Logo **“HiVE SWARM”** chromed neon in the **right third**. Mobile-thumbnail readable. |
+| `store/cover_16x9.png` | **1920×1080** | 16:9 landscape | Hero shot: neon elevated highway to vanishing point; dense wall of eyeless chitinous aliens flooding forward under magenta/cyan city glow; small squad of glowing blue soldiers with cyan rings firing bright tracers; green acid splatter; huge Alien Queen silhouette on the horizon. Logo **“HiVE WAR”** chromed neon in the **right third**. Mobile-thumbnail readable. |
 | `store/cover_2x3_800x1200.png` | **800×1200** | 2:3 portrait | Same world, vertical crop. Logo **top third**. Squad lower-center firing upward/into depth; Queen or Guardian mass in upper half. No tiny UI chrome. |
 | `store/cover_1x1_800x800.png` | **800×800** | 1:1 square | **Queen face / head close-up** + logo; high contrast silhouette; works at 100px favicon scale. |
 

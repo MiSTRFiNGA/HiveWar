@@ -1,6 +1,6 @@
-# HiVE SWARM — Status & Roadmap
+# HiVE WAR — Status & Roadmap
 
-Single-file web game at `D:\Dev\HiveSwarm\index.html`. Portal builds via `build.py`
+Single-file web game at `D:\Dev\HiveWar\index.html`. Portal builds via `build.py`
 (CrazyGames + Poki). Reference look: [LOOK_REFERENCE_LASTZ.md](LOOK_REFERENCE_LASTZ.md).
 
 ## Current phase — DONE 2026-07-15 (Claude / Fable 5)
@@ -34,7 +34,7 @@ Single-file web game at `D:\Dev\HiveSwarm\index.html`. Portal builds via `build.
 
 ## How to test locally
 ```bash
-cd /d/Dev/HiveSwarm
+cd /d/Dev/HiveWar
 python -m http.server 8777           # then open http://127.0.0.1:8777/index.html
 # headless regression (no browser needed):
 python regen_extract.py              # re-extract game JS after editing index.html
@@ -199,3 +199,54 @@ STILL TODO (art-heavy / mechanics — next loop):
 - Cache bump `?v=9`. Headless 10-level harness runs clean (dies L1 = known difficulty, no errors).
 - The game's env loader (`loadEnv`) picks the baked files up automatically; FORGE WORLD
   uploads still override via localStorage.
+
+## 2026-07-30 — HiVE WAR rename + soldier/weapon tier system + rating prompt (Claude)
+
+### Product rename: HiVE SWARM → HiVE WAR
+"HiVE SWARM" now names a different, future title, so every player-facing string and doc in
+this repo became **HiVE WAR** (title/meta tags, in-canvas title screen, HUD, manifest, service
+worker comment, privacy policy, store kit text, `Launch HiVE War.bat`, this file). The death
+banner (previously "SWARM WON") is now **"HIVE WON"** — parallel with the win banner "HIVE
+PURGED". "Swarm" stays wherever it's gameplay vocabulary (enemy swarm, `swarmT`-style
+variables, "swarm density", genre descriptor) — only the brand was touched, not the mechanics
+noun. **Intentionally NOT renamed:** the `hiveswarm_v1` / `hiveswarm_forge_v1` /
+`hiveswarm_forge_sprites_v1` localStorage keys (renaming wipes every existing player's save —
+see the comment above `load()`), `build.py`'s `hiveswarm-poki.zip` output name and the
+`__HIVESWARM_PLATFORM__` token in `psdk_adapter.js` (qa/test_packaging.py asserts these exact
+strings), and the `com.empiregames.hiveswarm` package/bundle id (a persistent store identifier,
+not live yet, out of scope for this pass — mobile/ wasn't touched either).
+
+### Soldier tier × weapon tier power curve
+Per `D:\Dev\_ref\UPGRADES_AND_MONETIZATION.md` §2: power used to be squad COUNT + a flat
+weapon index. Added a QUALITY axis: `DPS ≈ squadCount × soldierTierMultiplier ×
+weaponTierMultiplier` (both computed in `fire()`). Two new **persistent** (not reset between
+runs, unlike the five existing per-run shop upgrades) SHOP entries — Soldier Tier and Weapon
+Tier, max 5 each, +12%/tier — start at tier 1 = multiplier 1.0 exactly, so the CG-KPI-tuned
+baseline (`spawnRate`, L1 minus-gates, `startingSquad` floor 10, `EKIND[0].hp=1`) and the
+Queen's ~823s kill time are unchanged until a player actually buys a tier. Soldier tier is
+visually legible: ring colour climbs cyan→blue→violet→orange→gold, a subtle scale bump, and
+rank-chevron insignia above the head. Surfaced in the HUD (★tier, weapon `Tn` suffix) and the
+shop screen (rows now use a dynamic height so the extra 2 rows fit above DEPLOY without
+overlapping it).
+
+### Rating prompt (Task 3)
+CrazyGames scored retention badly; we had no rating nudge. Added a non-blocking banner that
+queues at genuine high points only — level clear (which always follows a boss kill in this
+game's structure) or a new endless-mode best score reached live — **never** on launch, **never**
+after a loss (no hook in `die()`). Shown on the shop screen's dead-zone gap (above the first
+shop row) and the win screen's empty mid-section. Any tap dismisses it; only an explicit ✕
+persists `ratingDeclined` forever. `RATING_PORTAL_URL` is empty (no fake URL) until the game is
+live on a portal; `nativeReviewRequest()` is a documented no-op hook for a future Capacitor
+Play In-App Review plugin.
+
+### Found during verification (pre-existing, NOT caused by this pass)
+`_progress_test.js` / `_headless_harness.js` intermittently throw `createRadialGradient
+non-finite` around L1 (roughly 1-in-3 runs). Bisected with a scratch harness: an enemy spawns
+with `lane`/`x` = NaN (root cause not yet isolated — `G.clusterLane`/`G.clusterT` lazy-init
+path looks suspect) and, if that enemy later triggers a splat, a NaN-coordinate
+`createRadialGradient` call throws in the stubbed canvas. **Confirmed identical on the
+pre-rename `1d5eb5d` baseline** (same exact error string, same step 1305, same enemy state at
+step 807) via `git stash` — this repo's `startingSquad()` uses unseeded `Math.random()`, so the
+overall sim isn't fully deterministic across process runs, and this pre-existing bug's chance
+of actually manifesting as a thrown error varies by run. Left unfixed here (out of scope for
+this pass); worth a dedicated investigation before the next CG submission push.

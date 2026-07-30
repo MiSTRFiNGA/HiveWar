@@ -1,6 +1,6 @@
 {
-  "name": "HiVE SWARM",
-  "short_name": "HiVE SWARM",
+  "name": "HiVE WAR",
+  "short_name": "HiVE WAR",
   "description": "Cyberpunk swarm auto-shooter. Grow your squad, gun down the horde, and take down the Queen.",
   "start_url": "./",
   "scope": "./",

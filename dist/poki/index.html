@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
-<title>HiVE SWARM</title>
+<title>HiVE WAR</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="HiVE SWARM">
+<meta name="apple-mobile-web-app-title" content="HiVE WAR">
 <meta name="theme-color" content="#0a0518">
 <style>
   html,body{margin:0;padding:0;background:#07030f;overflow:hidden;touch-action:none;
@@ -17,6 +17,7 @@
   #hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#9ff;white-space:nowrap;
     font-weight:900;font-size:36px;pointer-events:none;z-index:5}
   #hud .squad{color:#9ff;text-shadow:0 0 4px #0ff,0 0 12px #0ff,0 0 22px #0ff}
+  #hud .tier {color:#ffe23d;font-size:20px;vertical-align:middle;text-shadow:0 0 4px #fd4,0 0 10px #fd4}
   #hud .lvl  {color:#c46bff;text-shadow:0 0 4px #a03bff,0 0 12px #a03bff,0 0 22px #7a1bff}
   #hud .cash {color:#4dff86;text-shadow:0 0 4px #17d94f,0 0 12px #17d94f,0 0 22px #0a9e33}
   #hud .sep  {opacity:.35}
@@ -28,7 +29,7 @@
 <script src="psdk_adapter.js"></script>
 <script>
 'use strict';
-// ============================================================ HiVE SWARM M0
+// ============================================================ HiVE WAR M0
 // Single-file core. Canvas2D + strict pooling. Vector art placeholder pass
 // (sprites land in M1). Conventions: ?test=1 bot, window.__dbg().
 // ============================================================
@@ -88,8 +89,10 @@ const gates    = [];                                                     // few 
 const G = {
   state: 'title',          // title | play | perk | boss | shop | win | dead
   level: 1, t: 0, levelT: 0,
-  squad: 10, weapon: 0,    // weapon tier 0..4
+  squad: 10, weapon: 0,    // weapon INDEX 0..4 — which of the 5 WEAPONS is equipped this level.
+                           // NOT the persistent quality tier — that's G.meta.weaponTier (soldier/weapon tier system).
   px: CFG.W / 2,           // squad leader x
+  ratingPending: false,    // rating-prompt banner queued for the current shop/win screen (Task 3)
   credits: 0, bio: 0, bioNeed: 25,
   kills: 0, shake: 0, streak:0, streakT:0, streakPeak:0, streakAward:0, chipHeal:0, shieldT:0, shieldHits:0,
   perks: {},               // name -> stacks
@@ -116,6 +119,21 @@ const WEAPONS = [
   {name:'Orbital Link',rof: 9,   dmg: 0.89, n:5, spread:0.18, col:'#ff4',
    sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ring',   len:18, wid:6},
 ];
+// ---- soldier tier x weapon tier power curve (owner spec 2026-07-30, from a competitor
+// teardown — see D:\Dev\_ref\UPGRADES_AND_MONETIZATION.md §2): DPS ~= squadCount x
+// soldierTierMultiplier x weaponTierMultiplier. Squad COUNT already scales DPS via bullet
+// streams in fire(); these two multipliers add a persistent QUALITY axis on top so gates
+// (which only ever grant count) don't become the only power lever. All 5 WEAPONS share the
+// same weaponTierMult so upgrading a tier improves whichever gun you're currently rocking —
+// weapons still swap for variety (per-level random pick), but now also persistently upgrade.
+// Both start at tier 1 = multiplier 1.0 exactly, so baseline balance (incl. the CG KPI tune
+// and Queen kill-time) is unchanged until the player actually buys a tier in the shop.
+const SOLDIER_TIER_MAX = 5, WEAPON_TIER_MAX = 5, TIER_MULT_STEP = 0.12;   // +12%/tier, modest per SHOP economy notes
+function soldierTierMult(t) { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_STEP; }
+function weaponTierMult(t)  { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_STEP; }
+// visual read so a higher-tier soldier is never an invisible stat: ring/insignia colour
+// climbs cyan -> blue -> violet -> orange -> gold as soldierTier rises 1 -> 5.
+const SOLDIER_TIER_COLORS = ['#5ff', '#5f9fff', '#b45fff', '#ff9d3d', '#ffe23d'];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
   spawnRate: [2,3,5,8,12,17,24,33,44,56],               // CG KPI tune 2026-07-29: softer L1-2 for conversion
@@ -218,10 +236,15 @@ function pickKind(lvl) {                          // weighted spawn pick from ed
 }
 function kindHp(k, lvl) { return Math.max(1, EDIT.kinds[k].hpBase + EDIT.kinds[k].hpLvl * lvl); }
 
+// NOTE: the localStorage key below ('hiveswarm_v1') predates the HiVE WAR rename and is
+// intentionally NOT renamed — it is load-bearing for every existing player's save data.
+// metaDefaults() is a function (not a const) so it's safe to call from G's own initializer
+// below, regardless of declaration order (function declarations hoist; consts don't).
+function metaDefaults() { return {dmg:0,squad:0,weapon:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true,
+  soldierTier:1,weaponTier:1,ratingAsked:false,ratingDeclined:false}; }   // tier1 = baseline multiplier 1.0; rating flags persist forever
 function load() {
-  try { return Object.assign({dmg:0,squad:0,weapon:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true},
-    JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
-  catch(e) { return {dmg:0,squad:0,weapon:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true}; }
+  try { return Object.assign({}, metaDefaults(), JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
+  catch(e) { return metaDefaults(); }
 }
 function save() {
   G.meta.credits = G.credits;
@@ -261,6 +284,9 @@ function down(e) {
   else if (G.state === 'perk') pickPerk(px2game(e.touches ? e.touches[0] : e), (e.touches?e.touches[0].clientY:e.clientY));
   else if (G.state === 'shop') shopTap(e);
   else if (G.state === 'dead'&&gy>610&&gy<720) attemptRevive();
+  else if (G.state === 'win' && G.ratingPending) {
+    if (!ratingBannerTap(dragX, gy, RATING_WIN_Y, RATING_BANNER_H)) { G.ratingPending = false; G.state = 'title'; }   // tap elsewhere: dismiss quietly + normal behavior
+  }
   else if (G.state === 'win' || G.state === 'dead') { G.state = 'title'; }
 }
 function move(e) { if (dragX === null) return; const x = px2game(e.touches ? e.touches[0] : e);
@@ -374,10 +400,17 @@ function startRun(mode='campaign') {
   gates.length = 0; blastQueue.length = 0; blastDraining = false;
 }
 function nextLevel() {
-  if(G.mode==='endless'){G.loop++;G.state='shop';save();return;}
+  // every arrival here follows a boss kill (bossKillT counts down to 0 before nextLevel() runs) —
+  // so "level cleared" and "boss killed" are the same genuine-high-point moment in this game.
+  if(G.mode==='endless'){
+    G.loop++;
+    const sc = endlessScore();
+    if (sc > (G.meta.bestScore || 0)) { G.meta.bestScore = sc; maybeQueueRating(); }   // new personal best, reached live (not at death)
+    G.state='shop';save();return;
+  }
   G.level++;
-  if (G.level > CFG.levels) { G.state = 'win'; G.endElapsed=(performance.now()-G.runStart)/1000; save(); return; }
-  G.state = 'shop'; save();
+  if (G.level > CFG.levels) { G.state = 'win'; G.endElapsed=(performance.now()-G.runStart)/1000; maybeQueueRating(); save(); return; }
+  G.state = 'shop'; maybeQueueRating(); save();
 }
 // starting squad each level: ~5-20, higher with more Start-Squad shop upgrades and higher level
 function startingSquad() { return Math.max(10, 10 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.5) + (Math.random() * 3 | 0)); }
@@ -399,6 +432,45 @@ function endlessScore(){return Math.floor(G.kills*10+G.runBosses*500+G.maxSquad*
   Math.max(0,G.credits-G.creditsStart)*.25+(G.weapon+1)*100);}
 async function attemptRevive(){if(G.reviveUsed)return;let ok=false;try{ok=!!(window.PSDK&&await PSDK.rewarded());}catch(_){}
   if(ok){G.reviveUsed=true;G.squad=Math.max(BAL.ads.reviveMin,Math.floor(G.maxSquad*BAL.ads.reviveFrac));G.state=G.boss?'boss':'play';}}
+
+// ---------- rating prompt (owner spec 2026-07-30) ----------
+// CrazyGames scored HiVE WAR badly on retention; competitors ship a dedicated rating-prompt
+// SDK, we had nothing. Rules: fire ONLY at a genuine high point (level clear / boss kill / new
+// personal best — see nextLevel() call sites), NEVER on launch and NEVER after a loss (no hook
+// exists in die() on purpose). Non-blocking: it's a dismissible banner on the shop/win screens,
+// not a modal, and any tap elsewhere on those screens still works normally.
+const RATING_PORTAL_URL = '';   // set to the CrazyGames/Poki listing URL once live there; '' = no-op stub (never hardcode a fake URL)
+const RATING_SHOP_Y = 240, RATING_WIN_Y = 460, RATING_BANNER_H = 50;   // shop's dead-zone gap (240-290, above the first shop row) and win's empty mid-screen gap
+function maybeQueueRating() {
+  if (G.meta.ratingAsked || G.meta.ratingDeclined || G.ratingPending) return;
+  G.ratingPending = true;
+}
+function nativeReviewRequest() {
+  // Hook point for a future native wrapper (e.g. a Capacitor "Play In-App Review" plugin) once
+  // the Android shell ships — wire the real call here. No-op until that plugin exists.
+  try { if (window.NativeReview && typeof window.NativeReview.request === 'function') { window.NativeReview.request(); return true; } } catch (e) {}
+  return false;
+}
+function rateNow() {
+  G.meta.ratingAsked = true; G.ratingPending = false; save();
+  if (nativeReviewRequest()) return;
+  if (RATING_PORTAL_URL) { try { window.open(RATING_PORTAL_URL, '_blank', 'noopener'); } catch (e) {} }
+}
+function declineRating() { G.meta.ratingAsked = true; G.meta.ratingDeclined = true; G.ratingPending = false; save(); }
+function drawRatingBanner(y, h) {
+  cx.fillStyle = 'rgba(255,220,60,0.14)'; cx.fillRect(60, y, CFG.W - 120, h);
+  cx.strokeStyle = '#fd4'; cx.strokeRect(60, y, CFG.W - 120, h);
+  cx.textAlign = 'left'; cx.fillStyle = '#ffd'; cx.font = 'bold 16px Segoe UI';
+  cx.fillText('⭐ Enjoying HiVE WAR? Tap to rate us', 76, y + h / 2 + 6);
+  cx.textAlign = 'right'; cx.fillStyle = '#faa'; cx.font = 'bold 16px Segoe UI';
+  cx.fillText('✕', CFG.W - 76, y + 22);
+  cx.textAlign = 'center';
+}
+function ratingBannerTap(gx, gy, y, h) {
+  if (gy < y || gy > y + h) return false;
+  if (gx > CFG.W - 96 && gx < CFG.W - 60 && gy < y + 32) declineRating(); else rateNow();
+  return true;
+}
 
 // ---------- gates ----------
 let gatePairSeq = 0;    // shared id so a pair's two gates can find each other — never inferred from array position
@@ -486,6 +558,10 @@ function fire(dt) {
   AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
   // EXACTLY one bullet per soldier owned (20 soldiers → 20 bullets). Cap 200 for perf.
   const cols = Math.min(G.squad, 15);   // 1 bullet per soldier, capped at 15 streams (perf: 10 men=10, 100 men=15)
+  // DPS ~= squadCount(cols above) x soldierTierMultiplier x weaponTierMultiplier — computed once
+  // per volley, not per-bullet. Tier 1 (default/no purchase) = 1.0 for both, so this is a no-op
+  // until the player actually buys a tier in the shop (baseline balance untouched).
+  const tierDmgMult = soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
   for (let c = 0; c < cols; c++) {
     const b = bullets.alloc(); if (!b) return;
     const off = (c - (cols - 1) / 2) * Math.min(9, 360 / Math.max(1, cols));   // firing line stays inside the road
@@ -495,7 +571,7 @@ function fire(dt) {
     b.vx = (CFG.W / 2 - b.x) * 0.55 + rr(-1, 1) * w.spread * 40;               // slight jitter per shot
     b.vy = -640;
     b.vis = true;                                    // EVERY soldier's bullet is visible now
-    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1) * EDIT.player.dmgMul;  // +10% damage; FORGE dmg knob
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1) * EDIT.player.dmgMul * tierDmgMult;  // +10% damage; FORGE dmg knob; soldier/weapon tier
     b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false;   // pooled — clear the drone flag
   }
 }
@@ -706,11 +782,23 @@ const SHOP = [
   {k:'weapon',name:'Start Weapon +',   max:4,  cost: l => Math.round(220 * Math.pow(1.6, l))},
   {k:'perkSlot',name:'Perk Slot +',    max:2,  cost: l => Math.round(600 * Math.pow(1.7, l))},
   {k:'vehicleDrop',name:'Tank Drop +', max:5,  cost: l => Math.round(320 * Math.pow(1.65, l))},
+  // Quality axis (owner spec 2026-07-30): these two are NOT in startRun's per-run reset list,
+  // so — unlike the five upgrades above — they persist across runs forever, like codex/bestScore.
+  // l starts at 1 (tier 1 = baseline), so the first purchase's exponent is l-1 = 0.
+  {k:'soldierTier',name:'Soldier Tier ', max: SOLDIER_TIER_MAX, cost: l => Math.round(500 * Math.pow(1.8, l - 1))},
+  {k:'weaponTier',  name:'Weapon Tier ', max: WEAPON_TIER_MAX,  cost: l => Math.round(650 * Math.pow(1.8, l - 1))},
 ];
+function shopRowH() { return SHOP.length > 5 ? Math.floor(500 / SHOP.length) : 100; }   // fit extra rows above the DEPLOY button
 function shopTap(e) {
   const r = cv.getBoundingClientRect();
   const gy = ((e.touches ? e.touches[0].clientY : e.clientY) - r.top) / scale;
-  const i = Math.floor((gy - 300) / 100);
+  const gx = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / scale;
+  if (G.ratingPending) {
+    if (ratingBannerTap(gx, gy, RATING_SHOP_Y, RATING_BANNER_H)) return;   // tap landed on the banner — consumed
+    G.ratingPending = false;   // tapped elsewhere — dismiss quietly, doesn't count as "asked" (non-blocking)
+  }
+  const rowH = shopRowH();
+  const i = Math.floor((gy - 300) / rowH);
   if (i >= 0 && i < SHOP.length) {
     const it = SHOP[i], c = it.cost(G.meta[it.k]);
     const maxed = G.meta[it.k] >= it.max;
@@ -1563,8 +1651,9 @@ function draw() {
   cx.restore();
 
   document.getElementById('hud').innerHTML =
-    `<span class="squad">⬡ ${G.squad}</span><span class="sep">   </span>` +
-    `<span class="lvl">LEVEL ${G.level} · ${WEAPONS[G.weapon].name}</span><span class="sep">   </span>` +
+    `<span class="squad">⬡ ${G.squad}</span>` +
+    `<span class="tier">★${G.meta.soldierTier || 1}</span><span class="sep">   </span>` +
+    `<span class="lvl">LEVEL ${G.level} · ${WEAPONS[G.weapon].name} T${G.meta.weaponTier || 1}</span><span class="sep">   </span>` +
     `<span class="cash">💰 ${G.credits}</span>`;
 }
 function drawDebugCanvas(){
@@ -1575,24 +1664,39 @@ function drawDebugCanvas(){
 function drawSquad() {
   const n = G.squad <= 5 ? G.squad : Math.min(20, 5 + Math.round((G.squad - 5) / 64));  // 1-5 normal, 20 = huge army
   const y0 = CFG.H - 110;
+  // Soldier-tier visual read (owner spec 2026-07-30: a stat is not a progression system unless
+  // you can SEE it) — ring/insignia colour + a subtle scale bump climb with soldierTier. Tier 1
+  // resolves to the original cyan ring + 1.0 scale, so the baseline look is unchanged.
+  const tier = G.meta.soldierTier || 1;
+  const tierCol = SOLDIER_TIER_COLORS[Math.min(tier, SOLDIER_TIER_COLORS.length) - 1];
+  const tierScale = 1 + (tier - 1) * 0.035;   // +14% at tier 5 — subtle, not a hitbox change
   for (let i = 0; i < n; i++) {
     const perRow=7,row=Math.floor(i/perRow),inRow=i-row*perRow,rowN=Math.min(perRow,n-row*perRow);
     const sp=n>10?34:42;
     const x=G.px+(inRow-(rowN-1)/2)*sp, y=y0+row*26+Math.abs(inRow-(rowN-1)/2)*6;
     const bob=Math.sin(G.t*9+i*1.7)*2;
     cx.save();
-    // glow ring + soft shadow (reference style)
-    cx.fillStyle='rgba(0,0,12,.4)';cx.beginPath();cx.ellipse(x,y+16,20,8,0,0,7);cx.fill();
-    cx.strokeStyle='#5ff';cx.shadowColor='#0ff';cx.shadowBlur=14;cx.lineWidth=4;cx.beginPath();cx.ellipse(x,y+15,21,9,0,0,7);cx.stroke();
+    // glow ring + soft shadow (reference style) — ring colour is the soldier-tier tell
+    cx.fillStyle='rgba(0,0,12,.4)';cx.beginPath();cx.ellipse(x,y+16,20*tierScale,8*tierScale,0,0,7);cx.fill();
+    cx.strokeStyle=tierCol;cx.shadowColor=tierCol;cx.shadowBlur=14;cx.lineWidth=4;cx.beginPath();cx.ellipse(x,y+15,21*tierScale,9*tierScale,0,0,7);cx.stroke();
     if(G.squadFlash>0){cx.globalAlpha=.85;cx.globalCompositeOperation='lighter';}
     if(IMGS.soldierAnim&&IMGS.soldierAnim.ok){                 // animated rear-view trooper (fire loop)
-      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58;
+      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58*tierScale;
       cx.drawImage(IMGS.soldierAnim, f*cs,0,cs,cs, x-sz/2, y-sz+10+bob, sz, sz);
     } else {
-      cx.drawImage(ART.trooper, x-24, y-42+bob, 48, 63);
+      const tw=48*tierScale, th=63*tierScale;
+      cx.drawImage(ART.trooper, x-tw/2, y-th+21+bob, tw, th);
       if((G.t*WEAPONS[G.weapon].rof)%1<0.28){cx.globalCompositeOperation='lighter';
         cx.fillStyle=WEAPONS[G.weapon].col;cx.shadowColor=cx.fillStyle;cx.shadowBlur=12;
         cx.beginPath();cx.arc(x+9,y-40+bob,4+2*hash01(i+Math.floor(G.t*30)),0,7);cx.fill();}
+    }
+    if (tier > 1 && i < 12) {   // rank-chevron insignia above the head; capped for perf on huge armies
+      cx.globalCompositeOperation='source-over';cx.globalAlpha=1;
+      cx.strokeStyle=tierCol;cx.shadowColor=tierCol;cx.shadowBlur=6;cx.lineWidth=2;
+      for (let p = 0; p < tier - 1; p++) {
+        const cy = y - 48 + bob - p * 6;
+        cx.beginPath(); cx.moveTo(x-6,cy+3); cx.lineTo(x,cy); cx.lineTo(x+6,cy+3); cx.stroke();
+      }
     }
     cx.restore();
   }
@@ -1688,14 +1792,16 @@ function drawShop() {
   cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR', CFG.W / 2, 180);
   cx.font = '20px Segoe UI'; cx.fillStyle = '#9ff';
   cx.fillText('₵ ' + G.credits, CFG.W / 2, 230);
+  if (G.ratingPending) drawRatingBanner(RATING_SHOP_Y, RATING_BANNER_H);
+  const rowH = shopRowH(), boxH = Math.round(rowH * 0.8);
   SHOP.forEach((it, i) => {
-    const y = 300 + i * 100, c = it.cost(G.meta[it.k]),
+    const y = 300 + i * rowH, c = it.cost(G.meta[it.k]),
           maxed = G.meta[it.k] >= it.max, can = !maxed && G.credits >= c;
     cx.fillStyle = can ? 'rgba(40,255,220,0.12)' : 'rgba(120,120,120,0.1)';
-    cx.fillRect(60, y, CFG.W - 120, 80);
-    cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, 80);
-    cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 20px Segoe UI';
-    cx.fillText(maxed ? `${it.name}${G.meta[it.k]}  —  MAX` : `${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + 47);
+    cx.fillRect(60, y, CFG.W - 120, boxH);
+    cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, boxH);
+    cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold ' + (rowH < 90 ? 17 : 20) + 'px Segoe UI';
+    cx.fillText(maxed ? `${it.name}${G.meta[it.k]}  —  MAX` : `${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + boxH / 2 + 7);
   });
   cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 840, CFG.W - 120, 70);
   cx.strokeStyle = '#fd4'; cx.strokeRect(60, 840, CFG.W - 120, 70);
@@ -1721,7 +1827,7 @@ function drawPausedOverlay(){                                           // dim +
     cx.font='11px Segoe UI'; cx.fillText('PLAY', CFG.W-92, 58);
   }
 function drawTitle(){
-  cx.textAlign='center';cx.fillStyle='#4ff';cx.shadowColor='#f4f';cx.shadowBlur=20;cx.font='bold 58px Segoe UI';cx.fillText('HiVE SWARM',CFG.W/2,300);cx.shadowBlur=0;
+  cx.textAlign='center';cx.fillStyle='#4ff';cx.shadowColor='#f4f';cx.shadowBlur=20;cx.font='bold 58px Segoe UI';cx.fillText('HiVE WAR',CFG.W/2,300);cx.shadowBlur=0;
   cx.fillStyle='rgba(40,255,220,.16)';cx.fillRect(85,430,CFG.W-170,80);cx.strokeStyle='#4ff';cx.strokeRect(85,430,CFG.W-170,80);
   cx.fillStyle='#dff';cx.font='bold 24px Segoe UI';cx.fillText('CAMPAIGN',CFG.W/2,480);
   if(G.meta.endless){cx.fillStyle='rgba(255,80,220,.16)';cx.fillRect(85,620,CFG.W-170,80);cx.strokeStyle='#f4f';cx.strokeRect(85,620,CFG.W-170,80);
@@ -1762,11 +1868,12 @@ function drawCodex(){
   cx.fillText((unlocked.indexOf(kind)+1)+' / '+unlocked.length,CFG.W/2,740);
 }
 function drawEndScreen(win){const elapsed=Math.max(0,G.endElapsed||0),score=endlessScore();   // frozen clock
-  cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'SWARM WON',CFG.W/2,280);
+  cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'HIVE WON',CFG.W/2,280);
   cx.fillStyle='#cdf';cx.font='20px Segoe UI';cx.fillText(`TIME ${elapsed.toFixed(1)}s  ·  KILLS ${G.kills}`,CFG.W/2,355);
   cx.fillText(`CREDITS ${Math.max(0,G.credits-G.creditsStart)}  ·  SCORE ${score}`,CFG.W/2,395);
   if(!win&&!G.reviveUsed){cx.fillStyle='rgba(80,180,255,.18)';cx.fillRect(90,620,CFG.W-180,90);cx.strokeStyle='#6df';cx.strokeRect(90,620,CFG.W-180,90);
     cx.fillStyle='#dff';cx.font='bold 22px Segoe UI';cx.fillText('WATCH AD TO REVIVE',CFG.W/2,675);}
+  if(win&&G.ratingPending) drawRatingBanner(RATING_WIN_Y, RATING_BANNER_H);   // never shown on a loss — see Task 3 note in nextLevel()
   cx.font='16px Segoe UI';cx.fillStyle='#aaa';cx.fillText('tap elsewhere for title',CFG.W/2,790);
 }
 function screenText(big, small, col) {

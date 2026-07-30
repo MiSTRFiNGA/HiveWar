@@ -1,8 +1,9 @@
-# 🐝 HiVE SWARM — Game Design Document
+# 🐝 HiVE WAR — Game Design Document
 
 **Version:** 1.0 (2026-07-15) · **Owner:** Eric Johnson · **Lead dev:** Claude (HiVEMiND)
 **Lane:** CrazyGames / Poki web-portal release (same lane as Skull Drift, Bone Crush)
-**Repo:** `D:\Dev\HiveSwarm` · **Dev server:** `python -m http.server 8380`
+**Repo:** `D:\Dev\HiveWar` · **Dev server:** `python -m http.server 8380`
+**Renamed 2026-07-30:** was HiVE SWARM — that name now belongs to a different, future title.
 
 ---
 
@@ -151,7 +152,7 @@ steer swarm → shoot gates to buff them → pass gate (army/weapons grow)
 | Who | Role |
 |---|---|
 | Claude | Architecture, core sim/renderer, review gate, CG compliance |
-| Codex | Feature implementation passes in `D:\Dev\HiveSwarm` (after GPU run) |
+| Codex | Feature implementation passes in `D:\Dev\HiveWar` (after GPU run) |
 | Grok 4.5 | Wave/gate/economy balance math, difficulty curves |
 | GPT 5.6 | Store copy, descriptions, name/SEO, marketing assets brief |
 | Local ComfyUI | Concept art / texture source material |
@@ -173,4 +174,5 @@ steer swarm → shoot gates to buff them → pass gate (army/weapons grow)
       look target)** — via browser watch or local `yt-watch --visual` once
       Codex frees the GPU.
 - [ ] Confirm level count (10) and run length vs CG session-length metrics.
-- [ ] Name check: "HiVE SWARM" availability on CG/Poki (no conflicts found yet).
+- [ ] Name check: "HiVE WAR" availability on CG/Poki (renamed 2026-07-30 — "HiVE SWARM" now
+      belongs to a different, future title; no conflicts found yet under the new name).
