@@ -1,0 +1,46 @@
+// HiVE SWARM — offline shell cache. Cache-first with runtime population: the
+// first load fetches from network and stores a copy; every load after that
+// (including offline) is served from cache. Bump CACHE_VERSION to force a
+// refresh of the shell on the next visit.
+const CACHE_VERSION = 'v1';
+const CACHE_NAME = `hiveswarm-shell-${CACHE_VERSION}`;
+const PRECACHE_URLS = ['./', './index.html', './manifest.webmanifest'];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .catch(() => {})
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  let url;
+  try { url = new URL(req.url); } catch (e) { return; }
+  if (url.origin !== self.location.origin) return; // leave cross-origin (CDN/portal SDK) alone
+
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((res) => {
+        if (res && res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy)).catch(() => {});
+        }
+        return res;
+      }).catch(() => cached);
+    })
+  );
+});

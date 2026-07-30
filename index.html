@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
 <title>HiVE SWARM</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="HiVE SWARM">
+<meta name="theme-color" content="#0a0518">
 <style>
   html,body{margin:0;padding:0;background:#07030f;overflow:hidden;touch-action:none;
     font-family:'Segoe UI',system-ui,sans-serif;-webkit-user-select:none;user-select:none}
@@ -100,19 +106,19 @@ const WEAPONS = [
 ];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
-  spawnRate: [3,4,6,9,13,18,25,35,47,62],               // early halved again; ramps up per level (+ within-level ramp)
-  waveSec:   [70,74,78,82,86,90,94,98,102,55],
-  mixEld:    [10,12,15,18,22,25,28,30,32,33],           // % eldritch
-  mixCyb:    [0,3,7,12,16,20,22,25,26,27],              // % cyber-mutant
+  spawnRate: [2,3,5,8,12,17,24,33,44,56],               // CG KPI tune 2026-07-29: softer L1-2 for conversion
+  waveSec:   [75,78,82,86,90,94,98,102,106,60],
+  mixEld:    [0,4,8,14,18,22,26,28,30,32],              // % eldritch — zeroed on L1
+  mixCyb:    [0,0,3,8,12,16,20,23,25,27],               // % cyber-mutant — zeroed on L1-2
   hp: { bio: L => 8 + 2.0*L, eld: L => 38 + 9.5*L, cyb: L => 20 + 4.5*L },   // R2
-  bossHp:    [4400,6800,10000,14400,20000,27000,32000,42000,56000,0],          // Praetorian HP doubled
+  bossHp:    [3600,5600,8800,12800,18000,25000,30000,40000,52000,0],
   queen:     { p1:28000, p2:36000, p3:22000, eggInt:1.8, eggHp:120, hatch:6 },
   gates: {
-    interval: L => Math.max(12.0, 18.0 - 0.4*(L-1)),  // RARE reward — a gate is an event, not a metronome
-    // Eric growth pass: +1..5 at L1, big negatives, slow shoot-to-upgrade
-    plus:  [[1,5],[2,8],[4,12],[6,16],[8,22],[10,28],[13,34],[16,42],[20,52],[24,64]],
+    interval: L => Math.max(14.0, 20.0 - 0.35*(L-1)),  // CG KPI tune 2026-07-29: rarer gates, more room to breathe
+    // CG KPI tune 2026-07-29: L1 minus gates were deleting the 5-9 unit starter squad in one touch
+    plus:  [[2,6],[3,9],[4,12],[6,16],[8,22],[10,28],[13,34],[16,42],[20,52],[24,64]],
     plusCap: [8,14,22,32,45,60,80,105,135,170],
-    minus: [[-15,-6],[-20,-9],[-26,-12],[-33,-15],[-40,-18],[-48,-22],[-56,-26],[-65,-30],[-75,-35],[-85,-40]],
+    minus: [[-4,-1],[-6,-2],[-10,-4],[-16,-7],[-24,-10],[-34,-14],[-46,-18],[-58,-24],[-70,-30],[-85,-40]],
     mult:  [[1.1,1.3],[1.2,1.4],[1.2,1.5],[1.3,1.6],[1.4,1.7],[1.4,1.8],[1.5,1.9],[1.6,2.0],[1.7,2.2],[1.8,2.4]],
     multCap: [1.5,1.6,1.8,2.0,2.2,2.4,2.6,2.8,3.0,3.2],
     hpStepPlus: L => Math.round(4 + 1*(L-1)),    // low threshold — the gate number climbs as fast as bullets hit it
@@ -128,13 +134,13 @@ const BAL = {
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
 // index into the perk_icons.png strip for each perk (undefined = no art, falls back to text only)
 const PERK_ICON = {'Chain Lightning':0,'Shield Matrix':1,'Orbital Laser':2,'Acid Rounds':3,'Drone Escort':4};
-const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16)
-  {hp:2,  r:22, spd:70,  col:'#3f6', credits:1},    // 0 Xenoid
-  {hp:26, r:24, spd:26,  col:'#a3e', credits:4},    // 1 Eldritch Sponge — 2x bigger
-  {hp:7,  r:32, spd:44,  col:'#f55', credits:3},    // 2 Cyber-Mutant — large hulk
-  {hp:12, r:18, spd:105, col:'#5ff', credits:6},    // 3 Xenoptera
-  {hp:20, r:13, spd:38,  col:'#fb5', credits:6},    // 4 Subterra — small
-  {hp:55, r:28, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid command node (bigger)
+const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16); hp: CG KPI tune 2026-07-29
+  {hp:1,  r:22, spd:70,  col:'#3f6', credits:1},    // 0 Xenoid — one-shot fodder L1-2
+  {hp:22, r:24, spd:26,  col:'#a3e', credits:4},    // 1 Eldritch Sponge — still a sponge
+  {hp:6,  r:32, spd:44,  col:'#f55', credits:3},    // 2 Cyber-Mutant — large hulk
+  {hp:10, r:18, spd:105, col:'#5ff', credits:6},    // 3 Xenoptera — keep speed threat
+  {hp:18, r:13, spd:38,  col:'#fb5', credits:6},    // 4 Subterra — small
+  {hp:48, r:28, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid command node — still elite
 ];
 // Bestiary / field-guide: unlocked when first killed. tip = a real tactical secret.
 const CODEX = [
@@ -351,7 +357,7 @@ function nextLevel() {
   G.state = 'shop'; save();
 }
 // starting squad each level: ~5-20, higher with more Start-Squad shop upgrades and higher level
-function startingSquad() { return Math.max(5, 5 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.8) + (Math.random() * 4 | 0)); }
+function startingSquad() { return Math.max(10, 10 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.5) + (Math.random() * 3 | 0)); }
 function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
   loadEnv(G.level);
@@ -504,8 +510,8 @@ function spawnWave(dt) {
   const endlessSpawn=G.mode==='endless'?Math.pow(1.07,G.loop):1;
   // WITHIN-LEVEL RAMP: start gentle (~30%) and build to full over the first ~18s, so the
   // player's early firepower isn't swamped. Difficulty rises smoothly as the wave progresses.
-  const ramp = Math.min(1, 0.18 + G.levelT / 20);   // gentler start, builds over ~20s
-  spawnAcc += EDIT.spawnRate[li] * endlessSpawn * ramp * 1.1 * dt;   // +10% more enemies (rate editable in FORGE)
+  const ramp = Math.min(1, 0.12 + G.levelT / 28);   // CG KPI tune 2026-07-29: softer start, builds over ~28s
+  spawnAcc += EDIT.spawnRate[li] * endlessSpawn * ramp * 1.0 * dt;   // rateMul 1.0 (was 1.1) — CG KPI tune
   if(enemies.count()>850){spawnAcc*=.35;return;}
   while (spawnAcc >= 1) {
     spawnAcc--;
@@ -1777,6 +1783,38 @@ function persistSprite(r){ const c=document.createElement('canvas'); const im=r.
   savedSprites[r.key]={data:c.toDataURL('image/png'),frames:r.h.frames,fps:r.h.fps};
   try{localStorage.setItem(SKEY,JSON.stringify(savedSprites));}catch(e){alert('Sprite too large for localStorage — use DOWNLOAD instead');}}
 
+// ---- PNG import: click a slot, pick a transparent PNG, it goes straight into the game ----
+const MAX_CELL = 256, MAX_STRIP = 2048;    // import cap so a full art pass stays inside the localStorage quota
+function readPng(file, cb){                // file -> canvas, alpha preserved (never fill a background)
+  const rd = new FileReader();
+  rd.onload = () => { const im = new Image();
+    im.onload = () => { const sc = Math.min(1, MAX_CELL / im.height, MAX_STRIP / im.width);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(im.width * sc)); c.height = Math.max(1, Math.round(im.height * sc));
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      cb(c); };
+    im.onerror = () => alert('Could not read that image — a transparent PNG works best.');
+    im.src = rd.result; };
+  rd.readAsDataURL(file);
+}
+// a strip lays frames side by side, so width/height rounds to the frame count (single image -> 1)
+function askFrames(c){ const guess = Math.max(1, Math.round(c.width / c.height));
+  const n = parseInt(prompt('Frames across in this PNG?\n(1 = single image, N = animation strip)', guess), 10);
+  return (n > 0 && n <= 64) ? n : guess; }
+function storeSprite(r, data, frames, fps){
+  const prev = savedSprites[r.key];
+  savedSprites[r.key] = { data: data, frames: frames, fps: fps };
+  try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); return true; }
+  catch(e){ if (prev) savedSprites[r.key] = prev; else delete savedSprites[r.key];
+    alert('Sprite too large for localStorage — shrink the PNG, or drop it into assets/ instead.'); return false; }
+}
+function applyPngToSlot(r, c, frames){     // live in the game immediately, and persisted
+  const data = c.toDataURL('image/png'), fps = (r.h && r.h.fps) || 8;
+  if (!storeSprite(r, data, frames, fps)) return;
+  if (r.h) { r.h.img.src = data; r.h.img.ok = true; r.h.frames = frames; }
+  else makeHolder(r, data, frames, fps);   // empty slot: also wires XANIM / XSPRITE so the game starts using it
+}
+
 // ---- window chrome / styling ----
 const css = document.createElement('style');
 css.textContent = `
@@ -2014,7 +2052,9 @@ function renderTab(){
 function cellW(r){ const im=r.h.img; return Math.round((im.naturalWidth||im.width)/Math.max(1,r.h.frames)); }
 function renderSprites(){
   if (spriteSel < 0){
-    let h = `<div class="hint">Pick an action slot. Paint frames, +/− frames, then SAVE (live) or DOWNLOAD the strip PNG to bake into assets/. Greyed slots have no asset yet — the game ignores them until art lands.</div>`;
+    let h = `<div class="hint"><b style="color:#4ff">⇧</b> on any slot = pick a transparent PNG from disk — it goes live in the game instantly
+      (single image or a frames-side-by-side strip). Or click a slot to paint frames, +/− frames, then SAVE (live) / DOWNLOAD the strip PNG
+      to bake into assets/. Greyed slots have no asset yet — the game ignores them until art lands.</div>`;
     const cats = ['ENEMIES','BOSSES','PLAYER','ITEMS'];
     for (const cat of cats) {
       h += `<div class="hint" style="color:#f4f;font-size:11px;letter-spacing:2px;margin-top:10px">▸ ${cat}</div>`;
@@ -2025,10 +2065,12 @@ function renderSprites(){
         REG.forEach((r,i)=>{ if (r.cat!==cat || r.unit!==u) return;
           if (r.h) h += `<button data-sp="${i}" style="display:inline-flex;align-items:center;gap:5px">
             <canvas data-th="${i}" width="26" height="26" style="image-rendering:pixelated"></canvas>${r.action} <span style="color:#f4f">${r.h.frames}f</span></button>`;
-          else h += `<button data-mk="${i}" style="border-style:dashed;border-color:#345;color:#6a8;background:none">＋ ${r.action}</button>`; });
+          else h += `<button data-mk="${i}" style="border-style:dashed;border-color:#345;color:#6a8;background:none">＋ ${r.action}</button>`;
+          h += `<button data-spup="${i}" title="import a PNG into this slot" style="padding:4px 7px;margin-left:0">⇧</button>`; });
         h += '</div>';
       }
     }
+    h += `<input type="file" id="spFile" accept="image/png,image/*" style="display:none">`;
     body.innerHTML = h;
     body.querySelectorAll('[data-sp]').forEach(b=>b.onclick=()=>{ spriteSel=+b.dataset.sp; frameSel=0; loadWork(); renderSprites(); });
     body.querySelectorAll('[data-mk]').forEach(b=>b.onclick=()=>{   // create a blank 1-frame strip and open the paint editor
@@ -2038,6 +2080,15 @@ function renderSprites(){
       try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); } catch(e) {}
       makeHolder(r, savedSprites[r.key].data, 1, 8);
       spriteSel = +b.dataset.mk; frameSel = 0; loadWork(); renderSprites(); });
+    const spFile = body.querySelector('#spFile');
+    body.querySelectorAll('[data-spup]').forEach(b=>b.onclick=()=>{   // pick a PNG straight into that slot
+      spFile.dataset.slot = b.dataset.spup; spFile.value = ''; spFile.click(); });
+    spFile.onchange = () => { const f = spFile.files[0], r = REG[+spFile.dataset.slot];
+      if (!f || !r) return;
+      readPng(f, c => { applyPngToSlot(r, c, askFrames(c));
+        // the data: URL decodes a tick later — repaint the thumbnail once it has (addEventListener, so the game's own onload survives)
+        if (r.h && r.h.img) r.h.img.addEventListener('load', () => { if (spriteSel < 0) renderSprites(); }, { once: true });
+        renderSprites(); }); };
     body.querySelectorAll('[data-th]').forEach(c=>{ const r=REG[+c.dataset.th]; const im=r.h.img;
       if(im&&(im.ok||im.complete)){ const cw=(im.naturalWidth||im.width)/Math.max(1,r.h.frames), chh=im.naturalHeight||im.height;
         try{c.getContext('2d').drawImage(im,0,0,cw,chh,0,0,26,26);}catch(e){} } });
@@ -2048,6 +2099,7 @@ function renderSprites(){
     ${r.h.fps!==undefined?`FPS <input type="number" id="spFps" style="width:44px" value="${r.h.fps}">`:''}</div>
     <div class="frames" id="spFrames"></div>
     <div class="row"><button id="spDup">+ DUP FRAME</button><button id="spDel" class="warn">− DEL FRAME</button>
+      <button id="spImp">⇧ IMPORT PNG</button>
       <button id="spUndo">↩ UNDO</button><button id="spSave">💾 SAVE LIVE</button>
       <button id="spRev" class="warn">REVERT</button><button id="spDl">⇩ DOWNLOAD PNG</button></div>
     <div class="row">🎨 <input type="color" id="spCol" value="${brush.col}"> SIZE <input type="range" id="spSize" min="1" max="24" value="${brush.size}">
@@ -2061,6 +2113,21 @@ function renderSprites(){
   body.querySelector('#spErase').onclick=e=>{brush.erase=!brush.erase;e.target.textContent=brush.erase?'✏ PAINT':'⌫ ERASE';};
   body.querySelector('#spDup').onclick=()=>frameOp('dup');
   body.querySelector('#spDel').onclick=()=>frameOp('del');
+  body.querySelector('#spImp').onclick=()=>{ const inp=document.createElement('input');
+    inp.type='file'; inp.accept='image/png,image/*';
+    inp.onchange=()=>{ const f=inp.files[0]; if(!f)return;
+      readPng(f, c=>{
+        if (confirm('OK = replace the WHOLE strip with this PNG.\nCancel = drop it into the selected frame only.')) {
+          work = c; work._frames = askFrames(c); frameSel = 0; undoStack = [];
+        } else {                                        // fit into the current cell, centred, transparency intact
+          pushUndo();
+          const cw = work.width/work._frames, chh = work.height, g = work.getContext('2d');
+          const sc = Math.min(cw/c.width, chh/c.height), w = c.width*sc, hh = c.height*sc;
+          g.clearRect(frameSel*cw, 0, cw, chh);
+          g.drawImage(c, frameSel*cw + (cw-w)/2, (chh-hh)/2, w, hh);
+        }
+        drawFrames(); drawPaint(); }); };
+    inp.click(); };
   body.querySelector('#spUndo').onclick=undo;
   body.querySelector('#spSave').onclick=applyWork;
   body.querySelector('#spRev').onclick=()=>{ if(confirm('Revert this sprite to the shipped PNG?')){
@@ -2127,6 +2194,18 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, testBot });
+</script>
+
+<!-- PWA offline shell. Guarded so it can never throw/break startup when this file is
+     served flat inside a CrazyGames/Poki portal iframe (no https, no SW support, etc). -->
+<script>
+try {
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+} catch (e) {}
 </script>
 </body>
 </html>
