@@ -165,7 +165,9 @@ function weaponTierMult(t)  { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_S
 const SOLDIER_TIER_COLORS = ['#5ff', '#5f9fff', '#b45fff', '#ff9d3d', '#ffe23d'];
 // ---- Grok balance tables (balance/balance.json v1.0, R1) ----
 const BAL = {
-  spawnRate: [2,3,5,8,12,17,24,33,44,56],               // CG KPI tune 2026-07-29: softer L1-2 for conversion
+  // Retuned with the one-soldier opening: the old horizon pass compressed travel time, and the
+  // old values were calibrated for a much larger opening volley.
+  spawnRate: [1.0,1.5,2.5,4.0,6.0,8.5,12.0,16.5,22.0,28.0],
   waveSec:   [75,78,82,86,90,94,98,102,106,60],
   mixEld:    [0,4,8,14,18,22,26,28,30,32],              // % eldritch — zeroed on L1
   mixCyb:    [0,0,3,8,12,16,20,23,25,27],               // % cyber-mutant — zeroed on L1-2
@@ -188,7 +190,7 @@ const BAL = {
   eco: { kill: [1,4,3,6,6], boss: L => 40 + 25*L, level: L => 80 + 40*L, queen: 2500 },
   perks: { maxRank: 3, baseKinds: 3, maxExtraSlots: 2 },
   ads: { headStart: [12,20,28], reviveFrac:.5, reviveMin:20 },
-  start: { squad: 5, weapon: 0 },
+  start: { weapon: 0 },
 };
 const PERKS = ['Chain Lightning','Drone Escort','Orbital Laser','Acid Rounds','Magnet','Overclock','Shield Matrix'];
 // index into the perk_icons.png strip for each perk (undefined = no art, falls back to text only)
@@ -290,7 +292,7 @@ function kindHp(k, lvl) { return Math.max(1, EDIT.kinds[k].hpBase + EDIT.kinds[k
 // intentionally NOT renamed — it is load-bearing for every existing player's save data.
 // metaDefaults() is a function (not a const) so it's safe to call from G's own initializer
 // below, regardless of declaration order (function declarations hoist; consts don't).
-function metaDefaults() { return {dmg:0,squad:0,weapon:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true,
+function metaDefaults() { return {dmg:0,squad:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true,
   soldierTier:1,weaponTier:1,ratingAsked:false,ratingDeclined:false}; }   // tier1 = baseline multiplier 1.0; rating flags persist forever
 function load() {
   try { return Object.assign({}, metaDefaults(), JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
@@ -461,11 +463,11 @@ function startRun(mode='campaign') {
   // FRESH GAME — purchased run-upgrades never carry over between games (fixes tanks/etc.
   // "leaking" in from a previous run). They persist only within a run (level → level via the shop).
   // Permanent unlocks/records (codex, endless, bestScore, sfx) are intentionally kept.
-  Object.assign(G.meta, {dmg:0, squad:0, weapon:0, perkSlot:0, vehicleDrop:0, credits:0});
+  Object.assign(G.meta, {dmg:0, squad:0, perkSlot:0, vehicleDrop:0, credits:0});
   G.credits = 0; save(); AUDIO.loopTank(false);
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
   { const m=location.search.match(/[?&]lvl=(\d+)/); if(m) G.level=Math.min(CFG.levels,Math.max(1,+m[1])); } // debug/screenshot jump
-  G.squad = startingSquad(); G.weapon = Math.min(BAL.start.weapon + G.meta.weapon, 4);
+  G.squad = startingSquad(); G.weapon = BAL.start.weapon;
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
@@ -488,8 +490,9 @@ function nextLevel() {
   if (G.level > CFG.levels) { G.state = 'win'; G.endElapsed=(performance.now()-G.runStart)/1000; maybeQueueRating(); save(); return; }
   G.state = 'shop'; maybeQueueRating(); save();
 }
-// starting squad each level: ~5-20, higher with more Start-Squad shop upgrades and higher level
-function startingSquad() { return Math.max(10, 10 + (G.meta.squad || 0) * 8 + Math.floor(G.level * 0.5) + (Math.random() * 3 | 0)); }
+// Every level opens with exactly one soldier. Each permanent Start Squad purchase adds four;
+// there is deliberately no level scaling or randomness hidden in this value.
+function startingSquad() { return 1 + (G.meta.squad || 0) * 4; }
 // random per-level loadout (owner request 2026-07-30): every level hands the squad a fresh
 // weapon so runs feel varied, never the same weapon twice in a row.
 // Weapons wider than this scatter badly against a single-point boss hitbox — most of the volley
@@ -599,7 +602,13 @@ function spawnGatePair() {
     // Only one exists at a time — steer around it.
     if (allowLocked && rng() < 0.22) { locked = true; kind = 'add';
       val = -Math.round(rr(GB.minus[li][1] * -2.2, GB.minus[li][1] * -1.4)); need = 1; }
-    return { lane, y, h: 46, kind, val, shot: 0, need, live: true, locked, pairId, spent: false };  // x/w derived from perspective via gateRect()
+    // Some weapon walls split into two explicit gun choices. The left/right half the player
+    // crosses selects the corresponding weapon; ordinary weapon walls keep weapon2 null.
+    const weapon2 = kind === 'wpn' && rng() < 0.38
+      ? (() => { const primary = Math.min(4, G.weapon + 1 + val); let alt;
+          do { alt = Math.floor(rng() * WEAPONS.length); } while (alt === primary); return alt; })()
+      : null;
+    return { lane, y, h: 46, kind, val, weapon2, shot: 0, need, live: true, locked, pairId, spent: false };  // x/w derived from perspective via gateRect()
   };
   // ~40% single gate (dodge-or-take), else a pair (pick a side). Only one lane may be locked.
   if (rng() < 0.40) {
@@ -643,7 +652,11 @@ function gatePass(g) {
   if (g.kind === 'add') G.squad = Math.max(g.val < 0 ? 1 : 0, G.squad + Math.min(CFG.gateAddMax, g.val));
   else if (g.kind === 'mul') { const gain = Math.min(CFG.gateAddMax, Math.round(G.squad * g.val) - G.squad);
     G.squad = g.val < 1 ? Math.max(1, Math.round(G.squad * g.val)) : G.squad + gain; }
-  else if (g.kind === 'wpn') G.weapon = Math.min(4, G.weapon + 1 + g.val);
+  else if (g.kind === 'wpn') {
+    const primary = Math.min(4, G.weapon + 1 + g.val);
+    const gr = gateRect(g);
+    G.weapon = g.weapon2 !== null && G.px >= gr.x + gr.w / 2 ? g.weapon2 : primary;
+  }
   G.squad = Math.min(CFG.squadMax, G.squad);
   { const gr = gateRect(g); fx(gr.x + gr.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44'); }
   G.flashT = 0.16;
@@ -672,47 +685,40 @@ function fire(dt) {
   if (fireT > 0) return;
   fireT = 1 / rof;
   AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
-  // EXACTLY one bullet per soldier owned (20 soldiers → 20 bullets). Cap 200 for perf.
-  const cols = Math.min(G.squad, 15);   // 1 bullet per soldier, capped at 15 streams (perf: 10 men=10, 100 men=15)
-  // DPS ~= squadCount(cols above) x soldierTierMultiplier x weaponTierMultiplier — computed once
-  // per volley, not per-bullet. Tier 1 (default/no purchase) = 1.0 for both, so this is a no-op
-  // until the player actually buys a tier in the shop (baseline balance untouched).
+  // Squad fire ladder: one bolt through 10 soldiers, two at 20, three at 30+, never more.
+  // Weapon stats and persistent tiers—not an unbounded wall of bullets—are the power axis.
+  const cols = G.squad >= 30 ? 3 : G.squad >= 20 ? 2 : 1;
+  // Tier 1 (default/no purchase) = 1.0; higher persistent tiers remain a damage axis.
   const tierDmgMult = soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
   if (w.shape === 'ion') {                // capital-ship beam: ONE fat piercing shot up the middle
     const b = bullets.alloc(); if (!b) return;
     b.x = G.px; b.y = CFG.H - 150; b.tier = G.weapon;
     b.vx = 0; b.vy = -520;                // slower than a normal bolt — you watch it travel
     b.vis = true; b.pierce = true; b._hit = new Set();   // fresh per shot; cleared on release
-    // squad size still drives DPS: the normal path fires one bullet per soldier, so the single
-    // beam carries that whole volley's worth of damage instead.
-    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * cols * EDIT.player.dmgMul * tierDmgMult;
+    // The Ion Cannon remains one focused beam; its damage comes from weapon and tier stats,
+    // not from bypassing the capped squad bolt ladder.
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
     b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false;
     return;
   }
-  const pellets = Math.max(1, w.n | 0);   // owner request 2026-07-30 (GAME EDITS.txt): N is now real —
-  // each soldier fires N bullets fanned across `spread` radians, instead of one bullet whose damage
-  // was inflated by N. Total volley bullet count is cols*pellets (bullet pool cap 1800 — comfortably
-  // deep even at the top end, 15 cols x 5 pellets = 75/volley).
+  // The ladder owns bolt count. Forge-controlled SPREAD remains the fan angle across its bolts.
+  const pellets = cols;
   for (let c = 0; c < cols; c++) {
-    const off = (c - (cols - 1) / 2) * Math.min(9, 360 / Math.max(1, cols));   // firing line stays inside the road
+    const off = (c - (cols - 1) / 2) * 18;              // centre / left / right firing lanes
     const bx = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-    const by = CFG.H - 130 - hash01(c * 7.3) * 56;                             // fixed per-column stagger
+    const by = CFG.H - 130 - (c === Math.floor(cols / 2) ? 10 : 0); // centre bolt reads ahead
     const baseVx = (CFG.W / 2 - bx) * 0.55, baseVy = -640;                     // converge toward road center, straight up
     const baseAngle = Math.atan2(baseVy, baseVx), speed = Math.hypot(baseVx, baseVy);
-    for (let p = 0; p < pellets; p++) {
-      const b = bullets.alloc(); if (!b) return;
-      const fanOff = pellets === 1 ? 0 : -w.spread / 2 + w.spread * p / (pellets - 1);
-      const ang = baseAngle + fanOff;
-      b.x = bx; b.y = by; b.tier = G.weapon;
-      b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
-      b.vis = true;                                    // EVERY soldier's bullet is visible now
-      // Per-pellet damage keeps TOTAL volley damage identical to the pre-fan build: that build fired
-      // ONE bullet doing dmg*(n*0.6), so n bullets each doing dmg*0.6 sums to exactly the same.
-      // Without this the fan would have been a silent ~1.67x damage buff on every multi-pellet gun
-      // and quietly invalidated the CG-KPI balance tune. The fan is a SPATIAL change, not a power one.
-      b.dmg = w.dmg * (pellets > 1 ? 0.6 : 1) * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
-      b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
-    }
+    const b = bullets.alloc(); if (!b) return;
+    const fanOff = pellets === 1 ? 0 : -w.spread / 2 + w.spread * c / (pellets - 1);
+    const ang = baseAngle + fanOff;
+    b.x = bx; b.y = by; b.tier = G.weapon;
+    b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
+    b.vis = true;
+    // Divide base damage across the ladder so gaining a second/third bolt changes coverage,
+    // not raw DPS. Weapon damage/ROF and the permanent tiers provide the damage progression.
+    b.dmg = w.dmg / pellets * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
+    b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
   }
 }
 function perkWeapons(dt) {
@@ -756,8 +762,16 @@ function vehicleUpdate(dt) {
   // exactly TWO tanks (one per side) each LOB one heavy shell that detonates on impact
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
     for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
-      b.x = G.px + side * 70; b.y = CFG.H - 172; b.vx = side * 26; b.vy = -320 - rank*18;
-      b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false; } }
+      b.y = CFG.H - 172; b.r = 13; b.vy = -320 - rank*18;
+      const muzzleHalfWidth = Math.max(0, roadHalfWidthAtY(b.y) - b.r);
+      b.x = Math.max(CFG.W / 2 - muzzleHalfWidth, Math.min(CFG.W / 2 + muzzleHalfWidth, G.px + side * 70));
+      // Tank rounds retain a lane-relative target from muzzle to impact, clamped to the
+      // perspective road at the cutoff—so they cannot drift into the walls.
+      const cutoff = roadY(0.355) - 6, lane = side * 0.55;
+      const targetX = CFG.W / 2 + lane * Math.max(0, roadHalfWidthAtY(cutoff) - b.r);
+      const travel = Math.max(0.1, (b.y - cutoff) / -b.vy);
+      b.vx = (targetX - b.x) / travel;
+      b.dmg = 30 + rank*16; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false; } }
 }
 function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
   boom(b.x, b.y, 1.6);
@@ -770,7 +784,7 @@ function spawnWave(dt) {
   const endlessSpawn=G.mode==='endless'?Math.pow(1.07,G.loop):1;
   // WITHIN-LEVEL RAMP: start gentle (~30%) and build to full over the first ~18s, so the
   // player's early firepower isn't swamped. Difficulty rises smoothly as the wave progresses.
-  const ramp = Math.min(1, 0.12 + G.levelT / 28);   // CG KPI tune 2026-07-29: softer start, builds over ~28s
+  const ramp = Math.min(1, 0.10 + G.levelT / 38);   // one-soldier opening: gentler, longer ramp
   spawnAcc += EDIT.spawnRate[li] * endlessSpawn * ramp * 1.0 * dt;   // rateMul 1.0 (was 1.1) — CG KPI tune
   if(enemies.count()>850){spawnAcc*=.35;return;}
   while (spawnAcc >= 1) {
@@ -927,8 +941,9 @@ const SHOP = [
   // R3 economy: combat growth 1.5, utility 1.6, rank caps (balance.json v3.0)
   // Modest, useful-not-game-breaking meta upgrades (you should still GROW via gates in-run)
   {k:'dmg',   name:'Base Damage +10%', max:12, cost: l => Math.round(60  * Math.pow(1.55, l))},
-  {k:'squad', name:'Start Squad +8',   max:8,  cost: l => Math.round(90  * Math.pow(1.55, l))},
-  {k:'weapon',name:'Start Weapon +',   max:4,  cost: l => Math.round(220 * Math.pow(1.6, l))},
+  // Halved payload needs a lower entry price; this remains a within-run purchase and therefore
+  // does not compete with permanent damage/tier progression at the old +8 price point.
+  {k:'squad', name:'Start Squad +4',   max:8,  cost: l => Math.round(50  * Math.pow(1.45, l))},
   {k:'perkSlot',name:'Perk Slot +',    max:2,  cost: l => Math.round(600 * Math.pow(1.7, l))},
   {k:'vehicleDrop',name:'Tank Drop +', max:5,  cost: l => Math.round(320 * Math.pow(1.65, l))},
   // Quality axis (owner spec 2026-07-30): these two are NOT in startRun's per-run reset list,
@@ -1766,9 +1781,16 @@ function draw() {
       cx.font = 'bold ' + Math.round(10 + 4 * z) + 'px Segoe UI'; cx.fillText('SPENT', cxm, baseY - 6);
     } else if (g.kind === 'wpn' && IMGS.weaponIcons && IMGS.weaponIcons.ok) {
       const wi = Math.min(4, G.weapon + 1 + g.val), cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
-      cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
+      if (g.weapon2 !== null) {
+        const splitX = (xBL + xBR) / 2;
+        cx.save(); face(); cx.clip();
+        cx.strokeStyle = 'rgba(235,255,255,.8)'; cx.lineWidth = 2; cx.beginPath(); cx.moveTo(splitX, baseY); cx.lineTo((xTL + xTR) / 2, topY); cx.stroke();
+        cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s * 0.95, topY + wallH * 0.10, s, s);
+        cx.drawImage(IMGS.weaponIcons, g.weapon2 * cs, 0, cs, cs, cxm - s * 0.05, topY + wallH * 0.10, s, s);
+        cx.restore();
+      } else cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
       cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
-      cx.fillText('WEAPON ↑', cxm, baseY - 6);
+      cx.fillText(g.weapon2 !== null ? 'CHOOSE WEAPON' : 'WEAPON ↑', cxm, baseY - 6);
     } else {
       const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
                   : g.kind === 'mul' ? 'x' + g.val
@@ -2631,11 +2653,11 @@ function renderTab(){
     body.querySelector('#fInv').onclick = () => { FORGE_DBG.invincible = !FORGE_DBG.invincible; renderTab(); };
   }
   else if (tab===2){ // WEAPONS
-    let h = `<div class="hint">Per-weapon tuning. DMG is per pellet; N = real pellets fired per shot (fanned out); SPREAD = total fan angle in radians across those N pellets. FIRE SFX picks the shot sample.</div>
-      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>N</th><th>SPREAD</th><th>FIRE SFX</th><th>TEST</th></tr>`;
+    let h = `<div class="hint">Per-weapon tuning. The squad fire ladder fixes bolt count at 1 through 10 soldiers, 2 at 20, and 3 at 30+; SPREAD remains the editable total fan angle across those bolts. FIRE SFX picks the shot sample.</div>
+      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>SPREAD</th><th>FIRE SFX</th><th>TEST</th></tr>`;
     EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
-      <td>${num('weapons.'+i+'.n',1,36)}</td><td>${num('weapons.'+i+'.spread',0.02)}</td>
+      <td>${num('weapons.'+i+'.spread',0.02)}</td>
       <td>${snd('weapons.'+i+'.sfx')}</td>
       <td><button data-give="${i}" title="equip this weapon right now">▶ GIVE</button></td></tr>`; });
     body.innerHTML = h + '</table>';
