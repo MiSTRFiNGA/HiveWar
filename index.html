@@ -31,12 +31,14 @@
   /* Run controls live in the DOM, BELOW the score rows. They used to be canvas-drawn at a fixed
      y=42 and collided with the cash readout at some canvas scales; as a flex row they can never
      overlap it again regardless of scale. pointer-events re-enabled just for these. */
-  #hud .ctrls{display:flex;align-items:center;justify-content:flex-end;gap:14px;margin-top:6px;
+  /* Vertical stack down the right edge, starting where SFX used to sit (owner request 2026-07-31).
+     Was a horizontal row across the top, which ate the full HUD width on a phone. */
+  #hud .ctrls{display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:6px;
     pointer-events:auto}
   #hud .ctrls button{background:rgba(8,4,24,.62);border:1px solid #2a4a63;border-radius:8px;
     color:#9cf;font:900 11px 'Segoe UI',sans-serif;letter-spacing:.5px;padding:3px 8px 4px;
-    display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;min-width:46px}
-  #hud .ctrls button b{font-size:19px;font-weight:400;line-height:1}
+    display:flex;flex-direction:row;align-items:center;gap:5px;cursor:pointer;min-width:92px}
+  #hud .ctrls button b{font-size:17px;font-weight:400;line-height:1}
   #hud .ctrls button.off{color:#63707d;border-color:#2a3038}
   #hud .ctrls button.hot{color:#ff4;border-color:#7a6b1b}
 </style>
@@ -247,7 +249,13 @@ function editDefaults() { return {
     name: ['Security Outpost','City Ruins','Commercial District','Central Spire','Overrun Factory',
            'Reactor Nursery','Hive Gate','Chitin Fields','Brood Caverns',"Queen's Chamber"][i] })),
   rollers: { interval: 8, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 4, minLvl: 2 },
+  // Global SIZE multipliers, one per entity class. Kept as a separate group (not folded into each
+  // entity's own size field) so a shared MOD PACK can rescale a whole class without overwriting the
+  // per-unit tuning underneath it — see PACK_FORMAT. 1 = shipped size.
+  scale: { player: 1, enemy: 1, boss: 1, queen: 1, roller: 1, gate: 1 },
 }; }
+// Convenience accessor — always returns a full scale set even for packs saved before `scale` existed.
+function SCL() { return (EDIT && EDIT.scale) || { player:1, enemy:1, boss:1, queen:1, roller:1, gate:1 }; }
 function mergeEdit(base, saved) {                // deep-ish merge so new fields appear after updates
   for (const k in saved) {
     if (Array.isArray(base[k]) && Array.isArray(saved[k]))
@@ -504,7 +512,7 @@ function pickRandomWeapon(exclude, level) {
   let idx; do { idx = pool[Math.floor(rng() * pool.length)]; } while (idx === exclude);
   return idx;
 }
-function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
+function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
   // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
   // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
@@ -772,7 +780,7 @@ function spawnWave(dt) {
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
-    e.r = K.r; e.t = 0; e.acidT = 0; e.buffed = 0;
+    e.r = K.r * SCL().enemy; e.t = 0; e.acidT = 0; e.buffed = 0;
   }
 }
 function spawnBoss() {
@@ -782,7 +790,7 @@ function spawnBoss() {
   if (EDIT.bossMusic[G.level - 1]) AUDIO.music(EDIT.bossMusic[G.level - 1]);   // boss track takes over if one is set
   G.boss = { x: CFG.W/2, y: -140,
              hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? EDIT.queen.p1 + EDIT.queen.p2 + EDIT.queen.p3 : EDIT.bossHp[G.level - 1]),
-             maxhp: 0, phase: 0, t: 0, queen, eggT: 0 };
+             maxhp: 0, phase: 0, t: 0, queen, eggT: 0, landed: false, fall: 0 };
   G.boss.maxhp = G.boss.hp;
 }
 function damageEnemy(e, dmg, x, y) {
@@ -944,6 +952,10 @@ function update(dt) {
   if (G.hitStop > 0) { G.hitStop -= dt; return; }
   if (G.bossKillT > 0) { G.bossKillT -= dt; dt *= .3; if (G.bossKillT <= 0) { G.boss=null; nextLevel(); return; } }
   G.t += dt; G.levelT += dt; if (G.clusterT !== undefined) G.clusterT -= dt;
+  // Corridor scroll clock. Separate from G.t so the path + walls can STOP while a boss that has
+  // landed is still alive — the arena holds still for the fight (owner request 2026-07-31) — while
+  // animation, timers and everything else keyed to G.t keep running.
+  if (!(G.boss && G.boss.landed && !G.boss.dead)) G.scrollT = (G.scrollT || 0) + dt;
   if (G.graceT > 0) G.graceT -= dt;
   if (G.squad > CFG.squadMax) G.squad = CFG.squadMax;   // hard cap: 15 units total
   G.maxSquad=Math.max(G.maxSquad,G.squad);
@@ -1113,9 +1125,21 @@ function bossUpdate(dt) {
   const B = G.boss; if (!B) return;
   if (B.dead) return;
   B.t += dt;
-  // descend all the way down to just above the squad — an in-your-face brawl, not a distant turret
+  // ENTRANCE (owner request 2026-07-31): he DROPS onto the path rather than gliding down, then
+  // slams to a stop — heavy screen shake + hit-stop + impact cue. Landing also freezes the corridor
+  // scroll (see G.scrollT) so the arena stops moving for the fight.
   const closeY = B.queen ? EDIT.bossY - 60 : EDIT.bossY;   // queen sprite is taller, stop a bit higher
-  if (B.y < closeY) B.y = Math.min(closeY, B.y + 60 * dt);
+  if (B.y < closeY) {
+    B.fall = Math.min(BOSS_FALL_MAX, (B.fall || BOSS_FALL_V0) + BOSS_FALL_G * dt);   // accelerate: a fall, not a glide
+    B.y = Math.min(closeY, B.y + B.fall * dt);
+    if (B.y >= closeY && !B.landed) {                      // TOUCHDOWN
+      B.landed = true;
+      G.shake = 26; G.hitStop = 0.10; G.flashT = 0.12;
+      AUDIO.sample(B.queen ? 'queenroar' : 'boss');
+      AUDIO.sample('explosion2');
+      boom(B.x, B.y + 40, 1.2);
+    }
+  }
   B.x = CFG.W/2 + Math.sin(B.t * 0.7) * (CFG.W/2 - 150);
   const hpFrac = B.hp / B.maxhp;
   bossAttackUpdate(B, dt);
@@ -1124,7 +1148,7 @@ function bossUpdate(dt) {
     const e = enemies.alloc();
     if (e) { e.kind = 0; const K = EDIT.kinds[0];
       e.x = B.x + rr(-90, 90); e.y = Math.min(B.y - 120, 260); e.vx = rr(-30,30); e.vy = K.spd + 90;
-      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r; e.t = 0; e.phase = rr(0, 6.283);
+      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r * SCL().enemy; e.t = 0; e.phase = rr(0, 6.283);
       // boss-spawned enemies skip spawnWave()'s field set — lane/phase must be initialized here too,
       // or the lane-homing movement code reads e.lane as undefined and NaNs e.x (crashes gradient draws).
       e.lane = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W/2) / roadHalfWidthAtY(e.y))); }
@@ -1139,7 +1163,7 @@ function bossUpdate(dt) {
         for (let i = 0; i < Q.hatch; i++) { const e = enemies.alloc(); if (!e) break;
           e.kind = 0; const K = EDIT.kinds[0];
           e.x = B.x + rr(-100, 100); e.y = Math.min(B.y - 110, 300); e.vx = rr(-40, 40); e.vy = K.spd + 110;
-          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8; e.t = 0; e.phase = rr(0, 6.283);
+          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8 * SCL().enemy; e.t = 0; e.phase = rr(0, 6.283);
           e.lane = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W/2) / roadHalfWidthAtY(e.y))); } }
     }
   }
@@ -1169,7 +1193,11 @@ function bossKill() {
 // 540-wide screen, stopping short of the edges). Both derived from CFG.W/CFG.H so the
 // geometry survives a canvas resize; the near-horizon end keeps the old 40px/250px
 // near:far ratio (scaled up to the new 270px far width) so the vanishing-point look holds.
-const HORIZON_Y = CFG.H * 0.25;                    // 240 on a 960-tall screen
+// Vanishing point: where the path ends and the wall bases converge. Raised from 0.25 to 0.407
+// (2026-07-31, owner concept-art match) so the corridor occupies less of the frame and the deep
+// background gets 1.63x more room — the "walking INTO the image" read. Everything perspective
+// derives from this one constant: road, walls, gates, rollers, backdrop dome.
+const HORIZON_Y = CFG.H * 0.407;                   // 391 on a 960-tall screen
 function roadHalfWidth(z){ const near = CFG.W * 0.08, far = CFG.W / 2; return near + (far - near) * z; }  // 43.2 -> 270
 function roadY(z){return HORIZON_Y+(CFG.H-HORIZON_Y)*Math.pow(z,1.6);}
 // Half-width of the road AT A SCREEN Y, matching the road polygon AS DRAWN.
@@ -1195,7 +1223,9 @@ function gateRect(g){
   if (g.lane === 'R') { x = c + hw * 0.125; w = hw * 0.875 - 3; }
   else if (g.lane === 'full') { x = c - hw + 4; w = hw*2 - 8; }
   else { x = c - hw + 3; w = hw * 0.875 - 3; }   // 'L' (default)
-  return { x, w, z, gh: 22 + 46*z };             // gh: panel height also grows with depth
+  // gh: panel height grows with depth. Only the HEIGHT takes the scale knob — width is tied to the
+  // road edge and the centreline gap, so scaling it would reopen the "barriers wall off the lane" bug.
+  return { x, w, z, gh: (22 + 46*z) * SCL().gate };
 }
 
 // ---------- pre-rendered art (offscreen canvases, built ONCE at load) ----------
@@ -1343,11 +1373,16 @@ const BG_ZOOM_MAX = 2;                          // deep-background scale when th
 // How far the wall tops rise above the horizon at the player's feet, as a fraction of the road's
 // on-screen depth. 0 = tops sit exactly on the horizon; bigger = taller corridor. The walls scroll
 // in lockstep with the floor (shared vAt), so there's no separate scroll rate to tune.
-const WALL_RISE = 0.10;
+// 0.160 puts the near-edge wall top at y=300 with HORIZON_Y=391 (owner concept-art match).
+// NOTE: this is a fraction of (CFG.H - HORIZON_Y), so it must be re-derived if HORIZON_Y moves.
+const WALL_RISE = 0.160;
 // Corridor length of ONE wall panel, in floor-tile units. The floor is dense (many small tiles);
 // wall art is big architectural panels, so it must repeat far less. 14 ≈ 4 panels visible per
 // side, matching the reference. Lower = more repeats / narrower panels.
 const WALL_UNITS = 14;
+// Boss entrance drop: starting speed, gravity, terminal speed (px/s). Tuned so the fall reads as a
+// heavy body dropping onto the path rather than the old constant 60px/s glide.
+const BOSS_FALL_V0 = 90, BOSS_FALL_G = 900, BOSS_FALL_MAX = 900;
 function loadEnv(level) {
   if (ENVIMG[level]) return ENVIMG[level];
   // Each slot walks a candidate list: FORGE override → shipped PNG → the next fallback slot.
@@ -1415,7 +1450,7 @@ function rollerUpdate(dt) {
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, r.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
     const hw = roadHalfWidthAtY(r.y);   // lateral: match the DRAWN road (ez stays for size/speed feel)
     r.x = CFG.W/2 + r.lane * (hw - 20);
-    r.size = R.size * (0.35 + 0.85 * ez);       // grows as it rolls toward the camera
+    r.size = R.size * SCL().roller * (0.35 + 0.85 * ez);   // grows as it rolls toward the camera
     r.y += R.speed * (0.35 + 0.75 * ez) * dt;
     r.rot += dt * (2.2 + 3 * ez);
     let smashed = false;
@@ -1485,7 +1520,7 @@ function drawPerspectiveRoad(){
   // Corridor scroll, shared by the walls and the floor so they move as one surface.
   // S: tile density along the road; scroll: tiles/sec toward the viewer; vAt: world tile
   // coordinate at depth z (z=0 horizon, z=1 at the player's feet).
-  const S=13, scroll=G.t*1.35;
+  const S=13, scroll=(G.scrollT||0)*1.35;   // scrollT, not G.t — freezes once a boss has landed
   const vAt=z=>S/(0.19+z)+scroll;
   // per-level SIDE WALLS (FORGE WORLD art): left and right are separate image slots so each
   // side can carry its own texture. These are VERTICAL surfaces standing on the road edge, so
@@ -1565,7 +1600,8 @@ function drawPerspectiveRoad(){
     }
     cx.restore(); cx.globalAlpha=1; }catch(e){} }
   cx.save();cx.globalCompositeOperation='lighter';for(const side of [-1,1]){cx.strokeStyle=side<0?'#f3c':'#2ef';cx.shadowColor=cx.strokeStyle;cx.shadowBlur=12;cx.lineWidth=4;cx.beginPath();cx.moveTo(CFG.W/2+side*top,HORIZON_Y);cx.lineTo(CFG.W/2+side*bot,CFG.H);cx.stroke();}cx.restore();
-  const phase=(G.t*.16)%1;for(let i=0;i<13;i++){const z=(i/13+phase)%1,y=roadY(z),hw=roadHalfWidthAtY(y);cx.globalAlpha=.12+.3*z;cx.strokeStyle='#7cf';cx.lineWidth=1+z*2;cx.beginPath();cx.moveTo(CFG.W/2-hw,y);cx.lineTo(CFG.W/2+hw,y);cx.stroke();}cx.globalAlpha=1;
+  // road scan lines use scrollT so they freeze with the corridor when a boss lands
+  const phase=((G.scrollT||0)*.16)%1;for(let i=0;i<13;i++){const z=(i/13+phase)%1,y=roadY(z),hw=roadHalfWidthAtY(y);cx.globalAlpha=.12+.3*z;cx.strokeStyle='#7cf';cx.lineWidth=1+z*2;cx.beginPath();cx.moveTo(CFG.W/2-hw,y);cx.lineTo(CFG.W/2+hw,y);cx.stroke();}cx.globalAlpha=1;
   cx.strokeStyle='rgba(255,255,255,.2)';cx.setLineDash([18,24]);cx.beginPath();cx.moveTo(CFG.W/2,HORIZON_Y);cx.lineTo(CFG.W/2,CFG.H);cx.stroke();cx.setLineDash([]);
 }
 function drawFarHorde(){
@@ -1978,7 +2014,7 @@ function drawSquad() {
     cx.strokeStyle=tierCol;cx.shadowColor=tierCol;cx.shadowBlur=14;cx.lineWidth=4;cx.beginPath();cx.ellipse(x,y+15,21*tierScale,9*tierScale,0,0,7);cx.stroke();
     if(G.squadFlash>0){cx.globalAlpha=.85;cx.globalCompositeOperation='lighter';}
     if(IMGS.soldierAnim&&IMGS.soldierAnim.ok){                 // animated rear-view trooper (fire loop)
-      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58*tierScale;
+      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58*tierScale*SCL().player;
       cx.drawImage(IMGS.soldierAnim, f*cs,0,cs,cs, x-sz/2, y-sz+10+bob, sz, sz);
     } else {
       const tw=48*tierScale, th=63*tierScale;
@@ -2039,7 +2075,7 @@ function drawBoss() {
     else if (B.attack && PRAET.attack.img.ok) { a = PRAET.attack; f = Math.floor(B.attackClock * a.fps) % a.frames; }
     else { f = Math.floor(B.t * a.fps) % a.frames; }
     const cs = a.img.height, breathe = B.dead ? 1 : 1 + 0.03 * Math.sin(B.t * 2);
-    const ph = 300 * breathe, pw = ph * (cs / cs);
+    const ph = 300 * breathe * (B.queen ? SCL().queen : SCL().boss), pw = ph * (cs / cs);
     cx.save(); cx.shadowColor = glow; cx.shadowBlur = 26;
     cx.drawImage(a.img, f * cs, 0, cs, cs, B.x - ph / 2, B.y - ph / 2, ph, ph); cx.restore();
     drawBossHud(B, B.y - ph / 2); return;
@@ -2050,7 +2086,7 @@ function drawBoss() {
   const bossImg = queenAtk || (B.queen ? IMGS.queen : IMGS.praet);  // Alien Queen (final)
   if (bossImg && bossImg.ok) {
     const breathe = 1 + 0.03 * Math.sin(B.t * 2);
-    const ph = (B.queen ? 420 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
+    const ph = (B.queen ? 420 * SCL().queen : 300 * SCL().boss) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
     cx.save(); cx.shadowColor = glow; cx.shadowBlur = 30;
     cx.drawImage(bossImg, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
     drawBossHud(B, B.y - ph / 2); return;
@@ -2321,7 +2357,8 @@ function applyPngToSlot(r, c, frames){     // live in the game immediately, and 
 // ---- window chrome / styling ----
 const css = document.createElement('style');
 css.textContent = `
-#forgeBtn{position:fixed;left:10px;bottom:10px;z-index:40;width:44px;height:44px;border-radius:10px;
+/* Lifted off the bottom edge — at bottom:10px the phone's gesture/nav bar covered it. */
+#forgeBtn{position:fixed;left:10px;bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:40;width:44px;height:44px;border-radius:10px;
   background:linear-gradient(135deg,#0c0620,#1a0a35);border:1px solid #4ff;color:#4ff;font-size:22px;
   cursor:pointer;box-shadow:0 0 12px rgba(0,255,255,.35);display:flex;align-items:center;justify-content:center;user-select:none}
 #forgeBtn:hover{box-shadow:0 0 20px rgba(255,0,255,.5);border-color:#f4f;color:#f4f}
@@ -2453,6 +2490,45 @@ function importEnvPng(f, key, done){
   rd.readAsDataURL(f);
 }
 
+// ---------- MOD PACK (roadmap: players author + SHARE content) ----------
+// One self-contained file carrying an entire authored setup. Versioned on purpose: PACK_FORMAT is
+// the SCHEMA version and is what future builds check, while gameVersion is only informational, so
+// a pack made today keeps loading after the game moves on. Unknown/missing sections are tolerated
+// (mergeEdit fills defaults) — that's what lets us add fields later without breaking old packs.
+//
+// Sections, all optional:
+//   values  — the whole EDIT tree (units, weapons, waves, scale, music filenames, level names)
+//   sprites — FORGE-painted/imported sprite strips, as dataURLs
+//   env     — per-level environment art (path / bg / wall L / wall R), as dataURLs
+// Sounds currently travel as NAMES (values.kinds[].sfxDie etc.) referencing built-in samples;
+// embedding custom audio blobs is the next step and slots in as a `sounds` section.
+const PACK_FORMAT = 1;
+function buildPack(name, author) {
+  return { hiveWarPack: PACK_FORMAT, name, author,
+           gameVersion: GAME_VERSION, created: new Date().toISOString(),
+           values: EDIT, sprites: savedSprites, env: ENV_OVR };
+}
+function applyPack(j) {
+  if (!j || typeof j !== 'object') throw new Error('not a pack file');
+  // Accept legacy backups too — they are the same payload without the header.
+  const isPack = j.hiveWarPack !== undefined;
+  if (isPack && j.hiveWarPack > PACK_FORMAT)
+    throw new Error(`pack needs a newer game build (pack format ${j.hiveWarPack}, this build reads ${PACK_FORMAT})`);
+  if (!j.values && !j.sprites && !j.env) throw new Error('pack contains no content');
+  if (j.values) { EDIT = mergeEdit(editDefaults(), j.values); saveEdit(); applyEditWeapons(); }
+  if (j.sprites) { savedSprites = j.sprites;
+    try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); } catch (e) {}
+    for (const r of REG) { const s = savedSprites[r.key];
+      if (s && s.data) { if (r.h) { r.h.img.src = s.data; if (s.frames) r.h.frames = s.frames; }
+                         else makeHolder(r, s.data, s.frames, s.fps); } } }
+  if (j.env) { ENV_OVR = j.env;
+    try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); } catch (e) {}
+    for (const k in ENVIMG) delete ENVIMG[k]; }
+  const warn = (j.gameVersion && j.gameVersion !== GAME_VERSION)
+    ? `Built for game v${j.gameVersion}; you are on v${GAME_VERSION}. It loaded, but some values may not line up.` : '';
+  return { name: j.name || 'Unnamed pack', author: j.author || '', warn };
+}
+
 // FORGE playtest jump: drop straight into a level, or straight into that level's boss fight.
 // Reuses the normal levelStart()/spawnBoss() path so the run is a REAL one (env art, music,
 // squad, balance all applied) rather than a special-cased preview that could drift from live.
@@ -2479,7 +2555,18 @@ function renderTab(){
       <td class="pct" data-pct="${i}"></td><td>${num('kinds.'+i+'.minLvl',1,36)}</td>
       <td>${snd('kinds.'+i+'.sfxAttack')}</td><td>${snd('kinds.'+i+'.sfxDie')}</td></tr>
       <tr><td></td><td colspan="11" class="hpprev" data-hp="${i}"></td></tr>`; });
-    body.innerHTML = h + '</table>';
+    // SIZE SCALE — everything the UNITS tab didn't previously cover (owner request 2026-07-31).
+    // Multipliers, not absolute sizes, so a shared pack can rescale a class without stomping the
+    // per-unit tuning above. Enemy scale multiplies each unit's SIZE column.
+    h += `</table>
+      <div class="hint" style="color:#f4f;margin-top:14px">SIZE SCALE — × multiplier on every member of the class. 1 = shipped size.
+        Applies to NEW spawns (enemies/obstacles); player and boss update instantly.</div>
+      <table><tr><th>PLAYER</th><th>ENEMIES</th><th>BOSS</th><th>QUEEN</th><th>OBSTACLES</th><th>BARRIERS</th></tr>
+      <tr><td>${num('scale.player',0.05,52)}</td><td>${num('scale.enemy',0.05,52)}</td>
+          <td>${num('scale.boss',0.05,52)}</td><td>${num('scale.queen',0.05,52)}</td>
+          <td>${num('scale.roller',0.05,52)}</td><td>${num('scale.gate',0.05,52)}</td></tr></table>
+      <div class="hint">BARRIERS scales panel HEIGHT only — width is locked to the road edge and the centreline gap.</div>`;
+    body.innerHTML = h;
     body.querySelectorAll('[data-kt]').forEach(c=>{ const a=ANIM[+c.dataset.kt];
       if(a&&a.img.ok){const cs=a.img.height;c.getContext('2d').drawImage(a.img,0,0,cs,cs,0,0,40,40);} });
   }
@@ -2605,13 +2692,38 @@ function renderTab(){
       if (f && key) importEnvPng(f, key, renderTab); };
   }
   else if (tab===5) renderSprites();
-  else { // DATA
-    body.innerHTML = `<div class="hint">Values live in <b>localStorage</b> (this browser). Export JSON to keep a copy or move between machines. Edited sprites: use DOWNLOAD on the sprite to bake the PNG into assets/ permanently.</div>
+  else { // DATA / PACKS
+    body.innerHTML = `<div class="hint" style="color:#f4f">MOD PACK — save this whole setup (values, sprites, sounds, environment art) to ONE file.
+      Anyone running the same game version can load it and play your version of the content.</div>
+      <div class="row">NAME <input type="text" id="pkName" style="width:190px" placeholder="My Pack" value="${(EDIT.packName||'').replace(/"/g,'&quot;')}">
+        AUTHOR <input type="text" id="pkAuth" style="width:140px" placeholder="you" value="${(EDIT.packAuthor||'').replace(/"/g,'&quot;')}"></div>
+      <div class="row"><button id="pkSave" style="border-color:#f4f;color:#f9f;font-weight:900">💾 SAVE PACK TO FILE</button>
+        <input type="file" id="pkLoad" accept=".json,.hivepack" style="display:none">
+        <button id="pkLoadB">📂 LOAD PACK</button></div>
+      <div class="hint">Saves as <b>&lt;name&gt;.hivepack.json</b>. Contains everything a pack needs, so it's self-contained — no extra files to send.</div>
+      <div class="hint" style="margin-top:14px">Values live in <b>localStorage</b> (this browser). The legacy EXPORT/IMPORT below still works and still reads old backup files.</div>
       <div class="row"><button id="fExp">⇩ EXPORT ALL (JSON)</button>
       <input type="file" id="fImp" accept=".json" style="display:none"><button id="fImpB">⇧ IMPORT JSON</button></div>
       <div class="row"><button class="warn" id="fRstV">RESET ALL VALUES</button>
       <button class="warn" id="fRstS">RESET ALL SPRITES</button>
       <button class="warn" id="fRstE">RESET ENV ART</button></div>`;
+    const nmEl = body.querySelector('#pkName'), auEl = body.querySelector('#pkAuth');
+    nmEl.oninput = () => { EDIT.packName = nmEl.value; saveEdit(); };
+    auEl.oninput = () => { EDIT.packAuthor = auEl.value; saveEdit(); };
+    body.querySelector('#pkSave').onclick = () => {
+      const pack = buildPack(nmEl.value || 'Untitled Pack', auEl.value || '');
+      const blob = new Blob([JSON.stringify(pack, null, 1)], { type: 'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = (pack.name || 'pack').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') + '.hivepack.json';
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    };
+    body.querySelector('#pkLoadB').onclick = () => body.querySelector('#pkLoad').click();
+    body.querySelector('#pkLoad').onchange = e => { const f = e.target.files[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { try { const r = applyPack(JSON.parse(rd.result)); renderTab();
+          alert(`Loaded pack: ${r.name}${r.author ? ' by ' + r.author : ''}${r.warn ? '\n\n' + r.warn : ''}`);
+        } catch (err) { alert('Could not load pack: ' + err.message); } };
+      rd.readAsText(f); };
     body.querySelector('#fExp').onclick=()=>{ const a=document.createElement('a');
       a.href='data:application/json,'+encodeURIComponent(JSON.stringify({values:EDIT,sprites:savedSprites,env:ENV_OVR}));
       a.download='hiveswarm_forge_backup.json'; a.click(); };
