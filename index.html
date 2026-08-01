@@ -14,13 +14,31 @@
   html,body{margin:0;padding:0;background:#07030f;overflow:hidden;touch-action:none;
     font-family:'Segoe UI',system-ui,sans-serif;-webkit-user-select:none;user-select:none}
   #game{display:block;margin:0 auto;background:#0a0518}
-  #hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#9ff;white-space:nowrap;
-    font-weight:900;font-size:36px;pointer-events:none;z-index:5}
+  #hud{position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#9ff;
+    font-weight:900;pointer-events:none;z-index:5;display:flex;flex-direction:column;gap:2px;
+    box-sizing:border-box;padding:0 10px}
+  #hud .row1{display:flex;align-items:center;justify-content:space-between;white-space:nowrap;font-size:28px}
+  #hud .row2{display:flex;align-items:center;justify-content:center;gap:6px;font-size:15px;margin-top:1px}
   #hud .squad{color:#9ff;text-shadow:0 0 4px #0ff,0 0 12px #0ff,0 0 22px #0ff}
-  #hud .tier {color:#ffe23d;font-size:20px;vertical-align:middle;text-shadow:0 0 4px #fd4,0 0 10px #fd4}
-  #hud .lvl  {color:#c46bff;text-shadow:0 0 4px #a03bff,0 0 12px #a03bff,0 0 22px #7a1bff}
+  #hud .tier {color:#ffe23d;font-size:16px;vertical-align:middle;text-shadow:0 0 4px #fd4,0 0 10px #fd4}
+  #hud .lvl  {color:#c46bff;text-shadow:0 0 4px #a03bff,0 0 12px #a03bff,0 0 22px #7a1bff;
+    flex:1;text-align:center;font-size:32px;line-height:1.05;overflow:hidden;text-overflow:ellipsis;padding:0 6px}
   #hud .cash {color:#4dff86;text-shadow:0 0 4px #17d94f,0 0 12px #17d94f,0 0 22px #0a9e33}
+  #hud .wpnName{color:#c46bff;text-shadow:0 0 4px #a03bff,0 0 8px #a03bff;font-size:26px}
+  #hud .wpnIcon{display:inline-block;width:38px;height:38px;background-repeat:no-repeat;
+    background-size:500% 100%;vertical-align:middle;filter:drop-shadow(0 0 4px #a03bff)}
   #hud .sep  {opacity:.35}
+  /* Run controls live in the DOM, BELOW the score rows. They used to be canvas-drawn at a fixed
+     y=42 and collided with the cash readout at some canvas scales; as a flex row they can never
+     overlap it again regardless of scale. pointer-events re-enabled just for these. */
+  #hud .ctrls{display:flex;align-items:center;justify-content:flex-end;gap:14px;margin-top:6px;
+    pointer-events:auto}
+  #hud .ctrls button{background:rgba(8,4,24,.62);border:1px solid #2a4a63;border-radius:8px;
+    color:#9cf;font:900 11px 'Segoe UI',sans-serif;letter-spacing:.5px;padding:3px 8px 4px;
+    display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;min-width:46px}
+  #hud .ctrls button b{font-size:19px;font-weight:400;line-height:1}
+  #hud .ctrls button.off{color:#63707d;border-color:#2a3038}
+  #hud .ctrls button.hot{color:#ff4;border-color:#7a6b1b}
 </style>
 </head>
 <body>
@@ -33,6 +51,9 @@
 // (sprites land in M1). Conventions: ?test=1 bot, window.__dbg().
 // ============================================================
 
+// Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
+// serves the shell from cache, so a version bump without a cache bump ships nothing to players.
+const GAME_VERSION = '1.5';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -55,6 +76,7 @@ function fit() {
   if (a > ga) { cv.height = innerHeight; cv.width = innerHeight * ga; }
   else { cv.width = innerWidth; cv.height = innerWidth / ga; }
   scale = cv.width / CFG.W;
+  const hudEl = document.getElementById('hud'); if (hudEl) hudEl.style.width = cv.width + 'px';   // HUD tracks canvas width so the level-name fill/centering lines up
 }
 addEventListener('resize', fit); fit();
 
@@ -76,7 +98,7 @@ function makePool(n, factory) {
     count() { return n - top; }
   };
 }
-const bullets  = makePool(1800,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,aoe:0,vis:false,grenade:false,live:false}));
+const bullets  = makePool(1800,  () => ({x:0,y:0,vx:0,vy:0,dmg:1,r:3,tier:0,aoe:0,vis:false,grenade:false,pierce:false,_hit:null,live:false}));
 const enemies  = makePool(1600, () => ({x:0,y:0,vx:0,vy:0,hp:1,maxhp:1,r:10,kind:0,t:0,
   baseX:0,phase:0,mode:0,laserMark:0,live:false}));
 const splats   = makePool(1400, () => ({x:0,y:0,vx:0,vy:0,r:2,a:1,red:false,spark:false,fade:1.4,_col:null,live:false}));
@@ -109,14 +131,19 @@ const G = {
 const WEAPONS = [
   {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,    col:'#5ef',   // slow single shots until powerups
    sfx:'gun',         sfxRate:1.0,  sfxVol:.22, sfxMinGap:0,     shape:'bolt',   len:22, wid:4},
-  {name:'Twin Plasma', rof:10,   dmg: 0.62, n:2, spread:0.06, col:'#4cf',
+  // spread is a FAN ANGLE IN RADIANS across the weapon's n pellets (owner request 2026-07-30:
+  // "what happened to the cone style shooting?" — the old 0.06-0.22 values were pixel-jitter
+  // leftovers and read as ~3-12 degrees, i.e. no visible cone at all).
+  {name:'Spread Gun',  rof:10,   dmg: 0.62, n:2, spread:0.45, col:'#4cf',
    sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3},
-  {name:'Scatter Rail',rof:12,   dmg: 0.38, n:4, spread:0.22, col:'#c6f',
+  {name:'Rail Gun',    rof:12,   dmg: 0.38, n:4, spread:0.70, col:'#c6f',
    sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2},
-  {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.10, col:'#f80',
+  {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.30, col:'#f80',
    sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8},
-  {name:'Orbital Link',rof: 9,   dmg: 0.89, n:5, spread:0.18, col:'#ff4',
-   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ring',   len:18, wid:6},
+  // Ion Cannon = capital-ship gun: charges a growing ball, then releases ONE big slow-ish beam
+  // that PIERCES everything in its column. n:1/spread:0 — it doesn't fan, it punches through.
+  {name:'Ion Cannon',  rof: 1.6, dmg:16.0, n:1, spread:0,    col:'#ff4',
+   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14},
 ];
 // ---- soldier tier x weapon tier power curve (owner spec 2026-07-30, from a competitor
 // teardown — see D:\Dev\_ref\UPGRADES_AND_MONETIZATION.md §2): DPS ~= squadCount x
@@ -124,7 +151,8 @@ const WEAPONS = [
 // streams in fire(); these two multipliers add a persistent QUALITY axis on top so gates
 // (which only ever grant count) don't become the only power lever. All 5 WEAPONS share the
 // same weaponTierMult so upgrading a tier improves whichever gun you're currently rocking —
-// weapons still swap for variety (per-level random pick), but now also persistently upgrade.
+// weapons now persist level-to-level (owner request 2026-07-30, see levelStart()) rather than
+// randomly rerolling, and now also persistently upgrade.
 // Both start at tier 1 = multiplier 1.0 exactly, so baseline balance (incl. the CG KPI tune
 // and Queen kill-time) is unchanged until the player actually buys a tier in the shop.
 const SOLDIER_TIER_MAX = 5, WEAPON_TIER_MAX = 5, TIER_MULT_STEP = 0.12;   // +12%/tier, modest per SHOP economy notes
@@ -192,18 +220,28 @@ function editDefaults() { return {
   // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
   // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears
   kinds: [
-    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:60,  minLvl:1 },
-    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:20,  minLvl:1 },
-    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:12,  minLvl:2 },
-    { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4 },
-    { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6 },
-    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3 },
+    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:60,  minLvl:1, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:20,  minLvl:1, sfxAttack:'xenohit',      sfxDie:'eldritchdie' },
+    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:12,  minLvl:2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4, sfxAttack:'xenopterahit', sfxDie:'xenopterahit' },
+    { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6, sfxAttack:'subterrahit',  sfxDie:'subterrahit' },
+    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3, sfxAttack:'xenohit',      sfxDie:'xenohit' },
   ],
-  weapons: WEAPONS.map(w => ({ name:w.name, rof:w.rof, dmg:w.dmg, n:w.n, spread:w.spread })),
+  weapons: WEAPONS.map(w => ({ name:w.name, rof:w.rof, dmg:w.dmg, n:w.n, spread:w.spread, sfx:w.sfx })),
   spawnRate: BAL.spawnRate.slice(),
   bossHp: BAL.bossHp.slice(),
   queen: Object.assign({}, BAL.queen),
   bossY: 560,                                    // how far down the boss descends (bigger = closer to player)
+  // per-level boss glow/fill color (owner request 2026-07-30: every non-Queen boss used the same
+  // fixed purple regardless of level). Index 9 = the Queen's own level, defaults to her existing
+  // green so this is a drop-in, behavior-unchanged default until FORGE-edited.
+  bossGlow: Array.from({length:10}, (_,i) => i === 9 ? '#4f6' : '#a4f'),
+  bossAttackSfx: Array.from({length:10}, () => 'lightning'),   // per-level boss attack cue (owner request 2026-07-30) — plays when an attack telegraphs
+  // MUSIC (owner request 2026-07-30): filenames only, resolved against assets/music/. Left blank
+  // by default — no tracks ship yet, so silence until real mp3s are dropped in and named here.
+  titleMusic: '',
+  levelMusic: Array.from({length:10}, () => ''),
+  bossMusic:  Array.from({length:10}, () => ''),
   gateInterval: Array.from({length:10}, (_,i) => Math.max(12, 18 - 0.4*i)),   // sec between barrier pairs, per level
   env: Array.from({length:10}, (_,i) => ({      // per-level theming; art drops into assets/env/L<n>_*.png
     name: ['Security Outpost','City Ruins','Commercial District','Central Spire','Overrun Factory',
@@ -223,7 +261,8 @@ let EDIT = (() => { try { return mergeEdit(editDefaults(), JSON.parse(localStora
                     catch (e) { return editDefaults(); } })();
 function saveEdit() { try { localStorage.setItem(EDIT_KEY, JSON.stringify(EDIT)); } catch (e) {} }
 function applyEditWeapons() {                    // WEAPONS is read all over — mutate it in place
-  EDIT.weapons.forEach((w, i) => { if (WEAPONS[i]) { WEAPONS[i].rof = w.rof; WEAPONS[i].dmg = w.dmg; WEAPONS[i].n = w.n; WEAPONS[i].spread = w.spread; } });
+  EDIT.weapons.forEach((w, i) => { if (WEAPONS[i]) { WEAPONS[i].rof = w.rof; WEAPONS[i].dmg = w.dmg; WEAPONS[i].n = w.n; WEAPONS[i].spread = w.spread;
+    if (w.sfx) WEAPONS[i].sfx = w.sfx; } });   // fire-sound is FORGE-assignable too
 }
 applyEditWeapons();
 function pickKind(lvl) {                          // weighted spawn pick from editor weights (minLvl-gated)
@@ -257,18 +296,12 @@ function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.to
 function down(e) {
   // clicks on the FORGE editor window / ⚒ button are UI, not gameplay — never let them
   // start a run from the title screen or steer the squad mid-game
-  if (e.target && e.target.closest && e.target.closest('#forge,#forgeBtn')) return;
+  // clicks on FORGE or the HUD control buttons are UI, not gameplay — never let them start a run,
+  // steer the squad, or (critically) trip the "tap anywhere to resume" path below
+  if (e.target && e.target.closest && e.target.closest('#forge,#forgeBtn,#hud')) return;
   botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
-  if (gy < 70) {                                       // top-right HUD buttons: [⟳ restart] [⏸ pause] [⚙ mute]
-    const inRun = G.state === 'play' || G.state === 'boss';
-    if (dragX > CFG.W-62) { G.meta.sfx=!G.meta.sfx; AUDIO.setMuted(!G.meta.sfx); save(); return; }
-    if ((inRun || G.paused) && dragX > CFG.W-120) {    // pause / resume
-      G.paused = !G.paused;
-      if (G.paused) AUDIO.stopAll();
-      else if (G.vehicleT > 0 && G.meta.sfx) AUDIO.loopTank(true);   // tanks were mid-deploy: bring the engine back
-      return; }
-    if (inRun && dragX > CFG.W-178) { G.paused = false; startRun(G.mode); return; }   // restart the run
-  }
+  // (restart / pause / music / sfx used to be canvas hit-tests in a `gy < 70` band here — they are
+  // real DOM buttons in #hud now, handled by the delegated listener beside the HUD markup.)
   if (G.paused) { G.paused = false; return; }          // tap anywhere else while paused = resume
   if (G.state === 'title') {
     if (gy > 740 && gy < 800) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY button
@@ -300,12 +333,14 @@ addEventListener('keydown', e => { if (e.key === 'Escape' && G.state === 'codex'
 
 // ---------- audio (pooled channel stub; real samples land in the audio pass) ----------
 const AUDIO = (() => {
-  let ctx = null, muted = false, cursor = 0;
+  // Three independent gates. `muted` is the MASTER (ad breaks / hard stop); sfxOff and musOff are
+  // the player's own toggles, so they can silence music but keep gunfire, or vice versa.
+  let ctx = null, muted = false, sfxOff = false, musOff = false, cursor = 0;
   const channels = new Array(8).fill(null);
   const tones = { gate:520, perk:700, elite:180, boss:95, laser:880, drone:640 };
   function ensure() { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); return ctx; }
   function play(name) {
-    if (muted) return;
+    if (muted || sfxOff) return;
     try {
       const ac = ensure(), ch = channels[cursor] || (channels[cursor] = ac.createGain());
       cursor = (cursor + 1) % channels.length; ch.disconnect(); ch.connect(ac.destination);
@@ -330,7 +365,7 @@ const AUDIO = (() => {
   };
   const pool={}, lastPlay={};
   function sample(name, opt){
-    if(muted||!SAMPLES[name])return;
+    if(muted||sfxOff||!SAMPLES[name])return;
     if (opt && opt.minGap) {                 // per-weapon throttle: a repurposed sample fired at
       const t = (typeof performance!=='undefined'?performance.now():Date.now());  // high rof shouldn't machine-gun-overlap itself
       if (lastPlay[name] !== undefined && t - lastPlay[name] < opt.minGap * 1000) return;
@@ -357,23 +392,53 @@ const AUDIO = (() => {
   // looping engine track while tanks are on the field (25% quieter than a normal cue)
   let tankLoop = null;
   function loopTank(on) {
-    if (on && !muted) {
+    if (on && !muted && !sfxOff) {
       if (!tankLoop) { tankLoop = new Audio(SFX + 'tank-track.mp3'); tankLoop.loop = true; tankLoop.volume = 0.45; }
       if (tankLoop.paused) { try { tankLoop.currentTime = 0; tankLoop.play().catch(() => {}); } catch (_) {} }
     } else if (tankLoop) { try { tankLoop.pause(); } catch (_) {} }
   }
+  // looping background music (FORGE-assigned per level / boss / title). Filenames resolve against
+  // assets/music/; a blank or missing file just means silence — never a hard error.
+  let musicEl = null, musicSrc = '';
+  function music(file) {
+    const want = file || '';
+    if (want === musicSrc) return;                 // already on this track — don't restart it
+    musicSrc = want;
+    if (musicEl) { try { musicEl.pause(); } catch (_) {} musicEl = null; }
+    if (!want || muted || musOff) return;
+    try { musicEl = new Audio('assets/music/' + want); musicEl.loop = true; musicEl.volume = 0.4;
+      musicEl.onerror = () => { musicEl = null; };  // file not there yet — stay silent
+      musicEl.play().catch(() => {}); } catch (_) { musicEl = null; }
+  }
   function stopAll() {                     // hard stop: silence every playing sample + loops NOW
     try { for (const name in pool) for (const a of pool[name]) { a.pause(); a.currentTime = 0; } } catch (_) {}
     loopTank(false);
+    if (musicEl) { try { musicEl.pause(); } catch (_) {} }
   }
   addEventListener('psdk:adstart', () => { muted = true; stopAll(); });
   addEventListener('psdk:adend', () => { muted = false; });
-  return { play, sample, resume, loopTank, stopAll,
-           setMuted(v) { muted = !!v; if (v) stopAll(); } };   // mute = instant silence, not fade-out
+  // musicSrc is deliberately NOT cleared when muting, so unmuting can resume the same track.
+  function replayMusic() { if (musicSrc) { const s = musicSrc; musicSrc = ''; music(s); } }
+  function killSamples() { try { for (const n in pool) for (const a of pool[n]) { a.pause(); a.currentTime = 0; } } catch (_) {} }
+  return { play, sample, resume, loopTank, stopAll, music,
+           names: () => Object.keys(SAMPLES),          // exposes the sample-name list for FORGE sound pickers
+           setMuted(v) { muted = !!v; if (v) stopAll(); else replayMusic(); },   // master (ad breaks)
+           // Player toggles — independent, so music can be off while gunfire stays on.
+           setSfx(on)   { sfxOff = !on; if (sfxOff) { killSamples(); loopTank(false); } },
+           setMusic(on) { musOff = !on;
+             if (musOff) { if (musicEl) { try { musicEl.pause(); } catch (_) {} musicEl = null; } }
+             else replayMusic(); },
+           isSfx: () => !sfxOff, isMusic: () => !musOff };
 })();
 function sfx(name) { AUDIO.play(name); }
 G.meta.sfx = true;                        // always start UNMUTED (a stuck muted save was silencing everything)
+if (G.meta.music === undefined) G.meta.music = true;   // music toggle DOES persist — it's a taste setting, not a bug source
 AUDIO.setMuted(false);
+AUDIO.setSfx(G.meta.sfx); AUDIO.setMusic(G.meta.music);
+// Debug transport read by the MAIN LOOP (pause / fast-forward / invincible). Declared here, at game
+// scope, NOT inside the FORGE block — FORGE is wrapped in a try/catch and skips its whole body if
+// the DOM isn't there (headless harness, stripped builds), which used to leave this undefined.
+window.FORGE_DBG = { pause: false, speed: 1, invincible: false };
 // unlock browser audio on the first real user gesture (required — audio can't autoplay)
 function unlockAudio(){ try{ AUDIO.resume(); }catch(_){}
   window.removeEventListener('pointerdown', unlockAudio); window.removeEventListener('keydown', unlockAudio); }
@@ -419,11 +484,12 @@ function startingSquad() { return Math.max(10, 10 + (G.meta.squad || 0) * 8 + Ma
 // simply misses. Rolling one onto the Queen finale tripled her time-to-kill (533s -> 823s in
 // _queen_test.js), which reads as "my gun stopped working", not as difficulty. Boss levels therefore
 // draw only from the tight-grouping weapons.
-// Tuned empirically, not guessed. 0.15 was tried first and made things WORSE (Queen 823s -> 997s):
-// it also excluded Orbital Link, which despite 0.18 spread has the highest raw DPS of the five
-// (9 rof x 0.89 dmg x 5 shots). Scatter Rail is the genuine outlier — widest spread AND mediocre
-// damage — so the threshold sits just above Orbital Link.
-const BOSS_MAX_SPREAD = 0.20;   // excludes Scatter Rail (0.22) only
+// Tuned empirically, not guessed: the threshold must exclude ONLY the genuine outlier (widest
+// spread AND mediocre damage), never the high-DPS guns — an earlier over-tight value excluded too
+// much and made the Queen WORSE (823s -> 997s). Rescaled 2026-07-30 when spread became a real fan
+// angle in radians (0.20 would now exclude every weapon and leave pickRandomWeapon with an empty
+// pool). Ion Cannon is spread:0 — a piercing beam is GOOD against a boss, so it stays eligible.
+const BOSS_MAX_SPREAD = 0.55;   // excludes Rail Gun (0.70) only
 
 function pickRandomWeapon(exclude, level) {
   // On the Queen finale, restrict the pool to accurate weapons.
@@ -440,8 +506,14 @@ function pickRandomWeapon(exclude, level) {
 }
 function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
-  G.weapon = pickRandomWeapon(G.weapon, G.level);     // fresh random loadout — never a back-to-back repeat
+  // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
+  // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
+  // (the same accuracy guard pickRandomWeapon always enforced there) since carrying one into that
+  // fight triples her time-to-kill (533s -> 823s/997s, see the BOSS_MAX_SPREAD comment above) — that
+  // reads as "my gun stopped working," not difficulty, so it's still auto-corrected, not carried over.
+  if (G.level === CFG.levels && WEAPONS[G.weapon].spread > BOSS_MAX_SPREAD) G.weapon = pickRandomWeapon(G.weapon, G.level);
   loadEnv(G.level);
+  AUDIO.music(EDIT.levelMusic[G.level - 1]);       // per-level track (blank = silence)
   const nm = (EDIT.env[G.level - 1] || {}).name, wpnTag = '⚔ ' + WEAPONS[G.weapon].name.toUpperCase();
   announce(nm ? '◆ ' + nm.toUpperCase() + '  ·  ' + wpnTag : wpnTag, '#9fd4ff');
 }
@@ -517,6 +589,11 @@ function spawnGatePair() {
   }
   const g1 = mk('L', !lockedLive);
   let g2 = mk('R', !lockedLive && !g1.locked);            // never two locked gates in one pair
+  // never a pair showing the identical number — forces an actual choice (owner request 2026-07-30).
+  // One bounded reroll, not a loop; the guards below still apply to whatever g2 ends up being.
+  if (!g1.locked && !g2.locked && g1.kind === g2.kind && g1.val === g2.val) {
+    g2 = mk('R', !lockedLive && !g1.locked);
+  }
   const isNeg = g => g.kind === 'add' && g.val < 0;
   const impassable = g => g.locked;                      // locked = can't shoot it, only lose units
   // GUARANTEE an escape: a pair can never be BOTH impassable.
@@ -570,6 +647,9 @@ function fire(dt) {
   const w = WEAPONS[G.weapon];
   const rof = w.rof * (1 + 0.10 * (G.perks['Overclock'] || 0)) * EDIT.player.rofMul;   // FORGE fire-rate knob
   fireT -= dt;
+  // Ion Cannon charge meter (owner spec 2026-07-30: "a ball grows as it charges, then a large laser
+  // blasts straight ahead"). 0..1 across the whole reload window; the render pass sizes the orb from it.
+  G.ionCharge = w.shape === 'ion' ? Math.max(0, Math.min(1, 1 - fireT * rof)) : 0;
   if (fireT > 0) return;
   fireT = 1 / rof;
   AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
@@ -579,17 +659,41 @@ function fire(dt) {
   // per volley, not per-bullet. Tier 1 (default/no purchase) = 1.0 for both, so this is a no-op
   // until the player actually buys a tier in the shop (baseline balance untouched).
   const tierDmgMult = soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
-  for (let c = 0; c < cols; c++) {
+  if (w.shape === 'ion') {                // capital-ship beam: ONE fat piercing shot up the middle
     const b = bullets.alloc(); if (!b) return;
+    b.x = G.px; b.y = CFG.H - 150; b.tier = G.weapon;
+    b.vx = 0; b.vy = -520;                // slower than a normal bolt — you watch it travel
+    b.vis = true; b.pierce = true; b._hit = new Set();   // fresh per shot; cleared on release
+    // squad size still drives DPS: the normal path fires one bullet per soldier, so the single
+    // beam carries that whole volley's worth of damage instead.
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * cols * EDIT.player.dmgMul * tierDmgMult;
+    b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false;
+    return;
+  }
+  const pellets = Math.max(1, w.n | 0);   // owner request 2026-07-30 (GAME EDITS.txt): N is now real —
+  // each soldier fires N bullets fanned across `spread` radians, instead of one bullet whose damage
+  // was inflated by N. Total volley bullet count is cols*pellets (bullet pool cap 1800 — comfortably
+  // deep even at the top end, 15 cols x 5 pellets = 75/volley).
+  for (let c = 0; c < cols; c++) {
     const off = (c - (cols - 1) / 2) * Math.min(9, 360 / Math.max(1, cols));   // firing line stays inside the road
-    b.x = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-    b.y = CFG.H - 130 - hash01(c * 7.3) * 56;                                  // fixed per-column stagger
-    b.tier = G.weapon;
-    b.vx = (CFG.W / 2 - b.x) * 0.55 + rr(-1, 1) * w.spread * 40;               // slight jitter per shot
-    b.vy = -640;
-    b.vis = true;                                    // EVERY soldier's bullet is visible now
-    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * (w.n > 1 ? w.n * 0.6 : 1) * EDIT.player.dmgMul * tierDmgMult;  // +10% damage; FORGE dmg knob; soldier/weapon tier
-    b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false;   // pooled — clear the drone flag
+    const bx = Math.max(36, Math.min(CFG.W - 36, G.px + off));
+    const by = CFG.H - 130 - hash01(c * 7.3) * 56;                             // fixed per-column stagger
+    const baseVx = (CFG.W / 2 - bx) * 0.55, baseVy = -640;                     // converge toward road center, straight up
+    const baseAngle = Math.atan2(baseVy, baseVx), speed = Math.hypot(baseVx, baseVy);
+    for (let p = 0; p < pellets; p++) {
+      const b = bullets.alloc(); if (!b) return;
+      const fanOff = pellets === 1 ? 0 : -w.spread / 2 + w.spread * p / (pellets - 1);
+      const ang = baseAngle + fanOff;
+      b.x = bx; b.y = by; b.tier = G.weapon;
+      b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
+      b.vis = true;                                    // EVERY soldier's bullet is visible now
+      // Per-pellet damage keeps TOTAL volley damage identical to the pre-fan build: that build fired
+      // ONE bullet doing dmg*(n*0.6), so n bullets each doing dmg*0.6 sums to exactly the same.
+      // Without this the fan would have been a silent ~1.67x damage buff on every multi-pellet gun
+      // and quietly invalidated the CG-KPI balance tune. The fan is a SPATIAL change, not a power one.
+      b.dmg = w.dmg * (pellets > 1 ? 0.6 : 1) * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
+      b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
+    }
   }
 }
 function perkWeapons(dt) {
@@ -604,6 +708,7 @@ function perkWeapons(dt) {
         b.x = G.px + Math.cos(a) * 82; b.y = CFG.H - 140 + Math.sin(a) * 34;
         b.vx = Math.sin(a) * 45; b.vy = -720; b.dmg = 2.2 + 1.2 * (G.perks['Drone Escort'] || 0);
         b.r = 4; b.tier = Math.min(4, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true;
+        b.pierce = false;                                      // pooled — never inherit a beam's pierce flag
         b.purple = true;                                       // drone shots are PURPLE plasma
       }
     }
@@ -633,7 +738,7 @@ function vehicleUpdate(dt) {
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
     for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
       b.x = G.px + side * 70; b.y = CFG.H - 172; b.vx = side * 26; b.vy = -320 - rank*18;
-      b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; } }
+      b.dmg = 30 + rank*16; b.r = 13; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false; } }
 }
 function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
   boom(b.x, b.y, 1.6);
@@ -663,7 +768,7 @@ function spawnWave(dt) {
            : Math.max(-0.92, Math.min(0.92, rng() < 0.55 ? G.clusterLane + rr(-0.4, 0.4) : rr(-0.9, 0.9)));
     e.lane0 = e.lane;                                  // remembered roaming lane for the spread phase
     e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = 0; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
-    e.x = CFG.W/2 + e.lane * roadHalfWidth(Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y)/(CFG.H - HORIZON_Y), 1/1.6))));
+    e.x = CFG.W/2 + e.lane * roadHalfWidthAtY(e.y);
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
@@ -674,6 +779,7 @@ function spawnBoss() {
   G.state = 'boss';
   const queen = G.level === CFG.levels, Q = BAL.queen;
   AUDIO.sample(queen ? 'queenroar' : 'boss');
+  if (EDIT.bossMusic[G.level - 1]) AUDIO.music(EDIT.bossMusic[G.level - 1]);   // boss track takes over if one is set
   G.boss = { x: CFG.W/2, y: -140,
              hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? EDIT.queen.p1 + EDIT.queen.p2 + EDIT.queen.p3 : EDIT.bossHp[G.level - 1]),
              maxhp: 0, phase: 0, t: 0, queen, eggT: 0 };
@@ -693,7 +799,7 @@ function damageEnemy(e, dmg, x, y) {
     if (e.kind >= 3) G.hitStop = 0.04;
     // throttled per-enemy death sound (~4/sec max, so a dense swarm doesn't machine-gun the SFX)
     if (G.t - (G.hitSfxT || 0) > 0.22) { G.hitSfxT = G.t;
-      AUDIO.sample(['xenohit','eldritchdie','xenohit','xenopterahit','subterrahit','xenohit'][e.kind] || 'xenohit'); }
+      AUDIO.sample((EDIT.kinds[e.kind] || {}).sfxDie || 'xenohit'); }   // FORGE-assignable per-enemy death cue
     gore(e.x, e.y, e.kind);
     const dieA = XANIM[e.kind+':Die'];                // FORGE-authored death anim (optional)
     if (dieA && dieA.img.ok && deathFx.length < 40) deathFx.push({ x:e.x, y:e.y, kind:e.kind, r:e.r, t:0 });
@@ -725,9 +831,16 @@ function queueBlast(x, y, r, dmg) {
   blastQueue.length = 0;
   blastDraining = false;
 }
-function die() { G.state='dead'; AUDIO.loopTank(false); G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
+function die() {
+  // Second guard for the invincible toggle: barrier penalties cut the squad directly, so they can
+  // reach 0 without ever going through loseUnits(). Catch it here too, and keep the run alive.
+  if (window.FORGE_DBG && FORGE_DBG.invincible) { G.squad = Math.max(1, G.squad); return; }
+  G.state='dead'; AUDIO.loopTank(false); G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
   if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
 function loseUnits(n, x, y) {
+  // FORGE PLAYER tab test toggle — absorb every combat loss, but still show a hit spark so you can
+  // see WHAT would have hurt you while testing.
+  if (window.FORGE_DBG && FORGE_DBG.invincible) { fx(x, y, '#6f6'); return; }
   if (G.graceT > 0) { fx(x, y, '#48f'); return; }    // brief grace after a loss — units die in ticks, not floods
   G.graceT = 0.28;                                   // shorter grace: a sustained swarm can actually overwhelm you
   const shield=G.perks['Shield Matrix']||0;if(shield&&G.shieldHits<shield){G.shieldHits++;fx(x,y,'#6ff');return;}
@@ -895,7 +1008,7 @@ function update(dt) {
     }
     if (e.mode === 1) { if (e.t >= 0.8) { e.mode = 0; e.t = 0; sfx('elite'); } else return; }
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
-    const hw = roadHalfWidth(ez);
+    const hw = roadHalfWidthAtY(e.y);   // lateral extent must match the DRAWN road, not roadY's curve
     // per-enemy crowd offset so the swarm mobs the squad as a pack, not a single-file line
     if (e.crowd === undefined) e.crowd = ((e.phase * 2.13) % 1 - 0.5) * 0.55;
     if (e.mode === 2) {
@@ -907,6 +1020,9 @@ function update(dt) {
       e.atkT -= dt;
       if (e.atkT <= 0) { e.atkT = 0.85;
         const loss = Math.max(1, Math.round(([4,16,8,9,8,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
+        // throttled like the death cue — a latched swarm would otherwise machine-gun the attack sample
+        if (G.t - (G.atkSfxT || 0) > 0.25) { G.atkSfxT = G.t;
+          AUDIO.sample((EDIT.kinds[e.kind] || {}).sfxAttack || 'xenohit'); }
         loseUnits(loss, e.x, e.y);
         if (G.squad <= 0) return;
       }
@@ -935,7 +1051,7 @@ function update(dt) {
         const crawl = 0.5 + 0.8 * Math.max(0, Math.sin(e.t * (2.3 + (e.phase % 1.0)) + e.phase));  // creep surges
         e.y += e.vy * crawl * (e.buffed ? 1.45 : 1) * dt;
       }
-      { const ehw = hw - e.r * 0.4; e.x = Math.max(CFG.W/2 - ehw, Math.min(CFG.W/2 + ehw, e.x)); }  // sprite-radius safety
+      { const ehw = Math.max(10, hw - e.r); e.x = Math.max(CFG.W/2 - ehw, Math.min(CFG.W/2 + ehw, e.x)); }  // keep the FULL sprite radius inside the road clip — 0.4r let edge enemies get visibly sliced
       if (e.y > CFG.H + 40) { enemies.release(e); return; }
       // reached the squad's front line → latch on and start attacking (first bite comes fast)
       if (e.y > CFG.H - 155 && Math.abs(e.x - G.px) < 90) { e.mode = 2; e.atkT = 0.25; sfx('hit'); }
@@ -944,7 +1060,10 @@ function update(dt) {
       const dx = e.x - b.x, dy = e.y - b.y, rr2 = (e.r + b.r) * (e.r + b.r);
       if (dx*dx + dy*dy < rr2) {
         if (b.grenade) { b.x = e.x; b.y = e.y; grenadeBlast(b); bullets.release(b); return; }  // impact detonation
-        bullets.release(b);
+        // Ion beam PIERCES: it keeps travelling instead of being consumed, but must only bite each
+        // enemy once — without the seen-set it would re-damage the same target every frame it overlaps.
+        if (b.pierce) { if (b._hit && b._hit.has(e._pi)) return; (b._hit || (b._hit = new Set())).add(e._pi); }
+        else bullets.release(b);
         damageEnemy(e, b.dmg, b.x, b.y);
         if (b.aoe) aoe(e.x, e.y, b.aoe, b.dmg * .55);
         const cl = G.perks['Chain Lightning'] || 0;
@@ -1005,7 +1124,10 @@ function bossUpdate(dt) {
     const e = enemies.alloc();
     if (e) { e.kind = 0; const K = EDIT.kinds[0];
       e.x = B.x + rr(-90, 90); e.y = Math.min(B.y - 120, 260); e.vx = rr(-30,30); e.vy = K.spd + 90;
-      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r; e.t = 0; }
+      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r; e.t = 0; e.phase = rr(0, 6.283);
+      // boss-spawned enemies skip spawnWave()'s field set — lane/phase must be initialized here too,
+      // or the lane-homing movement code reads e.lane as undefined and NaNs e.x (crashes gradient draws).
+      e.lane = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W/2) / roadHalfWidthAtY(e.y))); }
   }
   if (B.queen) {          // egg phases per EDIT.queen (p1 / p2 / p3, FORGE-editable)
     const Q = EDIT.queen, total = Q.p1 + Q.p2 + Q.p3;
@@ -1017,14 +1139,16 @@ function bossUpdate(dt) {
         for (let i = 0; i < Q.hatch; i++) { const e = enemies.alloc(); if (!e) break;
           e.kind = 0; const K = EDIT.kinds[0];
           e.x = B.x + rr(-100, 100); e.y = Math.min(B.y - 110, 300); e.vx = rr(-40, 40); e.vy = K.spd + 110;
-          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8; e.t = 0; } }
+          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8; e.t = 0; e.phase = rr(0, 6.283);
+          e.lane = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W/2) / roadHalfWidthAtY(e.y))); } }
     }
   }
 }
 function bossAttackUpdate(B, dt) {
   B.attackWait=(B.attackWait||2)-dt;
   if(!B.attack&&B.attackWait<=0){B.attack=B.queen&&B.phase>=1?'acid':(G.level%2?'rush':'sweep');
-    B.attackClock=0;B.attackX=rr(CFG.laneMargin+40,CFG.W-CFG.laneMargin-40);B.attackSide=rng()<.5?-1:1;B.attackHit=false;B.attackWait=3.6;}
+    B.attackClock=0;B.attackX=rr(CFG.laneMargin+40,CFG.W-CFG.laneMargin-40);B.attackSide=rng()<.5?-1:1;B.attackHit=false;B.attackWait=3.6;
+    AUDIO.sample((EDIT.bossAttackSfx&&EDIT.bossAttackSfx[G.level-1])||'lightning');}   // owner request 2026-07-30: distinct boss-attack telegraph cue
   if(!B.attack)return;B.attackClock+=dt;const tele=B.attack==='acid'?.9:.75,active=B.attack==='sweep'?.65:.45;
   if(B.attackClock>=tele&&B.attackClock<tele+active&&!B.attackHit){let hit=false;
     if(B.attack==='acid')hit=Math.abs(G.px-B.attackX)<48;else{const p=(B.attackClock-tele)/active;
@@ -1048,17 +1172,29 @@ function bossKill() {
 const HORIZON_Y = CFG.H * 0.25;                    // 240 on a 960-tall screen
 function roadHalfWidth(z){ const near = CFG.W * 0.08, far = CFG.W / 2; return near + (far - near) * z; }  // 43.2 -> 270
 function roadY(z){return HORIZON_Y+(CFG.H-HORIZON_Y)*Math.pow(z,1.6);}
+// Half-width of the road AT A SCREEN Y, matching the road polygon AS DRAWN.
+// The road is drawn with straight lineTo edges (linear in screen y) but roadY() is pow(z,1.6), so
+// inverting roadY to get a lateral extent disagrees with the visible path — at mid-corridor
+// roadHalfWidth says ±156.6 where the drawn road is only ±118, putting enemies ~38px outside it.
+// Use THIS for "how wide is the path here"; keep the pow-based depth for size/speed feel.
+function roadHalfWidthAtY(y){ return roadHalfWidth(Math.max(0, Math.min(1, (y-HORIZON_Y)/(CFG.H-HORIZON_Y)))); }
 // Map a gate to the road's PERSPECTIVE at its current depth: narrow near the horizon,
 // widening as it travels down the corridor toward the squad. Lane = 'L' | 'R' | 'full'.
 function gateRect(g){
   // clamp the base to >=0 BEFORE the fractional power — a gate above the horizon
   // (spawns at y=-60) would otherwise give pow(negative,1/1.6)=NaN and crash the draw.
   const z = Math.max(0, Math.min(1, Math.pow(Math.max(0, g.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
-  const hw = roadHalfWidth(z), c = CFG.W/2;
+  const hw = roadHalfWidthAtY(g.y), c = CFG.W/2;   // barriers span the DRAWN road width at their y
   let x, w;
-  if (g.lane === 'R') { x = c + 3; w = hw - 6; }
+  // owner request 2026-07-30 (GAME EDITS.txt): leave a real shoot-through/walk-through gap at the
+  // road centerline between a gate pair — each gate used to span ~97% of its half-width (hw-6),
+  // leaving almost no gap, so bullets (and enemies queued behind them) were walled off for the
+  // gate's entire multi-second scroll lifetime ("kill count stops due to barriers"). First pass
+  // opened a hw*0.5 gap which read as too wide, so each gate now spans 87.5% of its half-width,
+  // anchored to the OUTER road edge — a hw*0.25 gap at the centerline with both gates live.
+  if (g.lane === 'R') { x = c + hw * 0.125; w = hw * 0.875 - 3; }
   else if (g.lane === 'full') { x = c - hw + 4; w = hw*2 - 8; }
-  else { x = c - hw + 3; w = hw - 6; }           // 'L' (default)
+  else { x = c - hw + 3; w = hw * 0.875 - 3; }   // 'L' (default)
   return { x, w, z, gh: 22 + 46*z };             // gh: panel height also grows with depth
 }
 
@@ -1192,20 +1328,44 @@ const ANIM={};
 // FORGE-authored optional strips: `${kind}:${action}` → {img,frames,fps}. Slots the user
 // hasn't created simply aren't here — the game ignores them and uses the shipped defaults.
 const XANIM = {};
+const XBOSS = {};   // FORGE-authored boss attack/death sprites, keyed by REG slot key (e.g. 'queenA') — see makeHolder()
 const XSPRITE = {};                            // FORGE-authored item art (rollers etc.), key → holder
 const deathFx = [];                            // one-shot 'Die' strip playbacks at kill spots
 
 // ---------- per-level environment art (FORGE WORLD tab) ----------
 // Naming convention: assets/env/L<level>_path.png (road tile), _bg.png (540x960 backdrop),
-// _side.png (side tile). Missing files are simply ignored — neon default stays.
+// _sideL.png / _sideR.png (left + right wall tiles). Missing files are simply ignored — neon
+// default stays. Legacy single _side.png still works: both walls fall back to it.
 const ENVIMG = {};
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
 let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
+const BG_ZOOM_MAX = 2;                          // deep-background scale when the boss encounter starts
+// How far the wall tops rise above the horizon at the player's feet, as a fraction of the road's
+// on-screen depth. 0 = tops sit exactly on the horizon; bigger = taller corridor. The walls scroll
+// in lockstep with the floor (shared vAt), so there's no separate scroll rate to tune.
+const WALL_RISE = 0.10;
+// Corridor length of ONE wall panel, in floor-tile units. The floor is dense (many small tiles);
+// wall art is big architectural panels, so it must repeat far less. 14 ≈ 4 panels visible per
+// side, matching the reference. Lower = more repeats / narrower panels.
+const WALL_UNITS = 14;
 function loadEnv(level) {
   if (ENVIMG[level]) return ENVIMG[level];
-  const mk = suffix => { const im = new Image(); im.onload = () => im.ok = true; im.onerror = () => im.ok = false;
-    im.src = ENV_OVR['L' + level + '_' + suffix] || ('assets/env/L' + level + '_' + suffix + '.png'); return im; };
-  return ENVIMG[level] = { path: mk('path'), bg: mk('bg'), side: mk('side') };
+  // Each slot walks a candidate list: FORGE override → shipped PNG → the next fallback slot.
+  const mk = (...slots) => {
+    const cands = [];
+    for (const s of slots) {
+      const ov = ENV_OVR['L' + level + '_' + s];
+      if (ov) cands.push(ov);
+      cands.push('assets/env/L' + level + '_' + s + '.png');
+    }
+    const im = new Image(); let i = 0;
+    im.onload = () => im.ok = true;
+    im.onerror = () => { im.ok = false; if (++i < cands.length) im.src = cands[i]; };
+    im.src = cands[0];
+    return im;
+  };
+  return ENVIMG[level] = { path: mk('path'), bg: mk('bg'),
+    sideL: mk('sideL', 'side'), sideR: mk('sideR', 'side') };
 }
 function envNow() { return ENVIMG[G.level] || loadEnv(G.level); }
 
@@ -1253,7 +1413,7 @@ function rollerUpdate(dt) {
   }
   for (let i = rollers.length - 1; i >= 0; i--) { const r = rollers[i];
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, r.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
-    const hw = roadHalfWidth(ez);
+    const hw = roadHalfWidthAtY(r.y);   // lateral: match the DRAWN road (ez stays for size/speed feel)
     r.x = CFG.W/2 + r.lane * (hw - 20);
     r.size = R.size * (0.35 + 0.85 * ez);       // grows as it rolls toward the camera
     r.y += R.speed * (0.35 + 0.75 * ez) * dt;
@@ -1322,13 +1482,59 @@ function roadClip(){
 function drawPerspectiveRoad(){
   const bot=roadHalfWidth(1),top=roadHalfWidth(0);
   const env=envNow();
-  // per-level SIDE tiles: scrolling pattern filling the off-road areas (FORGE WORLD art)
-  if(env.side.ok){ try{ const pat=cx.createPattern(env.side,'repeat');
-    cx.save(); cx.fillStyle=pat; cx.translate(0,(G.t*90)%env.side.height);
-    cx.beginPath();
-    cx.moveTo(-10,HORIZON_Y-960); cx.lineTo(CFG.W/2-top,HORIZON_Y-960); cx.lineTo(CFG.W/2-bot,CFG.H+960); cx.lineTo(-10,CFG.H+960); cx.closePath();
-    cx.moveTo(CFG.W+10,HORIZON_Y-960); cx.lineTo(CFG.W/2+top,HORIZON_Y-960); cx.lineTo(CFG.W/2+bot,CFG.H+960); cx.lineTo(CFG.W+10,CFG.H+960); cx.closePath();
-    cx.fill(); cx.restore(); }catch(e){} }
+  // Corridor scroll, shared by the walls and the floor so they move as one surface.
+  // S: tile density along the road; scroll: tiles/sec toward the viewer; vAt: world tile
+  // coordinate at depth z (z=0 horizon, z=1 at the player's feet).
+  const S=13, scroll=G.t*1.35;
+  const vAt=z=>S/(0.19+z)+scroll;
+  // per-level SIDE WALLS (FORGE WORLD art): left and right are separate image slots so each
+  // side can carry its own texture. These are VERTICAL surfaces standing on the road edge, so
+  // they get true perspective — not a flat screen-space tile. Rendered as vertical columns:
+  // roadHalfWidth() is linear in z, so each screen column maps to exactly one depth. Per column
+  // we take the wall's height from the perspective scale at that depth and sample a texture
+  // window whose width is the depth-span it covers. Result: panels foreshorten and bunch up
+  // toward the vanishing point, and the top edge converges on the horizon.
+  // Clip every wall to "anywhere except the road". The columns below are allowed to overshoot
+  // inward; this trims them on the exact road-edge line, so the wall base and the path SHARE
+  // that edge with no seam and no staircase from the column step.
+  cx.save();
+  cx.beginPath();
+  cx.rect(-10,-10,CFG.W+20,CFG.H+20);
+  cx.moveTo(CFG.W/2-top,HORIZON_Y); cx.lineTo(CFG.W/2+top,HORIZON_Y);
+  cx.lineTo(CFG.W/2+bot,CFG.H);     cx.lineTo(CFG.W/2-bot,CFG.H); cx.closePath();
+  cx.clip('evenodd');
+  for(const s of [-1,1]){
+    const img = s<0 ? env.sideL : env.sideR;
+    if(!img || !img.ok || !img.width) continue;
+    try{
+      let wc = img._wc;                                  // doubled across so a sample window never wraps
+      if(!wc){ const tw=img.width, th=img.height;
+        wc = img._wc = document.createElement('canvas'); wc.width=tw*2; wc.height=th;
+        const g=wc.getContext('2d'); g.drawImage(img,0,0); g.drawImage(img,tw,0); }
+      const TW=wc.width/2, WH=wc.height, STEP=2;
+      cx.save();
+      try{
+      for(let d=0; d<=bot-top; d+=STEP){               // d = px inward from the screen edge
+        const hw1=bot-d, hw2=Math.max(top, bot-d-STEP);
+        const z1=(hw1-top)/(bot-top), z2=(hw2-top)/(bot-top);
+        const xa=CFG.W/2+s*hw1, xb=CFG.W/2+s*hw2;
+        // One wall panel spans WALL_UNITS floor-tile units of corridor, so the wall repeats far
+        // less often than the floor does. Scroll stays locked to the floor: dividing vAt scales
+        // the tile size and its travel by the same factor, so both surfaces still move as one.
+        const u1=vAt(z1)/WALL_UNITS, du=Math.min(0.98, Math.abs(vAt(z2)/WALL_UNITS-u1));
+        // Base rides the road edge AS DRAWN. Careful: roadY() is pow(z,1.6) but the road polygon
+        // is straight lineTo edges (linear in screen y) — they only agree at z=0 and z=1, so
+        // using roadY() here bows the wall away from the path by up to 122px mid-corridor.
+        // Interpolate the straight edge instead, and overshoot 2px so the clip closes the seam.
+        const yBase=HORIZON_Y+(CFG.H-HORIZON_Y)*z1+2, h=(1+WALL_RISE)*(yBase-HORIZON_Y);
+        cx.globalAlpha=Math.min(1, 0.30+z1*1.9);         // fade the shimmering micro-tiles near the horizon
+        cx.drawImage(wc, (((u1%1)+1)%1)*TW, 0, Math.max(1,du*TW), WH,
+                     Math.min(xa,xb), yBase-h, Math.abs(xb-xa)+2, h);
+      }
+      } finally { cx.restore(); cx.globalAlpha=1; }    // never leak a save() if a blit throws
+    }catch(e){}
+  }
+  cx.restore();                                        // drop the "everything except the road" clip
   const grad=cx.createLinearGradient(0,HORIZON_Y,0,CFG.H);grad.addColorStop(0,'#17132b');grad.addColorStop(1,'#21183a');
   cx.fillStyle=grad;cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.fill();
   // per-level PATH: TRUE PERSPECTIVE tiling — 4 tiles across the road at every depth,
@@ -1342,9 +1548,8 @@ function drawPerspectiveRoad(){
       const g=pc.getContext('2d');
       for(let c4=0;c4<4;c4++){ g.drawImage(env.path,c4*tw,0); g.drawImage(env.path,c4*tw,th); } }
     const TH=pc.height/2, PW=pc.width;
-    const S=13, scroll=G.t*1.35;                      // S: tile density along the road; scroll: tiles/sec toward viewer
     const zAt=y=>Math.pow(Math.max(0.0001,(y-HORIZON_Y)/(CFG.H-HORIZON_Y)),1/1.6);
-    const vAt=z=>S/(0.19+z)+scroll;                   // world tile coordinate at depth z
+    // S / scroll / vAt are shared with the side walls — see the top of this function
     cx.save();
     cx.beginPath();cx.moveTo(CFG.W/2-top,HORIZON_Y);cx.lineTo(CFG.W/2+top,HORIZON_Y);cx.lineTo(CFG.W/2+bot,CFG.H);cx.lineTo(CFG.W/2-bot,CFG.H);cx.closePath();cx.clip();
     const slices=120, span=CFG.H-HORIZON_Y;
@@ -1354,13 +1559,13 @@ function drawPerspectiveRoad(){
       const v1=vAt(z1), v2=vAt(z2);                   // v1 > v2 (more tiles toward the horizon)
       const dv=Math.min(0.98, v1-v2);
       const t2=TH+(1-((v2%1)+1)%1)*TH;                // sample window inside the doubled strip (never wraps)
-      const hw2=roadHalfWidth(z2)+2;
+      const hw2=roadHalfWidthAtY(y2)+2;               // span the DRAWN road so tiles meet both edges
       cx.globalAlpha=Math.min(1, 0.30+z1*1.9);        // fade the shimmering micro-tiles near the horizon
       cx.drawImage(pc, 0, t2-dv*TH, PW, Math.max(1,dv*TH), CFG.W/2-hw2, y1, hw2*2, y2-y1);
     }
     cx.restore(); cx.globalAlpha=1; }catch(e){} }
   cx.save();cx.globalCompositeOperation='lighter';for(const side of [-1,1]){cx.strokeStyle=side<0?'#f3c':'#2ef';cx.shadowColor=cx.strokeStyle;cx.shadowBlur=12;cx.lineWidth=4;cx.beginPath();cx.moveTo(CFG.W/2+side*top,HORIZON_Y);cx.lineTo(CFG.W/2+side*bot,CFG.H);cx.stroke();}cx.restore();
-  const phase=(G.t*.16)%1;for(let i=0;i<13;i++){const z=(i/13+phase)%1,y=roadY(z),hw=roadHalfWidth(z);cx.globalAlpha=.12+.3*z;cx.strokeStyle='#7cf';cx.lineWidth=1+z*2;cx.beginPath();cx.moveTo(CFG.W/2-hw,y);cx.lineTo(CFG.W/2+hw,y);cx.stroke();}cx.globalAlpha=1;
+  const phase=(G.t*.16)%1;for(let i=0;i<13;i++){const z=(i/13+phase)%1,y=roadY(z),hw=roadHalfWidthAtY(y);cx.globalAlpha=.12+.3*z;cx.strokeStyle='#7cf';cx.lineWidth=1+z*2;cx.beginPath();cx.moveTo(CFG.W/2-hw,y);cx.lineTo(CFG.W/2+hw,y);cx.stroke();}cx.globalAlpha=1;
   cx.strokeStyle='rgba(255,255,255,.2)';cx.setLineDash([18,24]);cx.beginPath();cx.moveTo(CFG.W/2,HORIZON_Y);cx.lineTo(CFG.W/2,CFG.H);cx.stroke();cx.setLineDash([]);
 }
 function drawFarHorde(){
@@ -1370,7 +1575,7 @@ function drawFarHorde(){
   cx.save();roadClip();
   const flow=(G.t*.055)%(1/rows);
   for(let r=0;r<rows;r++){
-    const z=.02+((r/rows)+flow)%1*.17,y=roadY(z),hw=roadHalfWidth(z)-4;   // tight band right below the horizon (half the old spread)
+    const z=.02+((r/rows)+flow)%1*.17,y=roadY(z),hw=roadHalfWidthAtY(y)-4;   // tight band right below the horizon (half the old spread)
     const n=Math.max(6,Math.round(hw/4.2)),size=0.8+z*2.2;   // smaller wave-indicator specks
     for(let i=0;i<n;i++){
       const h=hash01(r*131+i*7),h2=hash01(r*57+i*13);
@@ -1381,7 +1586,7 @@ function drawFarHorde(){
     }
   }
   // acid kill line where the mass dies (moved up with the shorter band)
-  const ky=roadY(.20),khw=roadHalfWidth(.20);
+  const ky=roadY(.20),khw=roadHalfWidthAtY(ky);
   cx.globalCompositeOperation='lighter';
   cx.strokeStyle='rgba(90,255,80,.8)';cx.shadowColor='#6f4';cx.shadowBlur=20;cx.lineWidth=9;
   cx.beginPath();cx.moveTo(CFG.W/2-khw,ky);cx.lineTo(CFG.W/2+khw,ky);cx.stroke();
@@ -1411,10 +1616,20 @@ function draw() {
   cx.fillStyle = '#0a0518'; cx.fillRect(-10, -10, CFG.W + 20, CFG.H + 20);
   cx.drawImage(ART.backdrop, 0, 0);
   { const env = envNow(); if (env.bg.ok) {                       // per-level backdrop art (FORGE WORLD)
+      // Deep background / boss area. Scales 100% → 200% over the level's running time, anchored
+      // on the vanishing point, so the squad reads as physically closing the length of the
+      // corridor. It lands at full 200% exactly when the boss encounter begins, and holds there.
+      const dur  = BAL.waveSec[G.level - 1] || 60;
+      const prog = G.state === 'play' ? Math.min(1, G.levelT / dur)
+                 : G.state === 'boss' ? 1 : 0;
+      const zoom = 1 + prog * (BG_ZOOM_MAX - 1);
       const a = env.bg.width / env.bg.height;
+      cx.save();
+      cx.translate(CFG.W / 2, HORIZON_Y); cx.scale(zoom, zoom); cx.translate(-CFG.W / 2, -HORIZON_Y);
       if (a > 1.8) { const h = CFG.W / a;                        // wide skyline strip: sit it on the horizon
         cx.drawImage(env.bg, 0, HORIZON_Y - h + 8, CFG.W, h); }
       else cx.drawImage(env.bg, 0, 0, CFG.W, CFG.H);             // full-frame art: cover the canvas
+      cx.restore();
   } }
   // sparse drifting embers (subtle, not confetti)
   for(let i=0;i<10;i++){const x=(i*137+G.t*(10+i%4)*3)%CFG.W,y=(i*211+G.t*30)%CFG.H;
@@ -1442,8 +1657,10 @@ function draw() {
     const xBL = br.x, xBR = br.x + br.w, z = br.z, c = CFG.W / 2;
     const wallH = 46 + 92 * z;                        // stands taller as it approaches
     const topY = baseY - wallH;
-    const shrink = 0.9;                               // top slightly narrower (vertical-wall perspective)
-    const xTL = c + (xBL - c) * shrink, xTR = c + (xBR - c) * shrink;
+    // The top edge must sample the road's ACTUAL width at topY, not a fixed 10% shrink — the road
+    // narrows far faster than that over wallH, so a flat shrink left the wall overhanging the path.
+    const tr = gateRect({ lane: g.lane, y: topY });
+    const xTL = tr.x, xTR = tr.x + tr.w;
     const face = () => { cx.beginPath(); cx.moveTo(xTL, topY); cx.lineTo(xTR, topY); cx.lineTo(xBR, baseY); cx.lineTo(xBL, baseY); cx.closePath(); };
     // front face (bright at the base, fading up) — reads as a glowing energy wall
     // (spent gates get a flat grey panel instead of the good/bad colour so the rule reads
@@ -1590,18 +1807,15 @@ function draw() {
     // Per-weapon silhouette (owner request 2026-07-30): shape/length/width differ enough to
     // read the weapon from the bullets alone, not just the tint.
     switch (w.shape) {
-      case 'twin': {                                    // Twin Plasma: two thin parallel streaks
-        const px=-ny, py=nx;
-        for (const off of [-3, 3]) {
-          const ox=b.x+px*off, oy=b.y+py*off;
-          cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=8;cx.lineWidth=wid;
-          cx.beginPath();cx.moveTo(ox,oy+len*.3);cx.lineTo(ox+nx*len,oy+ny*len);cx.stroke();
-        }
+      case 'twin': {                                    // Spread Gun: thin streak — the fan itself now
+        // comes from firing 2 real angled bullets per shot (see fire()), not a per-bullet double-draw.
+        cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=8;cx.lineWidth=wid;
+        cx.beginPath();cx.moveTo(b.x,b.y+len*.3);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
         cx.strokeStyle='rgba(255,255,255,.85)';cx.lineWidth=1.2;
         cx.beginPath();cx.moveTo(b.x,b.y+len*.2);cx.lineTo(b.x+nx*len*.7,b.y+ny*len*.7);cx.stroke();
         break;
       }
-      case 'pellet': {                                  // Scatter Rail: short crackly dart + bright pellet tip
+      case 'pellet': {                                  // Rail Gun: short crackly dart + bright pellet tip
         cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=9;cx.lineWidth=wid;
         cx.beginPath();cx.moveTo(b.x,b.y+len*.5);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
         cx.fillStyle='#fff';cx.beginPath();cx.arc(b.x,b.y,2.1,0,7);cx.fill();
@@ -1614,11 +1828,21 @@ function draw() {
         cx.beginPath();cx.arc(b.x,b.y,wid*0.55,0,7);cx.fill();
         break;
       }
-      case 'ring': {                                    // Orbital Link: streak + a small trailing energy ring
+      case 'ring': {                                    // Ion Cannon: streak + a small trailing energy ring
         cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=14;cx.lineWidth=3;
         cx.beginPath();cx.moveTo(b.x,b.y+len*.4);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
         cx.beginPath();cx.arc(b.x+nx*len*0.5,b.y+ny*len*0.5,wid,0,7);cx.stroke();
         cx.fillStyle='rgba(255,255,255,.9)';cx.beginPath();cx.arc(b.x,b.y,2,0,7);cx.fill();
+        break;
+      }
+      case 'ion': {                                     // Ion Cannon: fat capital-ship beam column
+        const tail = len * 2.2;                         // long bright column trailing the head
+        cx.strokeStyle=col;cx.shadowColor=col;cx.shadowBlur=26;cx.lineWidth=wid;
+        cx.beginPath();cx.moveTo(b.x,b.y+tail);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+        cx.strokeStyle='rgba(255,255,255,.95)';cx.shadowBlur=18;cx.lineWidth=wid*0.45;
+        cx.beginPath();cx.moveTo(b.x,b.y+tail*.8);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
+        cx.fillStyle='#fff';cx.shadowColor=col;cx.shadowBlur=30;
+        cx.beginPath();cx.arc(b.x,b.y,wid*0.85,0,7);cx.fill();
         break;
       }
       default: {                                        // Blaster: single crisp needle bolt
@@ -1630,6 +1854,23 @@ function draw() {
     }
   });
   cx.restore();
+  // Ion Cannon charge orb: swells at the squad's muzzle line as the shot spools up, then vanishes
+  // when it fires (owner spec: "a ball grows as it charges"). Only drawn while that gun is equipped.
+  if (G.ionCharge > 0.02 && WEAPONS[G.weapon].shape === 'ion') {
+    const k = G.ionCharge, r = 5 + 22 * k * k, cy = CFG.H - 150;
+    cx.save(); cx.globalCompositeOperation = 'lighter';
+    cx.fillStyle = 'rgba(255,255,120,' + (0.16 + 0.5 * k) + ')'; cx.shadowColor = '#ff4'; cx.shadowBlur = 14 + 34 * k;
+    cx.beginPath(); cx.arc(G.px, cy, r, 0, 7); cx.fill();
+    cx.fillStyle = 'rgba(255,255,255,' + (0.35 + 0.6 * k) + ')';
+    cx.beginPath(); cx.arc(G.px, cy, r * 0.42, 0, 7); cx.fill();
+    if (k > 0.85) {                                   // crackling ready-flare right before release
+      cx.strokeStyle = 'rgba(255,255,200,.85)'; cx.lineWidth = 2;
+      for (let i = 0; i < 4; i++) { const a = G.t * 9 + i * 1.57, rr0 = r * 1.25, rr1 = r * (1.75 + 0.3 * Math.sin(G.t * 22 + i));
+        cx.beginPath(); cx.moveTo(G.px + Math.cos(a) * rr0, cy + Math.sin(a) * rr0);
+        cx.lineTo(G.px + Math.cos(a) * rr1, cy + Math.sin(a) * rr1); cx.stroke(); }
+    }
+    cx.restore();
+  }
   // squad
   drawSquad();
   if(G.vehicleT>0)drawVehicles();
@@ -1667,12 +1908,51 @@ function draw() {
   if(debugCanvas)drawDebugCanvas();
   cx.restore();
 
-  document.getElementById('hud').innerHTML =
-    `<span class="squad">⬡ ${G.squad}</span>` +
-    `<span class="tier">★${G.meta.soldierTier || 1}</span><span class="sep">   </span>` +
-    `<span class="lvl">LEVEL ${G.level} · ${WEAPONS[G.weapon].name} T${G.meta.weaponTier || 1}</span><span class="sep">   </span>` +
-    `<span class="cash">💰 ${G.credits}</span>`;
+  const lvlName = (EDIT.env[G.level - 1] || {}).name || ('LEVEL ' + G.level);   // FORGE-editable per-level name (WORLD tab); falls back to a plain number if unset
+  const wpnIconSrc = IMGS.weaponIcons && IMGS.weaponIcons.ok ? IMGS.weaponIcons.src : '';
+  const inRun = G.state === 'play' || G.state === 'boss' || G.paused;
+  const ctl = (act, ic, lb, cls) => `<button data-act="${act}" class="${cls || ''}"><b>${ic}</b>${lb}</button>`;   // named ctl, not btn — #forgeBtn owns `btn` at module scope
+  const hudHtml =
+    `<div class="row1">` +
+      `<span class="squad">⬡ ${G.squad}</span><span class="tier">★${G.meta.soldierTier || 1}</span>` +
+      `<span class="lvl">${lvlName}</span>` +
+      `<span class="cash">💰 ${G.credits}</span>` +
+    `</div>` +
+    `<div class="row2">` +
+      `<span class="wpnIcon" style="background-image:url('${wpnIconSrc}');background-position-x:${G.weapon * 25}%"></span>` +
+      `<span class="wpnName">${WEAPONS[G.weapon].name}</span>` +
+    `</div>` +
+    `<div class="ctrls">` +
+      (inRun ? ctl('restart', '⟳', 'RESTART') : '') +
+      (inRun ? ctl('pause', G.paused ? '▶' : '⏸', G.paused ? 'PLAY' : 'PAUSE', G.paused ? 'hot' : '') : '') +
+      ctl('music', G.meta.music ? '♪' : '♪̸', 'MUSIC', G.meta.music ? '' : 'off') +
+      ctl('sfx',   G.meta.sfx   ? '🔊' : '🔇', 'SFX',   G.meta.sfx   ? '' : 'off') +
+    `</div>`;
+  // Only touch the DOM when the markup actually CHANGED. Reassigning innerHTML every frame
+  // destroyed and recreated the control buttons ~60x/sec, which is why they were dead: a `click`
+  // only fires when mousedown and mouseup land on the SAME element, and the element the user
+  // pressed was gone by the time they released. Also saves 60 HTML parses/sec.
+  const hudEl = document.getElementById('hud');
+  if (hudEl._html !== hudHtml) { hudEl._html = hudHtml; hudEl.innerHTML = hudHtml; }
 }
+// Delegated, and on POINTERDOWN not click — pointerdown resolves at press time, so it lands even
+// if a redraw replaces the button before release. preventDefault() suppresses the compatibility
+// mousedown so the window-level gameplay handler never sees it. NOT stopPropagation: the audio
+// unlock listener sits on window/pointerdown and must still run if SFX is the user's first tap.
+document.getElementById('hud').addEventListener('pointerdown', e => {
+  const b = e.target.closest && e.target.closest('button[data-act]');
+  if (!b) return;
+  e.preventDefault();
+  const act = b.dataset.act;
+  if (act === 'music')   { G.meta.music = !G.meta.music; AUDIO.setMusic(G.meta.music); save(); }
+  else if (act === 'sfx'){ G.meta.sfx   = !G.meta.sfx;   AUDIO.setSfx(G.meta.sfx);     save(); }
+  else if (act === 'pause') {
+    G.paused = !G.paused;
+    if (G.paused) AUDIO.stopAll();
+    else if (G.vehicleT > 0 && G.meta.sfx) AUDIO.loopTank(true);   // tanks were mid-deploy
+  }
+  else if (act === 'restart') { G.paused = false; startRun(G.mode); }
+});
 function drawDebugCanvas(){
   const d=window.__dbg?window.__dbg():{};cx.save();cx.globalAlpha=.88;cx.fillStyle='#02040d';cx.fillRect(8,58,244,106);cx.globalAlpha=1;cx.strokeStyle='#4ff';cx.strokeRect(8,58,244,106);cx.fillStyle='#bff';cx.font='bold 13px monospace';cx.textAlign='left';
   const lines=[`state ${d.state}  L${d.level}  t ${Number(d.levelT||0).toFixed(1)}`,`enemies ${d.enemies||0}  bullets ${d.bullets||0}`,`gates ${d.gates||0}  kills ${d.kills||0}`,`credits ${d.credits||0}  squad ${d.squad||0}`,`testBot ${!!d.testBot}`];
@@ -1750,6 +2030,7 @@ function drawBossHud(B, topY){
 }
 function drawBoss() {
   const B = G.boss;
+  const glow = (EDIT.bossGlow && EDIT.bossGlow[G.level - 1]) || (B.queen ? '#4f6' : '#a4f');   // per-level FORGE color, falls back to the old fixed constants
   // Praetorian: full animation — death sequence / attack swing / idle loop
   if (!B.queen && window.PRAET && PRAET.idle.img.ok) {
     let a = PRAET.idle, f;
@@ -1759,19 +2040,22 @@ function drawBoss() {
     else { f = Math.floor(B.t * a.fps) % a.frames; }
     const cs = a.img.height, breathe = B.dead ? 1 : 1 + 0.03 * Math.sin(B.t * 2);
     const ph = 300 * breathe, pw = ph * (cs / cs);
-    cx.save(); cx.shadowColor = '#a4f'; cx.shadowBlur = 26;
+    cx.save(); cx.shadowColor = glow; cx.shadowBlur = 26;
     cx.drawImage(a.img, f * cs, 0, cs, cs, B.x - ph / 2, B.y - ph / 2, ph, ph); cx.restore();
     drawBossHud(B, B.y - ph / 2); return;
   }
-  const bossImg = B.queen ? IMGS.queen : IMGS.praet;  // Alien Queen (final)
+  // Queen attack sprite (FORGE-authored, optional): swap in during her attack window if uploaded,
+  // same idea as the Praetorian's PRAET.attack — otherwise she just keeps her idle art.
+  const queenAtk = B.queen && B.attack && XBOSS.queenA && XBOSS.queenA.img.ok ? XBOSS.queenA.img : null;
+  const bossImg = queenAtk || (B.queen ? IMGS.queen : IMGS.praet);  // Alien Queen (final)
   if (bossImg && bossImg.ok) {
     const breathe = 1 + 0.03 * Math.sin(B.t * 2);
     const ph = (B.queen ? 420 : 300) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
-    cx.save(); cx.shadowColor = B.queen ? '#4f6' : '#a4f'; cx.shadowBlur = 30;
+    cx.save(); cx.shadowColor = glow; cx.shadowBlur = 30;
     cx.drawImage(bossImg, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
     drawBossHud(B, B.y - ph / 2); return;
   }
-  cx.fillStyle = B.queen ? '#c3f' : '#93e';
+  cx.fillStyle = glow;
   cx.beginPath();
   for (let i = 0; i < 12; i++) { const a = i / 12 * 6.28;
     const r = 95 * (1 + 0.12 * Math.sin(a * 4 + B.t * 2));
@@ -1791,7 +2075,7 @@ function drawPerks() {
   cx.fillText('MUTATION READY', CFG.W / 2, 280);
   perkChoices.forEach((p, i) => {
     const y = 330 + i * 110;
-    cx.fillStyle = 'rgba(40,255,220,0.1)'; cx.fillRect(60, y, CFG.W - 120, 90);
+    cx.fillStyle = 'rgba(20,70,66,0.85)'; cx.fillRect(60, y, CFG.W - 120, 90);   // readable card, not a 0.1-alpha ghost
     cx.strokeStyle = '#2fd'; cx.strokeRect(60, y, CFG.W - 120, 90);
     const ic = PERK_ICON[p];                                    // real power-up icon (replaces the plain box)
     let tx = CFG.W / 2;
@@ -1805,6 +2089,10 @@ function drawPerks() {
   });
 }
 function drawShop() {
+  // The between-level shop used to draw straight onto the live backdrop, so the panels and text
+  // fought the road/skyline art behind them (owner request 2026-07-30: "hard to see them on the
+  // bare backdrop"). Dim the whole field first, matching how drawPerks() already handles it.
+  cx.fillStyle = 'rgba(5,2,15,0.86)'; cx.fillRect(0, 0, CFG.W, CFG.H);
   cx.fillStyle = '#4ff'; cx.font = 'bold 32px Segoe UI'; cx.textAlign = 'center';
   cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR', CFG.W / 2, 180);
   cx.font = '20px Segoe UI'; cx.fillStyle = '#9ff';
@@ -1814,7 +2102,8 @@ function drawShop() {
   SHOP.forEach((it, i) => {
     const y = 300 + i * rowH, c = it.cost(G.meta[it.k]),
           maxed = G.meta[it.k] >= it.max, can = !maxed && G.credits >= c;
-    cx.fillStyle = can ? 'rgba(40,255,220,0.12)' : 'rgba(120,120,120,0.1)';
+    // solid-ish card fills (was 0.12/0.1 — near-invisible once the scrim went in)
+    cx.fillStyle = can ? 'rgba(20,70,66,0.85)' : 'rgba(38,38,44,0.8)';
     cx.fillRect(60, y, CFG.W - 120, boxH);
     cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, boxH);
     cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold ' + (rowH < 90 ? 17 : 20) + 'px Segoe UI';
@@ -1825,26 +2114,20 @@ function drawShop() {
   cx.fillStyle = '#ffd'; cx.font = 'bold 24px Segoe UI';
   cx.fillText('▶ DEPLOY — LEVEL ' + G.level, CFG.W / 2, 885);
 }
-function drawGear(){cx.fillStyle='#9cf';cx.font='26px Segoe UI';cx.textAlign='center';cx.fillText('⚙',CFG.W-34,42);
-  cx.font='11px Segoe UI';cx.fillText(G.meta.sfx?'SFX':'MUTE',CFG.W-34,58);
-  if (G.state === 'play' || G.state === 'boss' || G.paused) {          // in-run controls beside mute
-    cx.font='24px Segoe UI'; cx.fillStyle = G.paused ? '#ff4' : '#9cf';
-    cx.fillText(G.paused ? '▶' : '⏸', CFG.W-92, 42);
-    cx.fillStyle='#9cf'; cx.fillText('⟳', CFG.W-150, 42);
-    cx.font='11px Segoe UI'; cx.fillText(G.paused?'PLAY':'PAUSE', CFG.W-92, 58); cx.fillText('RESTART', CFG.W-150, 58);
-  }
-  }
+// Run controls are DOM buttons in #hud now (see the .ctrls row) — nothing to paint on the canvas.
+// Kept as a no-op so the several draw() paths that call it don't each need editing.
+function drawGear(){}
 function drawPausedOverlay(){                                           // dim + banner while frozen (drawn LAST)
     cx.fillStyle='rgba(5,3,15,.55)'; cx.fillRect(0,0,CFG.W,CFG.H);
     cx.textAlign='center'; cx.font='900 54px Segoe UI'; cx.lineWidth=8; cx.strokeStyle='#130524';
     cx.strokeText('PAUSED', CFG.W/2, 430);
     cx.shadowColor='#ff4'; cx.shadowBlur=24; cx.fillStyle='#ff4'; cx.fillText('PAUSED', CFG.W/2, 430);
     cx.shadowBlur=0; cx.font='16px Segoe UI'; cx.fillStyle='#cdf'; cx.fillText('tap anywhere to resume', CFG.W/2, 470);
-    cx.font='24px Segoe UI'; cx.fillStyle='#ff4'; cx.fillText('▶', CFG.W-92, 42);   // keep the button visible above the dim
-    cx.font='11px Segoe UI'; cx.fillText('PLAY', CFG.W-92, 58);
+    // the ▶ button is DOM (#hud .ctrls, z-index above the canvas) — it stays visible through this dim
   }
 function drawTitle(){
   cx.textAlign='center';cx.fillStyle='#4ff';cx.shadowColor='#f4f';cx.shadowBlur=20;cx.font='bold 58px Segoe UI';cx.fillText('HiVE WAR',CFG.W/2,300);cx.shadowBlur=0;
+  cx.fillStyle='rgba(150,200,230,.45)';cx.font='13px Segoe UI';cx.fillText('v'+GAME_VERSION,CFG.W/2,332);   // build version
   cx.fillStyle='rgba(40,255,220,.16)';cx.fillRect(85,430,CFG.W-170,80);cx.strokeStyle='#4ff';cx.strokeRect(85,430,CFG.W-170,80);
   cx.fillStyle='#dff';cx.font='bold 24px Segoe UI';cx.fillText('CAMPAIGN',CFG.W/2,480);
   if(G.meta.endless){cx.fillStyle='rgba(255,80,220,.16)';cx.fillRect(85,620,CFG.W-170,80);cx.strokeStyle='#f4f';cx.strokeRect(85,620,CFG.W-170,80);
@@ -1968,8 +2251,8 @@ const REG = [
   { key:'xenopteraD',cat:'ENEMIES',unit:'Xenoptera',       action:'Die',    h: null, cell:128, xkind:3 },
   // BOSSES
   { key:'queen',    cat:'BOSSES',  unit:'Alien Queen',     action:'Idle',   h: wrapImg(IMGS.queen, 1) },
-  { key:'queenA',   cat:'BOSSES',  unit:'Alien Queen',     action:'Attack', h: null, cell:256 },
-  { key:'queenD',   cat:'BOSSES',  unit:'Alien Queen',     action:'Die',    h: null, cell:256 },
+  { key:'queenA',   cat:'BOSSES',  unit:'Alien Queen',     action:'Attack', h: null, cell:256, xboss:'queenA' },
+  { key:'queenD',   cat:'BOSSES',  unit:'Alien Queen',     action:'Die',    h: null, cell:256 },   // not yet consumed anywhere — scope was attack only (see drawBoss)
   { key:'praetIdle',cat:'BOSSES',  unit:'Praetorian',      action:'Idle',   h: wrapAnim(PRAET.idle) },
   { key:'praetAtk', cat:'BOSSES',  unit:'Praetorian',      action:'Attack', h: wrapAnim(PRAET.attack) },
   { key:'praetDie', cat:'BOSSES',  unit:'Praetorian',      action:'Die',    h: wrapAnim(PRAET.death) },
@@ -1990,6 +2273,7 @@ function makeHolder(r, dataURL, frames, fps){
   r.h = { img: im, frames: frames || 1, fps: fps || 8 };
   if (r.xkind !== undefined) XANIM[r.xkind + ':' + r.action] = r.h;
   if (r.xitem) XSPRITE[r.xitem] = r.h;
+  if (r.xboss) XBOSS[r.xboss] = r.h;
   return r.h;
 }
 // apply saved sprite overrides (edited strips win over the shipped PNGs; created slots come back to life)
@@ -2083,15 +2367,16 @@ document.head.appendChild(css);
 const btn = document.createElement('div'); btn.id='forgeBtn'; btn.textContent='⚒'; btn.title='HiVE FORGE — Game Editor (F2)';
 document.body.appendChild(btn);
 const win = document.createElement('div'); win.id='forge';
-win.innerHTML = `<div id="forgeHead"><b>⬡ HiVE FORGE</b><small>MiSTRFiNGA INTERNAL // GAME EDITOR v1</small>
+win.innerHTML = `<div id="forgeHead"><b>⬡ HiVE FORGE</b><small>MiSTRFiNGA INTERNAL // HiVE WAR v${GAME_VERSION}</small>
   <span id="fPause" class="dbgBtn" title="Pause game">⏸</span>
   <span id="fFF" class="dbgBtn" title="Fast-forward ×4">⏩</span>
   <span id="fSkip" class="dbgBtn" title="Skip to next level">⏭</span>
   <span class="x">✕</span></div>
   <div id="forgeTabs"></div><div id="forgeBody"></div>`;
 document.body.appendChild(win);
-// ---- debug transport: pause / fast-forward / level skip (read by the main loop) ----
-window.FORGE_DBG = { pause: false, speed: 1 };
+// ---- debug transport: pause / fast-forward / level skip / invincible ----
+// (the object itself is created at game scope near the AUDIO setup, so it exists even if this
+// whole FORGE block bails out — see the comment there. FORGE only mutates it.)
 const dbgBtn = id => win.querySelector('#' + id);
 function syncDbg(){ const p = dbgBtn('fPause'), f = dbgBtn('fFF');
   p.classList.toggle('on', FORGE_DBG.pause); p.textContent = FORGE_DBG.pause ? '▶' : '⏸';
@@ -2125,13 +2410,15 @@ if (/[?&]forge=1/.test(location.search)) setTimeout(() => {
 function getP(p){ return p.split('.').reduce((o,k)=>o[k], EDIT); }
 function setP(p,v){ const ks=p.split('.'), last=ks.pop(); ks.reduce((o,k)=>o[k],EDIT)[last]=v; }
 body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) return;
+  if (e.target.type === 'color' || e.target.dataset.str) { setP(p, e.target.value); saveEdit(); return; }   // string fields (bossGlow/bossAttackSfx) skip the numeric parse
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
   setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
 
 const TABS = ['UNITS','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false};
+let envSel = null;   // WORLD tab: which env tile key (e.g. 'L3_bg') is open in the tile editor, null = grid
 TABS.forEach((t,i)=>{ const d=document.createElement('div'); d.textContent=t;
-  d.onclick=()=>{tab=i;spriteSel=-1;renderTab();}; tabsEl.appendChild(d); });
+  d.onclick=()=>{tab=i;spriteSel=-1;envSel=null;renderTab();}; tabsEl.appendChild(d); });
 
 function hpPreview(k){ let s=''; for(let L=1;L<=10;L++) s+=`L${L}:${Math.round(kindHp(k,L))} `; return s; }
 function pctShare(k){ let tot=0; for(let i=0;i<6;i++) tot+=EDIT.kinds[i].weight;
@@ -2141,47 +2428,135 @@ function refreshComputed(){
   body.querySelectorAll('[data-pct]').forEach(el=>el.textContent=pctShare(+el.dataset.pct));
 }
 function num(p,step,w){ return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} data-p="${p}" value="${getP(p)}">`; }
+function col(p){ return `<input type="color" data-p="${p}" value="${getP(p)}" style="width:34px;height:24px;padding:0;border:none;vertical-align:middle">`; }
+function snd(p){ const cur=getP(p); return `<select data-p="${p}" data-str="1">` +
+  AUDIO.names().map(n=>`<option value="${n}" ${n===cur?'selected':''}>${n}</option>`).join('') + `</select>`; }
+function txt(p,w,ph){ return `<input type="text" data-p="${p}" data-str="1" placeholder="${ph||''}" value="${getP(p)||''}" style="width:${w||110}px">`; }
+// Shared env-art import: downscales on the way in so 10 levels of art stay inside the localStorage
+// quota, then live-reloads that level. Used by BOTH the WORLD grid and the single-tile editor —
+// keep it one function so the quota guard can't be forgotten in one of them.
+function importEnvPng(f, key, done){
+  const rd = new FileReader();
+  rd.onload = () => { const im = new Image();
+    im.onload = () => {
+      const isBg = /_bg$/.test(key), max = isBg ? 1080 : 512;
+      const sc = Math.min(1, max / Math.max(im.width, im.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      ENV_OVR[key] = c.toDataURL('image/png');
+      try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); }
+      catch(e) { delete ENV_OVR[key]; alert('Storage full — clear some env art or drop the file into assets/env/ instead.'); return; }
+      const lvl = +key.match(/^L(\d+)_/)[1]; delete ENVIMG[lvl];   // live reload for that level
+      if (done) done(); };
+    im.src = rd.result; };
+  rd.readAsDataURL(f);
+}
 
+// FORGE playtest jump: drop straight into a level, or straight into that level's boss fight.
+// Reuses the normal levelStart()/spawnBoss() path so the run is a REAL one (env art, music,
+// squad, balance all applied) rather than a special-cased preview that could drift from live.
+function forgePlay(lvl, boss){
+  if (G.state==='title' || G.state==='dead' || G.state==='win') startRun('campaign');
+  G.mode='campaign';
+  G.level=Math.max(1, Math.min(CFG.levels, lvl));
+  enemies.each(e=>enemies.release(e));       // clear whatever was on the field
+  rollers.length=0; G.boss=null; G.paused=false;
+  levelStart();                              // resets levelT/gates/rollers/squad, loads env + music
+  if (boss) spawnBoss();
+  closeForge();                              // also clears FORGE_DBG.pause and re-syncs the buttons
+}
 function renderTab(){
   tabsEl.querySelectorAll('div').forEach((d,i)=>d.classList.toggle('on', i===tab));
   if (tab===0){ // UNITS
     let h = `<div class="hint">HP = BASE + PER-LVL × level. WEIGHT = spawn share (live %). MIN-LVL = first level it appears. Changes apply INSTANTLY — tweak mid-run and test.</div>
-      <table><tr><th></th><th>UNIT</th><th>HP BASE</th><th>HP/LVL</th><th>SPD</th><th>SIZE</th><th>💰</th><th>WEIGHT</th><th>%</th><th>MIN-LVL</th></tr>`;
+      <table><tr><th></th><th>UNIT</th><th>HP BASE</th><th>HP/LVL</th><th>SPD</th><th>SIZE</th><th>💰</th><th>WEIGHT</th><th>%</th><th>MIN-LVL</th><th>ATTACK SFX</th><th>DIE SFX</th></tr>`;
     EDIT.kinds.forEach((k,i)=>{ h+=`<tr><td><canvas class="kthumb" data-kt="${i}" width="40" height="40"></canvas></td>
       <td style="color:#4ff">${k.name}</td>
       <td>${num('kinds.'+i+'.hpBase',1)}</td><td>${num('kinds.'+i+'.hpLvl',0.5)}</td>
       <td>${num('kinds.'+i+'.spd',1,44)}</td><td>${num('kinds.'+i+'.r',1,40)}</td>
       <td>${num('kinds.'+i+'.credits',1,36)}</td><td>${num('kinds.'+i+'.weight',0.5,44)}</td>
-      <td class="pct" data-pct="${i}"></td><td>${num('kinds.'+i+'.minLvl',1,36)}</td></tr>
-      <tr><td></td><td colspan="9" class="hpprev" data-hp="${i}"></td></tr>`; });
+      <td class="pct" data-pct="${i}"></td><td>${num('kinds.'+i+'.minLvl',1,36)}</td>
+      <td>${snd('kinds.'+i+'.sfxAttack')}</td><td>${snd('kinds.'+i+'.sfxDie')}</td></tr>
+      <tr><td></td><td colspan="11" class="hpprev" data-hp="${i}"></td></tr>`; });
     body.innerHTML = h + '</table>';
     body.querySelectorAll('[data-kt]').forEach(c=>{ const a=ANIM[+c.dataset.kt];
       if(a&&a.img.ok){const cs=a.img.height;c.getContext('2d').drawImage(a.img,0,0,cs,cs,0,0,40,40);} });
   }
   else if (tab===1){ // PLAYER
+    const inv = !!(window.FORGE_DBG && FORGE_DBG.invincible);
     body.innerHTML = `<div class="hint">Global player combat knobs — multiply on top of weapons/shop upgrades.</div>
       <div class="row">FIRE RATE × ${num('player.rofMul',0.05)}</div>
       <div class="row">DAMAGE × ${num('player.dmgMul',0.05)}</div>
-      <div class="row">ARMOR (% squad-loss prevented, 0-90) ${num('player.armor',5)}</div>`;
+      <div class="row">ARMOR (% squad-loss prevented, 0-90) ${num('player.armor',5)}</div>
+      <div class="hint" style="color:#f4f;margin-top:14px">PLAYTEST</div>
+      <div class="row"><button id="fInv" style="border-color:${inv?'#6f6':'#345'};color:${inv?'#6f6':'#9cf'};font-weight:900">
+        ${inv?'🛡 INVINCIBLE — ON':'🛡 INVINCIBLE — OFF'}</button>
+        <span class="hint">absorbs all squad losses (and barrier penalties) so you can test a level without dying. NOT saved — resets on reload.</span></div>`;
+    body.querySelector('#fInv').onclick = () => { FORGE_DBG.invincible = !FORGE_DBG.invincible; renderTab(); };
   }
   else if (tab===2){ // WEAPONS
-    let h = `<div class="hint">Per-weapon tuning. DMG is per pellet; N = pellets per shot; SPREAD = aim jitter.</div>
-      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>N</th><th>SPREAD</th></tr>`;
+    let h = `<div class="hint">Per-weapon tuning. DMG is per pellet; N = real pellets fired per shot (fanned out); SPREAD = total fan angle in radians across those N pellets. FIRE SFX picks the shot sample.</div>
+      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>N</th><th>SPREAD</th><th>FIRE SFX</th><th>TEST</th></tr>`;
     EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
-      <td>${num('weapons.'+i+'.n',1,36)}</td><td>${num('weapons.'+i+'.spread',0.02)}</td></tr>`; });
+      <td>${num('weapons.'+i+'.n',1,36)}</td><td>${num('weapons.'+i+'.spread',0.02)}</td>
+      <td>${snd('weapons.'+i+'.sfx')}</td>
+      <td><button data-give="${i}" title="equip this weapon right now">▶ GIVE</button></td></tr>`; });
     body.innerHTML = h + '</table>';
+    // Equip instantly for testing. Stays equipped across levels (levelStart no longer rerolls the
+    // weapon), so you can carry it through a whole run to feel it out.
+    body.querySelectorAll('[data-give]').forEach(b=>b.onclick=()=>{
+      G.weapon = Math.max(0, Math.min(4, +b.dataset.give));
+      b.textContent = '✓ EQUIPPED';
+      setTimeout(()=>{ b.textContent = '▶ GIVE'; }, 900);
+    });
   }
   else if (tab===3){ // WAVES + BOSS
     let h = `<div class="hint">SPAWN/s = enemies per second per level. BOSS HP per level. BOSS RANGE = how far down the boss walks (bigger = closer to you).</div><table><tr><th>LVL</th>`;
     for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SPAWN/s</th>';
     for(let i=0;i<10;i++)h+=`<td>${num('spawnRate.'+i,1,34)}</td>`; h+='</tr><tr><th>BOSS HP</th>';
-    for(let i=0;i<10;i++)h+=`<td>${num('bossHp.'+i,500,48)}</td>`; h+='</tr></table>';
-    h += `<div class="row" style="margin-top:10px">BOSS RANGE ${num('bossY',10)} <span class="hint">(560 = right above the squad)</span></div>
+    for(let i=0;i<10;i++)h+=`<td>${num('bossHp.'+i,500,48)}</td>`; h+='</tr><tr><th>BOSS GLOW</th>';
+    for(let i=0;i<10;i++)h+=`<td>${col('bossGlow.'+i)}</td>`; h+='</tr><tr><th>ATK SFX</th>';
+    for(let i=0;i<10;i++)h+=`<td>${snd('bossAttackSfx.'+i)}</td>`; h+='</tr><tr><th>FIGHT LVL</th>';
+    for(let i=0;i<10;i++)h+=`<td><button data-fight="${i+1}" title="jump straight into level ${i+1}">▶</button></td>`;
+    h+='</tr><tr><th>FIGHT BOSS</th>';
+    for(let i=0;i<10;i++)h+=`<td><button data-fightboss="${i+1}" title="jump straight into level ${i+1}'s boss">☠</button></td>`;
+    h+='</tr></table>';
+    h += `<div class="hint">PLAYTEST — ▶ drops you into that level, ☠ drops you straight into its boss. Both start a real run, so balance/art/music all apply.</div>
+      <div class="row" style="margin-top:10px">BOSS RANGE ${num('bossY',10)} <span class="hint">(560 = right above the squad)</span></div>
       <div class="hint" style="margin-top:8px;color:#f4f">ALIEN QUEEN</div>
       <div class="row">P1 ${num('queen.p1',1000)} P2 ${num('queen.p2',1000)} P3 ${num('queen.p3',1000)}</div>
-      <div class="row">EGG INTERVAL ${num('queen.eggInt',0.2)} EGG HP ${num('queen.eggHp',10)} HATCH ${num('queen.hatch',1,36)}</div>`;
+      <div class="row">EGG INTERVAL ${num('queen.eggInt',0.2)} EGG HP ${num('queen.eggHp',10)} HATCH ${num('queen.hatch',1,36)}</div>
+      <div class="row"><button id="fightQueen" style="border-color:#f4f;color:#f9f;font-weight:900">⚔ FIGHT QUEEN — LEVEL ${CFG.levels}</button></div>`;
     body.innerHTML = h;
+    body.querySelectorAll('[data-fight]').forEach(b=>b.onclick=()=>forgePlay(+b.dataset.fight, false));
+    body.querySelectorAll('[data-fightboss]').forEach(b=>b.onclick=()=>forgePlay(+b.dataset.fightboss, true));
+    body.querySelector('#fightQueen').onclick = ()=>forgePlay(CFG.levels, true);
+  }
+  else if (tab===4 && envSel){   // WORLD → single tile editor (owner request 2026-07-30: clicking a
+    // world tile used to jump straight to a file dialog with no way to look at it first; now it
+    // opens a panel like the SPRITES tab does, so you can review it before replacing or clearing.)
+    const key = envSel, lvl = +key.match(/^L(\d+)_/)[1], slot = key.split('_')[1];
+    const src = ENV_OVR[key] || `assets/env/${key}.png`;
+    body.innerHTML = `<div class="row"><button id="envBack">← BACK</button>
+        <b style="color:#4ff">LEVEL ${lvl}</b> <span style="color:#f4f">${slot.toUpperCase()}</span>
+        <span class="hint">${(EDIT.env[lvl-1]||{}).name||''}</span></div>
+      <div class="row"><img id="envPrev" src="${src}" style="max-width:260px;max-height:300px;border:1px solid #4ff;border-radius:4px;background:#111"
+        onerror="this.style.display='none';document.getElementById('envNone').style.display='inline'">
+        <span id="envNone" style="display:none;color:#6a8">no art yet — using the built-in neon look</span></div>
+      <div class="row"><button id="envRep">⇧ REPLACE PNG</button>
+        <button id="envClr" class="warn">✕ CLEAR TO DEFAULT</button></div>
+      <div class="hint">path = road tile (scrolls toward you) · bg = deep background / boss area, skyline strip or full 540×960 (zooms 100%→200% across the level) · sideL / sideR = the two corridor walls, tiled vertically and scrolled toward you.
+        Replacing goes live instantly. Pixel painting isn't wired up for world tiles yet — edit these in an image tool and re-import.</div>
+      <input type="file" id="envFile" accept="image/*" style="display:none">`;
+    body.querySelector('#envBack').onclick = () => { envSel = null; renderTab(); };
+    const ef2 = body.querySelector('#envFile');
+    body.querySelector('#envRep').onclick = () => { ef2.dataset.key = key; ef2.value = ''; ef2.click(); };
+    body.querySelector('#envClr').onclick = () => { delete ENV_OVR[key];
+      try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); } catch(e) {}
+      delete ENVIMG[lvl]; renderTab(); };
+    ef2.onchange = () => { const f = ef2.files[0]; if (f) importEnvPng(f, key, renderTab); };
   }
   else if (tab===4){ // WORLD: barriers + rolling hazards + per-level environment
     let h = `<div class="hint" style="color:#f4f">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>
@@ -2192,21 +2567,28 @@ function renderTab(){
       <div class="row">EVERY ${num('rollers.interval',0.5,44)}s &nbsp; ARMORED % ${num('rollers.pctArmored',5,44)} &nbsp; FROM LVL ${num('rollers.minLvl',1,36)}</div>
       <div class="row">HP ${num('rollers.hp',2,44)} + ${num('rollers.hpLvl',1,40)}/lvl &nbsp; SPEED ${num('rollers.speed',10,48)} &nbsp; SIZE ${num('rollers.size',2,40)} &nbsp; SQUAD DMG ${num('rollers.dmg',1,36)}</div>
       <div class="hint">Temp art for now — drop real sprites in SPRITES → ITEMS → Roller (Breakable) / (Armored).</div>
-      <div class="hint" style="color:#f4f;margin-top:14px">ENVIRONMENT — name each level, then CLICK a slot to add/replace its art
-        (path = road tile, bg = skyline strip or full 540×960, side = off-road tile). Blank slot = current neon look, game ignores it.
+      <div class="hint" style="color:#f4f;margin-top:14px">ENVIRONMENT — name each level, then CLICK a slot to open its tile editor (preview / replace / clear)
+        (path = road tile, bg = deep background / boss area, wall L + wall R = the two corridor walls). Blank slot = current neon look, game ignores it.
         Uploads go live instantly; ✕ clears back to blank. (assets/env/L&lt;n&gt;_*.png files also work as a fallback.)</div>
-      <table><tr><th>LVL</th><th>NAME</th><th>PATH</th><th>BG</th><th>SIDE</th></tr>`;
+      <table><tr><th>LVL</th><th>NAME</th><th>PATH</th><th>BG</th><th>WALL L</th><th>WALL R</th><th>LEVEL MUSIC</th><th>BOSS MUSIC</th></tr>`;
     for(let i=0;i<10;i++){ const th=s=>{ const key=`L${i+1}_${s}`;
-        if (ENV_OVR[key]) return `<span style="white-space:nowrap"><img src="${ENV_OVR[key]}" data-up="${key}" title="click to replace"
+        if (ENV_OVR[key]) return `<span style="white-space:nowrap"><img src="${ENV_OVR[key]}" data-up="${key}" title="click to open this tile's editor"
           style="height:26px;border:1px solid #4ff;border-radius:3px;cursor:pointer;vertical-align:middle">
           <span data-clr="${key}" style="color:#f66;cursor:pointer;font-weight:900">✕</span></span>`;
-        return `<img src="assets/env/${key}.png" data-up="${key}" title="click to replace"
+        // wall slots fall back to the legacy single L<n>_side.png before showing an empty slot
+        const legacy = /^side[LR]$/.test(s)
+          ? `if(!this._f){this._f=1;this.src='assets/env/L${i+1}_side.png';return;}` : '';
+        return `<img src="assets/env/${key}.png" data-up="${key}" title="click to open this tile's editor"
           style="height:26px;border:1px solid #333;border-radius:3px;cursor:pointer;vertical-align:middle"
-          onerror="this.outerHTML='<button data-up=\\'${key}\\' style=\\'border-style:dashed;border-color:#345;color:#6a8;background:none\\'>＋ ${s}</button>'">`; };
+          onerror="${legacy}this.outerHTML='<button data-up=\\'${key}\\' style=\\'border-style:dashed;border-color:#345;color:#6a8;background:none\\'>＋ ${s}</button>'">`; };
       h += `<tr><td style="color:#4ff">${i+1}</td>
         <td><input type="text" data-env="${i}" value="${(EDIT.env[i]||{}).name||''}" style="width:150px"></td>
-        <td>${th('path')}</td><td>${th('bg')}</td><td>${th('side')}</td></tr>`; }
-    h += `</table><input type="file" id="envFile" accept="image/*" style="display:none">`;
+        <td>${th('path')}</td><td>${th('bg')}</td><td>${th('sideL')}</td><td>${th('sideR')}</td>
+        <td>${txt('levelMusic.'+i,120,'track.mp3')}</td><td>${txt('bossMusic.'+i,120,'track.mp3')}</td></tr>`; }
+    h += `</table>
+      <div class="row" style="margin-top:8px">TITLE MUSIC ${txt('titleMusic',150,'title.mp3')}</div>
+      <div class="hint">Music = filenames inside <b>assets/music/</b> (e.g. <i>level1.mp3</i>). Blank = silence. A missing file just stays silent, it won't error. Boss track replaces the level track when that level's boss spawns.</div>
+      <input type="file" id="envFile" accept="image/*" style="display:none">`;
     body.innerHTML = h;
     body.querySelectorAll('[data-env]').forEach(inp=>inp.oninput=()=>{ EDIT.env[+inp.dataset.env].name = inp.value; saveEdit(); });
     if (!body._envWired) { body._envWired = true;      // one delegated listener, survives re-renders
@@ -2216,27 +2598,11 @@ function renderTab(){
           try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); } catch(e) {}
           const lvl = +clr.match(/^L(\d+)_/)[1]; delete ENVIMG[lvl]; renderTab(); return; }
         if (!up) return;
-        const ef = body.querySelector('#envFile'); if (!ef) return;
-        ef.dataset.key = up; ef.value = ''; ef.click();
+        envSel = up; renderTab();     // open the tile editor instead of firing a file dialog blind
       }); }
     const envFile = body.querySelector('#envFile');
-    envFile.onchange = () => { const f = envFile.files[0], key = envFile.dataset.key; if (!f || !key) return;
-      const rd = new FileReader();
-      rd.onload = () => { const im = new Image();
-        im.onload = () => {
-          // downscale on import so 10 levels of art stay inside localStorage quota
-          const isBg = /_bg$/.test(key), max = isBg ? 1080 : 512;
-          const sc = Math.min(1, max / Math.max(im.width, im.height));
-          const c = document.createElement('canvas');
-          c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc);
-          c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
-          ENV_OVR[key] = c.toDataURL('image/png');
-          try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); }
-          catch(e) { delete ENV_OVR[key]; alert('Storage full — clear some env art or drop the file into assets/env/ instead.'); return; }
-          const lvl = +key.match(/^L(\d+)_/)[1]; delete ENVIMG[lvl];   // live reload for that level
-          renderTab(); };
-        im.src = rd.result; };
-      rd.readAsDataURL(f); };
+    envFile.onchange = () => { const f = envFile.files[0], key = envFile.dataset.key;
+      if (f && key) importEnvPng(f, key, renderTab); };
   }
   else if (tab===5) renderSprites();
   else { // DATA
@@ -2284,12 +2650,10 @@ function renderSprites(){
         REG.forEach((r,i)=>{ if (r.cat!==cat || r.unit!==u) return;
           if (r.h) h += `<button data-sp="${i}" style="display:inline-flex;align-items:center;gap:5px">
             <canvas data-th="${i}" width="26" height="26" style="image-rendering:pixelated"></canvas>${r.action} <span style="color:#f4f">${r.h.frames}f</span></button>`;
-          else h += `<button data-mk="${i}" style="border-style:dashed;border-color:#345;color:#6a8;background:none">＋ ${r.action}</button>`;
-          h += `<button data-spup="${i}" title="import a PNG into this slot" style="padding:4px 7px;margin-left:0">⇧</button>`; });
+          else h += `<button data-mk="${i}" style="border-style:dashed;border-color:#345;color:#6a8;background:none">＋ ${r.action}</button>`; });
         h += '</div>';
       }
     }
-    h += `<input type="file" id="spFile" accept="image/png,image/*" style="display:none">`;
     body.innerHTML = h;
     body.querySelectorAll('[data-sp]').forEach(b=>b.onclick=()=>{ spriteSel=+b.dataset.sp; frameSel=0; loadWork(); renderSprites(); });
     body.querySelectorAll('[data-mk]').forEach(b=>b.onclick=()=>{   // create a blank 1-frame strip and open the paint editor
@@ -2299,15 +2663,6 @@ function renderSprites(){
       try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); } catch(e) {}
       makeHolder(r, savedSprites[r.key].data, 1, 8);
       spriteSel = +b.dataset.mk; frameSel = 0; loadWork(); renderSprites(); });
-    const spFile = body.querySelector('#spFile');
-    body.querySelectorAll('[data-spup]').forEach(b=>b.onclick=()=>{   // pick a PNG straight into that slot
-      spFile.dataset.slot = b.dataset.spup; spFile.value = ''; spFile.click(); });
-    spFile.onchange = () => { const f = spFile.files[0], r = REG[+spFile.dataset.slot];
-      if (!f || !r) return;
-      readPng(f, c => { applyPngToSlot(r, c, askFrames(c));
-        // the data: URL decodes a tick later — repaint the thumbnail once it has (addEventListener, so the game's own onload survives)
-        if (r.h && r.h.img) r.h.img.addEventListener('load', () => { if (spriteSel < 0) renderSprites(); }, { once: true });
-        renderSprites(); }); };
     body.querySelectorAll('[data-th]').forEach(c=>{ const r=REG[+c.dataset.th]; const im=r.h.img;
       if(im&&(im.ok||im.complete)){ const cw=(im.naturalWidth||im.width)/Math.max(1,r.h.frames), chh=im.naturalHeight||im.height;
         try{c.getContext('2d').drawImage(im,0,0,cw,chh,0,0,26,26);}catch(e){} } });
