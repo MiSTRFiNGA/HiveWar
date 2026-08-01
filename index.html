@@ -252,7 +252,11 @@ function editDefaults() { return {
   // Global SIZE multipliers, one per entity class. Kept as a separate group (not folded into each
   // entity's own size field) so a shared MOD PACK can rescale a whole class without overwriting the
   // per-unit tuning underneath it — see PACK_FORMAT. 1 = shipped size.
-  scale: { player: 1, enemy: 1, boss: 1, queen: 1, roller: 1, gate: 1 },
+  scale: { player: 1, enemy: 1, boss: 1, queen: 1, roller: 1, gate: 1, tank: 1 },
+  // Escort tanks. spread = px from the squad centre to each tank. The squad formation is 7 wide at
+  // 42px spacing, so it reaches ~155px from centre — the old hardcoded 74 put both tanks INSIDE
+  // the ranks. 175 clears the widest formation plus the trooper sprite.
+  vehicles: { spread: 175 },
 }; }
 // Convenience accessor — always returns a full scale set even for packs saved before `scale` existed.
 function SCL() { return (EDIT && EDIT.scale) || { player:1, enemy:1, boss:1, queen:1, roller:1, gate:1 }; }
@@ -1637,8 +1641,11 @@ function drawHorizonBoss(){
   cx.fillStyle='rgba(225,210,255,.75)';cx.font='bold 12px Segoe UI';cx.textAlign='center';cx.fillText(G.level===CFG.levels?'ALIEN QUEEN APPROACHING':'HIVE GUARDIAN SIGNAL',CFG.W/2,HORIZON_Y-10);
 }
 function drawVehicles(){
-  for(const side of [-1,1]){const x=G.px+side*74,y=CFG.H-168;cx.save();cx.translate(x,y);   // one tank per side
-    if(IMGS.tank&&IMGS.tank.ok){const th=72,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
+  // FORGE: UNITS tab drives both size (scale.tank) and how far out they sit (vehicles.spread).
+  const tSc=SCL().tank, spread=((EDIT.vehicles&&EDIT.vehicles.spread)||175);
+  for(const side of [-1,1]){const x=G.px+side*spread,y=CFG.H-168;cx.save();cx.translate(x,y);   // one tank per side
+    if(IMGS.tank&&IMGS.tank.ok){const th=72*tSc,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
+    cx.scale(tSc,tSc);
     cx.fillStyle='#df9c35';cx.shadowColor='#f80';cx.shadowBlur=10;cx.fillRect(-22,-13,44,27);cx.fillStyle='#ffe3a5';cx.fillRect(-5,-24,10,26);cx.fillRect(-3,-44,6,24);cx.strokeStyle='#8ff';cx.beginPath();cx.ellipse(0,16,26,9,0,0,7);cx.stroke();cx.restore();}
 }
 function draw() {
@@ -1961,6 +1968,7 @@ function draw() {
     `<div class="ctrls">` +
       (inRun ? ctl('restart', '⟳', 'RESTART') : '') +
       (inRun ? ctl('pause', G.paused ? '▶' : '⏸', G.paused ? 'PLAY' : 'PAUSE', G.paused ? 'hot' : '') : '') +
+      (G.paused ? ctl('quit', '⏏', 'QUIT', 'warn') : '') +   // only while paused — it ends the run
       ctl('music', G.meta.music ? '♪' : '♪̸', 'MUSIC', G.meta.music ? '' : 'off') +
       ctl('sfx',   G.meta.sfx   ? '🔊' : '🔇', 'SFX',   G.meta.sfx   ? '' : 'off') +
     `</div>`;
@@ -1988,6 +1996,13 @@ document.getElementById('hud').addEventListener('pointerdown', e => {
     else if (G.vehicleT > 0 && G.meta.sfx) AUDIO.loopTank(true);   // tanks were mid-deploy
   }
   else if (act === 'restart') { G.paused = false; startRun(G.mode); }
+  else if (act === 'quit') {          // paused-only: abandon the run and go back to the title screen
+    if (!confirm('Quit to main menu? This run will be lost.')) return;
+    G.paused = false; AUDIO.stopAll(); AUDIO.loopTank(false);
+    enemies.each(en => enemies.release(en)); bullets.each(bl => bullets.release(bl));
+    gates.length = 0; rollers.length = 0; G.boss = null; G.vehicleT = 0;
+    G.state = 'title'; AUDIO.music(EDIT.titleMusic); save();
+  }
 });
 function drawDebugCanvas(){
   const d=window.__dbg?window.__dbg():{};cx.save();cx.globalAlpha=.88;cx.fillStyle='#02040d';cx.fillRect(8,58,244,106);cx.globalAlpha=1;cx.strokeStyle='#4ff';cx.strokeRect(8,58,244,106);cx.fillStyle='#bff';cx.font='bold 13px monospace';cx.textAlign='left';
@@ -2158,7 +2173,7 @@ function drawPausedOverlay(){                                           // dim +
     cx.textAlign='center'; cx.font='900 54px Segoe UI'; cx.lineWidth=8; cx.strokeStyle='#130524';
     cx.strokeText('PAUSED', CFG.W/2, 430);
     cx.shadowColor='#ff4'; cx.shadowBlur=24; cx.fillStyle='#ff4'; cx.fillText('PAUSED', CFG.W/2, 430);
-    cx.shadowBlur=0; cx.font='16px Segoe UI'; cx.fillStyle='#cdf'; cx.fillText('tap anywhere to resume', CFG.W/2, 470);
+    cx.shadowBlur=0; cx.font='16px Segoe UI'; cx.fillStyle='#cdf'; cx.fillText('tap anywhere to resume  ·  ⏏ QUIT to leave the run', CFG.W/2, 470);
     // the ▶ button is DOM (#hud .ctrls, z-index above the canvas) — it stays visible through this dim
   }
 function drawTitle(){
@@ -2561,10 +2576,12 @@ function renderTab(){
     h += `</table>
       <div class="hint" style="color:#f4f;margin-top:14px">SIZE SCALE — × multiplier on every member of the class. 1 = shipped size.
         Applies to NEW spawns (enemies/obstacles); player and boss update instantly.</div>
-      <table><tr><th>PLAYER</th><th>ENEMIES</th><th>BOSS</th><th>QUEEN</th><th>OBSTACLES</th><th>BARRIERS</th></tr>
+      <table><tr><th>PLAYER</th><th>ENEMIES</th><th>BOSS</th><th>QUEEN</th><th>OBSTACLES</th><th>BARRIERS</th><th>TANKS</th></tr>
       <tr><td>${num('scale.player',0.05,52)}</td><td>${num('scale.enemy',0.05,52)}</td>
           <td>${num('scale.boss',0.05,52)}</td><td>${num('scale.queen',0.05,52)}</td>
-          <td>${num('scale.roller',0.05,52)}</td><td>${num('scale.gate',0.05,52)}</td></tr></table>
+          <td>${num('scale.roller',0.05,52)}</td><td>${num('scale.gate',0.05,52)}</td>
+          <td>${num('scale.tank',0.05,52)}</td></tr></table>
+      <div class="row">TANK SPREAD ${num('vehicles.spread',5,56)} <span class="hint">px from squad centre to each tank. The formation reaches ~155px, so below that they sit inside the ranks.</span></div>
       <div class="hint">BARRIERS scales panel HEIGHT only — width is locked to the road edge and the centreline gap.</div>`;
     body.innerHTML = h;
     body.querySelectorAll('[data-kt]').forEach(c=>{ const a=ANIM[+c.dataset.kt];
@@ -2634,16 +2651,47 @@ function renderTab(){
         <span id="envNone" style="display:none;color:#6a8">no art yet — using the built-in neon look</span></div>
       <div class="row"><button id="envRep">⇧ REPLACE PNG</button>
         <button id="envClr" class="warn">✕ CLEAR TO DEFAULT</button></div>
-      <div class="hint">path = road tile (scrolls toward you) · bg = deep background / boss area, skyline strip or full 540×960 (zooms 100%→200% across the level) · sideL / sideR = the two corridor walls, tiled vertically and scrolled toward you.
-        Replacing goes live instantly. Pixel painting isn't wired up for world tiles yet — edit these in an image tool and re-import.</div>
+      <div class="hint">path = road tile (scrolls toward you) · bg = deep background / boss area, skyline strip or full 540×960 (zooms 100%→200% across the level) · sideL / sideR = the two corridor walls, tiled vertically and scrolled toward you.</div>
+      <div class="hint" style="color:#f4f;margin-top:12px">PAINT — same brush as the SPRITES tab. Edits are live after 💾 SAVE LIVE.</div>
+      <div class="row">🎨 <input type="color" id="envCol" value="${brush.col}">
+        SIZE <input type="range" id="envSize" min="1" max="40" value="${brush.size}">
+        <button id="envErase">${brush.erase?'✏ PAINT':'⌫ ERASE'}</button>
+        <button id="envUndo">↩ UNDO</button>
+        <button id="envSave">💾 SAVE LIVE</button>
+        <button id="envDl">⇩ DOWNLOAD PNG</button></div>
+      <div class="row"><canvas id="forgePaint"></canvas></div>
       <input type="file" id="envFile" accept="image/*" style="display:none">`;
-    body.querySelector('#envBack').onclick = () => { envSel = null; renderTab(); };
+    body.querySelector('#envBack').onclick = () => { envSel = null; spriteSel = -1; renderTab(); };
     const ef2 = body.querySelector('#envFile');
     body.querySelector('#envRep').onclick = () => { ef2.dataset.key = key; ef2.value = ''; ef2.click(); };
     body.querySelector('#envClr').onclick = () => { delete ENV_OVR[key];
       try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); } catch(e) {}
       delete ENVIMG[lvl]; renderTab(); };
     ef2.onchange = () => { const f = ef2.files[0]; if (f) importEnvPng(f, key, renderTab); };
+    // Load the tile into the SAME `work` canvas the sprite painter uses, as a 1-frame strip — that
+    // lets drawPaint/pushUndo/undo/bindPaint all work unmodified. Async: the image has to decode
+    // before we can paint on it, and a slot with no art yet starts from a blank tile.
+    loadEnvWork(key, () => {
+      drawPaint(); bindPaint();
+      const col = body.querySelector('#envCol'), sz = body.querySelector('#envSize');
+      col.oninput = () => { brush.col = col.value; brush.erase = false;
+        body.querySelector('#envErase').textContent = '⌫ ERASE'; };
+      sz.oninput = () => { brush.size = +sz.value; };
+      body.querySelector('#envErase').onclick = e => { brush.erase = !brush.erase;
+        e.target.textContent = brush.erase ? '✏ PAINT' : '⌫ ERASE'; };
+      body.querySelector('#envUndo').onclick = () => undo();
+      body.querySelector('#envDl').onclick = () => { const a = document.createElement('a');
+        a.href = work.toDataURL('image/png'); a.download = key + '.png'; a.click(); };
+      body.querySelector('#envSave').onclick = () => {
+        const data = work.toDataURL('image/png');
+        const prev = ENV_OVR[key]; ENV_OVR[key] = data;
+        try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); }
+        catch (err) { if (prev === undefined) delete ENV_OVR[key]; else ENV_OVR[key] = prev;
+          alert('Storage full — download the PNG and drop it into assets/env/ instead.'); return; }
+        delete ENVIMG[lvl];                                  // live reload for that level
+        const p = body.querySelector('#envPrev'); if (p) { p.src = data; p.style.display = ''; }
+      };
+    });
   }
   else if (tab===4){ // WORLD: barriers + rolling hazards + per-level environment
     let h = `<div class="hint" style="color:#f4f">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>
@@ -2821,6 +2869,22 @@ function renderSprites(){
   body.querySelector('#spDl').onclick=()=>{ const a=document.createElement('a');
     a.href=work.toDataURL('image/png'); a.download=r.key+'_strip.png'; a.click(); };
   drawFrames(); drawPaint(); bindPaint();
+}
+// Load a WORLD tile into the shared `work` canvas as a 1-frame strip, so the sprite painter's
+// drawPaint / pushUndo / undo / bindPaint all apply to it unchanged. Async because the source has
+// to decode first; a slot with no art yet opens as a blank tile at that slot's natural size.
+function loadEnvWork(key, done){
+  const im = new Image();
+  const blank = () => { const isBg = /_bg$/.test(key);
+    work = document.createElement('canvas');
+    work.width = isBg ? 540 : 512; work.height = isBg ? 960 : 512; };
+  im.onload = () => {
+    work = document.createElement('canvas');
+    work.width = im.naturalWidth || 512; work.height = im.naturalHeight || 512;
+    try { work.getContext('2d').drawImage(im, 0, 0); } catch (e) {}
+    work._frames = 1; frameSel = 0; undoStack = []; done(true); };
+  im.onerror = () => { blank(); work._frames = 1; frameSel = 0; undoStack = []; done(false); };
+  im.src = ENV_OVR[key] || ('assets/env/' + key + '.png');
 }
 function loadWork(){ const r=REG[spriteSel], im=r.h.img, cell=r.cell||128;
   work=document.createElement('canvas');
