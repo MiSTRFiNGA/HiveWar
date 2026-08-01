@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '1.7';
+const GAME_VERSION = '1.8';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -1398,6 +1398,8 @@ const BOSS_FALL_V0 = 90, BOSS_FALL_G = 900, BOSS_FALL_MAX = 900;
 // played. Campaign is 10 levels, so 10 = the whole campaign is points and multipliers start in
 // endless. Lower it to let multipliers in earlier.
 const MUL_UNLOCK_ROUND = 10;
+// Crop overlay: bar/handle thickness and the grab tolerance around an edge, in PREVIEW pixels.
+const CROP_BAR = 8, CROP_GRAB = 10, CROP_MIN = 8;   // CROP_MIN = smallest allowed box, in work px
 function loadEnv(level) {
   if (ENVIMG[level]) return ENVIMG[level];
   // Each slot walks a candidate list: FORGE override → shipped PNG → the next fallback slot.
@@ -2479,6 +2481,9 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
 
 const TABS = ['UNITS','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false};
+// Crop mode. While cropBox is set the paint canvas drags the box instead of painting, and drawPaint
+// overlays it. cropOnChange lets the editor refresh its size readout as the box moves.
+let cropBox = null, cropOnChange = null;
 let envSel = null;   // WORLD tab: which env tile key (e.g. 'L3_bg') is open in the tile editor, null = grid
 TABS.forEach((t,i)=>{ const d=document.createElement('div'); d.textContent=t;
   d.onclick=()=>{tab=i;spriteSel=-1;envSel=null;renderTab();}; tabsEl.appendChild(d); });
@@ -2569,6 +2574,7 @@ function forgePlay(lvl, boss){
   closeForge();                              // also clears FORGE_DBG.pause and re-syncs the buttons
 }
 function renderTab(){
+  cropBox = null; cropOnChange = null;   // never let a crop box leak across tabs or editors
   tabsEl.querySelectorAll('div').forEach((d,i)=>d.classList.toggle('on', i===tab));
   if (tab===0){ // UNITS
     let h = `<div class="hint">HP = BASE + PER-LVL × level. WEIGHT = spawn share (live %). MIN-LVL = first level it appears. Changes apply INSTANTLY — tweak mid-run and test.</div>
@@ -2671,13 +2677,11 @@ function renderTab(){
         <button id="envUndo">↩ UNDO</button>
         <button id="envSave">💾 SAVE LIVE</button>
         <button id="envDl">⇩ DOWNLOAD PNG</button></div>
-      <div class="hint" style="color:#f4f;margin-top:10px">SIZE / CROP — RESIZE rescales the whole image into the new size. CROP keeps only the X/Y/W/H box. Both are undoable.</div>
-      <div class="row">W <input type="number" id="envW" style="width:64px"> H <input type="number" id="envH" style="width:64px">
-        <button id="envResize">⤢ RESIZE</button>
-        <button id="envFit">⤢ FIT SLOT (${isBgSlot?'540×960':'512×512'})</button></div>
-      <div class="row">X <input type="number" id="envCX" style="width:56px" value="0"> Y <input type="number" id="envCY" style="width:56px" value="0">
-        W <input type="number" id="envCW" style="width:64px"> H <input type="number" id="envCH" style="width:64px">
-        <button id="envCrop">⧉ CROP</button></div>
+      <div class="hint" style="color:#f4f;margin-top:10px">CROP — drag the edge bars or corners to frame the keep-area, or drag inside the box to move it. APPLY trims to the box. Undoable.</div>
+      <div class="row"><button id="envCropMode">⧉ CROP</button>
+        <button id="envCropApply" style="display:none;border-color:#6f6;color:#6f6;font-weight:900">✓ APPLY CROP</button>
+        <button id="envCropCancel" class="warn" style="display:none">✕ CANCEL</button>
+        <span class="hint" id="envCropInfo"></span></div>
       <div class="row"><canvas id="forgePaint"></canvas></div>
       <input type="file" id="envFile" accept="image/*" style="display:none">`;
     body.querySelector('#envBack').onclick = () => { envSel = null; spriteSel = -1; renderTab(); };
@@ -2699,35 +2703,36 @@ function renderTab(){
       body.querySelector('#envErase').onclick = e => { brush.erase = !brush.erase;
         e.target.textContent = brush.erase ? '✏ PAINT' : '⌫ ERASE'; };
       body.querySelector('#envUndo').onclick = () => undo();
-      // --- size / crop -------------------------------------------------------------------
-      const wEl=body.querySelector('#envW'), hEl=body.querySelector('#envH');
-      const cwEl=body.querySelector('#envCW'), chEl=body.querySelector('#envCH');
-      const cxEl=body.querySelector('#envCX'), cyEl=body.querySelector('#envCY');
-      const syncDims = () => { wEl.value=work.width; hEl.value=work.height;
-                               cwEl.value=work.width; chEl.value=work.height; };
-      syncDims();
-      // Replace `work` with a new canvas. drawImage-only, so a tainted source still resizes/crops.
-      const reshape = (nw, nh, sx, sy, sw, sh) => {
-        nw=Math.max(1,Math.round(nw)); nh=Math.max(1,Math.round(nh));
-        if(nw>4096||nh>4096) return alert('Max 4096 px per side.');
-        pushUndo();                                   // undo stack holds frame-sized copies…
-        const c=document.createElement('canvas'); c.width=nw; c.height=nh;
-        try{ c.getContext('2d').drawImage(work, sx,sy,sw,sh, 0,0,nw,nh); }catch(e){}
-        work=c; work._frames=1; frameSel=0;
-        undoStack.length=0;                           // …so they're invalid once the canvas resizes
-        syncDims(); drawPaint();
+      // --- crop: draggable bounding box ----------------------------------------------------
+      const mBtn=body.querySelector('#envCropMode'), aBtn=body.querySelector('#envCropApply'),
+            xBtn=body.querySelector('#envCropCancel'), info=body.querySelector('#envCropInfo');
+      const setCropUI = on => {
+        mBtn.style.display = on ? 'none' : '';
+        aBtn.style.display = xBtn.style.display = on ? '' : 'none';
+        info.textContent = on && cropBox
+          ? `${Math.round(cropBox.w)} × ${Math.round(cropBox.h)}  at  ${Math.round(cropBox.x)}, ${Math.round(cropBox.y)}`
+          : '';
       };
-      body.querySelector('#envResize').onclick = () =>
-        reshape(+wEl.value||work.width, +hEl.value||work.height, 0,0, work.width, work.height);
-      body.querySelector('#envFit').onclick = () => {
-        const fw=isBgSlot?540:512, fh=isBgSlot?960:512;
-        reshape(fw,fh, 0,0, work.width, work.height); };
-      body.querySelector('#envCrop').onclick = () => {
-        const sx=Math.max(0,+cxEl.value||0), sy=Math.max(0,+cyEl.value||0);
-        const sw=Math.min(work.width-sx, +cwEl.value||work.width);
-        const sh=Math.min(work.height-sy, +chEl.value||work.height);
-        if(sw<1||sh<1) return alert('Crop box is outside the image.');
-        reshape(sw,sh, sx,sy, sw,sh); };
+      const endCrop = () => { cropBox = null; setCropUI(false); drawPaint(); };
+      mBtn.onclick = () => {                       // start with a box inset 10% so every bar is grabbable
+        const ix = work.width*0.1, iy = work.height*0.1;
+        cropBox = { x:ix, y:iy, w:work.width-ix*2, h:work.height-iy*2 };
+        setCropUI(true); drawPaint();
+      };
+      xBtn.onclick = endCrop;
+      aBtn.onclick = () => {
+        if(!cropBox) return endCrop();
+        const sx=Math.max(0,Math.round(cropBox.x)), sy=Math.max(0,Math.round(cropBox.y));
+        const sw=Math.max(1,Math.min(work.width-sx, Math.round(cropBox.w)));
+        const sh=Math.max(1,Math.min(work.height-sy, Math.round(cropBox.h)));
+        pushUndo();                                // full-canvas snapshot — survives the resize
+        const c=document.createElement('canvas'); c.width=sw; c.height=sh;
+        try{ c.getContext('2d').drawImage(work, sx,sy,sw,sh, 0,0,sw,sh); }catch(e){}
+        work=c; work._frames=1; frameSel=0;
+        endCrop();
+      };
+      // Live readout while dragging, driven from the canvas handlers in bindPaint.
+      cropOnChange = () => setCropUI(true);
       // --- export ------------------------------------------------------------------------
       body.querySelector('#envDl').onclick = () => { const d = safeDataURL(work); if(!d) return;
         const a = document.createElement('a'); a.href = d; a.download = key + '.png'; a.click(); };
@@ -2949,20 +2954,52 @@ function drawPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return;
   const cw=work.width/work._frames, chh=work.height, scale=Math.min(520/cw, 380/chh);
   pc.width=cw*scale; pc.height=chh*scale; pc._scale=scale;
   const g=pc.getContext('2d'); g.imageSmoothingEnabled=false;
-  g.clearRect(0,0,pc.width,pc.height); g.drawImage(work,frameSel*cw,0,cw,chh,0,0,pc.width,pc.height); }
+  g.clearRect(0,0,pc.width,pc.height); g.drawImage(work,frameSel*cw,0,cw,chh,0,0,pc.width,pc.height);
+  if(cropBox) drawCropBox(g,scale); else pc.style.cursor=''; }
+// Crop overlay, drawn in PREVIEW pixels (work coords x scale). Dark scrim outside the keep-area so
+// it's obvious what survives, plus thick edge bars and corner handles as the grab targets.
+function drawCropBox(g,s){
+  const x=cropBox.x*s, y=cropBox.y*s, w=cropBox.w*s, h=cropBox.h*s, W=g.canvas.width, H=g.canvas.height;
+  g.save();
+  g.fillStyle='rgba(4,2,14,.62)';                     // scrim: everything that will be discarded
+  g.fillRect(0,0,W,y); g.fillRect(0,y+h,W,H-(y+h));
+  g.fillRect(0,y,x,h); g.fillRect(x+w,y,W-(x+w),h);
+  g.strokeStyle='#4ff'; g.lineWidth=1; g.strokeRect(x+.5,y+.5,w-1,h-1);
+  g.fillStyle='#4ff';                                  // edge bars (top/bottom/left/right)
+  const B=CROP_BAR;
+  g.fillRect(x+w/2-14,y-B/2,28,B); g.fillRect(x+w/2-14,y+h-B/2,28,B);
+  g.fillRect(x-B/2,y+h/2-14,B,28); g.fillRect(x+w-B/2,y+h/2-14,B,28);
+  g.fillStyle='#f4f';                                  // corners
+  for(const [cx2,cy2] of [[x,y],[x+w,y],[x,y+h],[x+w,y+h]]) g.fillRect(cx2-B/2,cy2-B/2,B,B);
+  g.restore();
+}
+// Which part of the box a preview-space point grabs. Corners win over edges, edges over the middle.
+function cropHit(px,py,s){
+  const x=cropBox.x*s, y=cropBox.y*s, w=cropBox.w*s, h=cropBox.h*s, T=CROP_GRAB;
+  const nL=Math.abs(px-x)<=T, nR=Math.abs(px-(x+w))<=T, nT=Math.abs(py-y)<=T, nB=Math.abs(py-(y+h))<=T;
+  const inX=px>=x-T&&px<=x+w+T, inY=py>=y-T&&py<=y+h+T;
+  if(nL&&nT)return'tl'; if(nR&&nT)return'tr'; if(nL&&nB)return'bl'; if(nR&&nB)return'br';
+  if(nL&&inY)return'l'; if(nR&&inY)return'r'; if(nT&&inX)return't'; if(nB&&inX)return'b';
+  if(px>x&&px<x+w&&py>y&&py<y+h)return'move';
+  return null;
+}
 // Undo snapshots are CANVAS COPIES, not getImageData. getImageData READS pixels, which throws a
 // SecurityError the moment the canvas is tainted — and it taints as soon as a shipped assets/*.png
 // is drawn into it from a file:// page. That threw inside the pointerdown handler BEFORE the first
 // dot was drawn, so the stack stayed empty (UNDO looked dead) while dragging still painted, because
 // `painting` had already been set. drawImage never reads pixels, so this works tainted or not.
-function pushUndo(){ const cw=work.width/work._frames, c=document.createElement('canvas');
-  c.width=cw; c.height=work.height;
-  try{ c.getContext('2d').drawImage(work, frameSel*cw,0,cw,work.height, 0,0,cw,work.height); }catch(e){}
-  undoStack.push({ f:frameSel, c });
-  if(undoStack.length>25)undoStack.shift(); }
-function undo(){ if(!undoStack.length)return; const s=undoStack.pop(), cw=work.width/work._frames;
-  const g=work.getContext('2d');
-  g.clearRect(s.f*cw,0,cw,work.height); g.drawImage(s.c,s.f*cw,0);   // clear+draw = replace the frame
+// Snapshots copy the WHOLE canvas, including its size and frame count, so undo covers structural
+// edits (crop) as well as brush strokes — a frame-sized copy can't be restored once the canvas has
+// been resized, which is why crop used to be unrecoverable. Depth is 15 rather than 25 because a
+// full 540x960 background snapshot is ~2MB.
+function pushUndo(){ const c=document.createElement('canvas');
+  c.width=work.width; c.height=work.height;
+  try{ c.getContext('2d').drawImage(work,0,0); }catch(e){}
+  c._frames=work._frames; undoStack.push({ f:frameSel, c });
+  if(undoStack.length>15)undoStack.shift(); }
+function undo(){ if(!undoStack.length)return; const s=undoStack.pop();
+  work=s.c; work._frames=s.c._frames||1;
+  frameSel=Math.min(s.f, work._frames-1);
   drawFrames(); drawPaint(); }
 // Exporting also reads pixels. Fail LOUDLY with the actual fix rather than dying silently.
 function safeDataURL(c){
@@ -2998,14 +3035,44 @@ function bindPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return;
     if(!b || (a.x===b.x && a.y===b.y)){ g.beginPath(); g.arc(a.x,a.y,Math.max(0.5,brush.size/2),0,7); g.fill(); }
     else { g.beginPath(); g.moveTo(a.x,a.y); g.lineTo(b.x,b.y); g.stroke(); }
     g.restore(); drawPaint(); };
+  // --- crop dragging takes over the canvas while a crop box is active ---
+  let grab=null, gp=null;                              // grab = which handle, gp = last preview point
+  const prev=(e)=>{ const r=pc.getBoundingClientRect(); return { x:e.clientX-r.left, y:e.clientY-r.top }; };
+  // Work in EDGES (left/top/right/bottom), not x/y/w/h — dragging one edge must leave the opposite
+  // one exactly where it is. Handle names carry their edges ('bl' = bottom + left), so a corner is
+  // just two independent edge moves. Every edge is clamped to the image and to CROP_MIN.
+  const dragCrop=(p)=>{
+    const s=pc._scale, dx=(p.x-gp.x)/s, dy=(p.y-gp.y)/s; gp=p;
+    let L=cropBox.x, T=cropBox.y, R=cropBox.x+cropBox.w, B=cropBox.y+cropBox.h;
+    if(grab==='move'){
+      const w=R-L, h=B-T;
+      L=Math.max(0,Math.min(work.width-w,  L+dx)); T=Math.max(0,Math.min(work.height-h, T+dy));
+      R=L+w; B=T+h;
+    } else {
+      if(grab.includes('l')) L=Math.min(R-CROP_MIN, Math.max(0,            L+dx));
+      if(grab.includes('r')) R=Math.max(L+CROP_MIN, Math.min(work.width,   R+dx));
+      if(grab.includes('t')) T=Math.min(B-CROP_MIN, Math.max(0,            T+dy));
+      if(grab.includes('b')) B=Math.max(T+CROP_MIN, Math.min(work.height,  B+dy));
+    }
+    cropBox={x:L,y:T,w:R-L,h:B-T};
+    if(cropOnChange)cropOnChange(); drawPaint();
+  };
   pc.addEventListener('pointerdown',e=>{
+    if(cropBox){ const p=prev(e); grab=cropHit(p.x,p.y,pc._scale);
+      if(grab){ gp=p; pc.setPointerCapture(e.pointerId); } return; }   // crop mode never paints
     const p=pt(e);
     // SHIFT + click = straight line from the last point to this one, in whichever tool is active
     // (paint or erase). Anchor updates, so shift-clicking repeatedly chains connected segments.
     if(e.shiftKey && last){ pushUndo(); stroke(last,p); last=p; drawFrames(); return; }
     painting=true; pushUndo(); stroke(p,null); last=p; pc.setPointerCapture(e.pointerId); });
-  pc.addEventListener('pointermove',e=>{ if(!painting)return; const p=pt(e); stroke(last||p,p); last=p; });
-  pc.addEventListener('pointerup',()=>{ painting=false; drawFrames(); }); }
+  pc.addEventListener('pointermove',e=>{
+    if(cropBox){ if(grab) dragCrop(prev(e));
+      else { const p=prev(e), hit=cropHit(p.x,p.y,pc._scale);   // cursor hints the grab target
+        pc.style.cursor = hit==='move'?'move' : hit==='l'||hit==='r'?'ew-resize'
+          : hit==='t'||hit==='b'?'ns-resize' : hit?'nwse-resize':'default'; }
+      return; }
+    if(!painting)return; const p=pt(e); stroke(last||p,p); last=p; });
+  pc.addEventListener('pointerup',()=>{ if(grab){grab=null;return;} painting=false; drawFrames(); }); }
 function frameOp(op){ const cw=work.width/work._frames, chh=work.height, n=work._frames;
   if(op==='del'&&n<=1)return alert('A sprite needs at least 1 frame');
   const n2=op==='dup'?n+1:n-1;
