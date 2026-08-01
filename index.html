@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '1.9';
+const GAME_VERSION = '2.0';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -1400,9 +1400,23 @@ const BOSS_FALL_V0 = 90, BOSS_FALL_G = 900, BOSS_FALL_MAX = 900;
 const MUL_UNLOCK_ROUND = 10;
 // Crop overlay: bar/handle thickness and the grab tolerance around an edge, in PREVIEW pixels.
 const CROP_BAR = 8, CROP_GRAB = 10, CROP_MIN = 8;   // CROP_MIN = smallest allowed box, in work px
+// SINGLE source of truth for where an env slot's art comes from, in priority order:
+// FORGE override → shipped PNG → legacy fallback slot.
+// This exists because the game and the FORGE editor used to resolve paths independently. No
+// L<n>_sideL.png / _sideR.png ever shipped — only the legacy L<n>_side.png — so the game fell back
+// correctly while the editor asked for the exact filename, 404'd, and opened a blank canvas.
+// Both call this now, so they cannot drift apart again.
+function envSrcList(level, slot) {
+  const out = [];
+  const add = s => { const k = 'L' + level + '_' + s;
+    if (ENV_OVR[k]) out.push(ENV_OVR[k]);
+    out.push('assets/env/' + k + '.png'); };
+  add(slot);
+  if (/^side[LR]$/.test(slot)) add('side');   // both walls fall back to the single legacy tile
+  return out;
+}
 function loadEnv(level) {
   if (ENVIMG[level]) return ENVIMG[level];
-  // Each slot walks a candidate list: FORGE override → shipped PNG → the next fallback slot.
   const mk = (...slots) => {
     const cands = [];
     for (const s of slots) {
@@ -2659,13 +2673,14 @@ function renderTab(){
     // world tile used to jump straight to a file dialog with no way to look at it first; now it
     // opens a panel like the SPRITES tab does, so you can review it before replacing or clearing.)
     const key = envSel, lvl = +key.match(/^L(\d+)_/)[1], slot = key.split('_')[1];
-    const src = ENV_OVR[key] || `assets/env/${key}.png`;
+    const src = envSrcList(lvl, slot)[0];              // same resolution the game uses
+    const srcAlt = envSrcList(lvl, slot)[1] || '';     // legacy _side.png for wall slots
     const isBgSlot = /_bg$/.test(key);
     body.innerHTML = `<div class="row"><button id="envBack">← BACK</button>
         <b style="color:#4ff">LEVEL ${lvl}</b> <span style="color:#f4f">${slot.toUpperCase()}</span>
         <span class="hint">${(EDIT.env[lvl-1]||{}).name||''}</span></div>
       <div class="row"><img id="envPrev" src="${src}" style="max-width:260px;max-height:300px;border:1px solid #4ff;border-radius:4px;background:#111"
-        onerror="this.style.display='none';document.getElementById('envNone').style.display='inline'">
+        onerror="if(!this._alt&&'${srcAlt}'){this._alt=1;this.src='${srcAlt}';return;}this.style.display='none';document.getElementById('envNone').style.display='inline'">
         <span id="envNone" style="display:none;color:#6a8">no art yet — using the built-in neon look</span></div>
       <div class="row"><button id="envRep">⇧ REPLACE PNG</button>
         <button id="envClr" class="warn">✕ CLEAR TO DEFAULT</button></div>
@@ -2946,13 +2961,22 @@ function renderSprites(){
 // Load a WORLD tile into the shared `work` canvas as a 1-frame strip, so the sprite painter's
 // drawPaint / pushUndo / undo / bindPaint all apply to it unchanged. Async because the source has
 // to decode first; a slot with no art yet opens as a blank tile at that slot's natural size.
+// Walk a candidate list, first one that loads wins. Wall slots need this: no _sideL/_sideR PNG
+// ships, so without the legacy _side fallback they opened as an empty canvas.
+function loadCleanImageList(srcs, cb){
+  let i = 0;
+  const next = () => { if (i >= srcs.length) return cb(null);
+    loadCleanImage(srcs[i++], im => im ? cb(im) : next()); };
+  next();
+}
 function loadEnvWork(key, done){
-  const isBg = /_bg$/.test(key);
-  loadCleanImage(ENV_OVR[key] || ('assets/env/' + key + '.png'), im => {
+  const m = key.match(/^L(\d+)_(.+)$/), isBg = /_bg$/.test(key);
+  const srcs = m ? envSrcList(+m[1], m[2]) : [ENV_OVR[key] || ('assets/env/' + key + '.png')];
+  loadCleanImageList(srcs, im => {
     work = document.createElement('canvas');
     if (im) { work.width = im.naturalWidth || 512; work.height = im.naturalHeight || 512;
               try { work.getContext('2d').drawImage(im, 0, 0); } catch (e) {} }
-    else { work.width = isBg ? 540 : 512; work.height = isBg ? 960 : 512; }   // empty slot: blank tile
+    else { work.width = isBg ? 540 : 512; work.height = isBg ? 960 : 512; }   // genuinely empty slot
     work._frames = 1; frameSel = 0; undoStack = []; done(!!im);
   });
 }
