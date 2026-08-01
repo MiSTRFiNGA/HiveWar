@@ -743,9 +743,15 @@ function perkWeapons(dt) {
   G.orbitalT -= dt;
   if (G.orbitalT <= 0) {
     G.orbitalT = Math.max(3.0, 6.5 - orbital * 0.9);
-    // strike the swarm's center of mass with a nuke (fallback: mid-road)
+    // Strike the live swarm COM. Fallback is just BELOW the post-horizon spawn band
+    // (HORIZON_Y moved 0.25→0.407; the old CFG.H*0.42 constant still pointed at the pre-move spot).
+    const spawnBandY = HORIZON_Y + (CFG.H - HORIZON_Y) * 0.18;
     let sx = 0, sy = 0, n = 0; enemies.each(e => { if (e.mode !== 1) { sx += e.x; sy += e.y; n++; } });
-    if (n) { sx /= n; sy /= n; } else { sx = CFG.W / 2; sy = CFG.H * 0.42; }
+    if (n) { sx /= n; sy /= n; } else { sx = CFG.W / 2; sy = spawnBandY; }
+    // Keep the strike on the road corridor so it never lands in the walls/sky.
+    const ohw = roadHalfWidthAtY(sy) * 0.9;
+    sx = Math.max(CFG.W / 2 - ohw, Math.min(CFG.W / 2 + ohw, sx));
+    sy = Math.max(HORIZON_Y + 8, Math.min(roadY(0.55), sy));
     const R = 120 + orbital * 26;
     strikes.push({ x: sx, y: sy, t: 0.6, r: R }); boom(sx, sy, 2.4);   // nuke: massive ember burst
     queueBlast(sx, sy, R, 55 + orbital * 45);            // huge central AOE detonation
@@ -759,19 +765,24 @@ function vehicleUpdate(dt) {
     announce('⛨ TANK INBOUND', '#fb4'); } return; }
   G.vehicleT -= dt; G.vehicleFire -= dt;
   if (G.vehicleT <= 0) AUDIO.loopTank(false);   // tanks left the field — cut the engine track
-  // exactly TWO tanks (one per side) each LOB one heavy shell that detonates on impact
+  // exactly TWO tanks (one per side) each LOB one heavy shell that detonates on impact.
+  // Origin = TOP-CENTRE of the tank sprite (matches drawVehicles: y=CFG.H-168, image -th/2).
+  // Trajectory aims up its own road lane and is re-clamped every frame (task 2.4 / 2.5).
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
+    const spread = ((EDIT.vehicles && EDIT.vehicles.spread) || 175);
+    const tSc = SCL().tank, th = 72 * tSc;
     for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
-      b.y = CFG.H - 172; b.r = 13; b.vy = -320 - rank*18;
+      b.y = (CFG.H - 168) - th / 2; b.r = 13; b.vy = -320 - rank * 18;   // top-centre of tank sprite
+      const muzzleX = G.px + side * spread;
       const muzzleHalfWidth = Math.max(0, roadHalfWidthAtY(b.y) - b.r);
-      b.x = Math.max(CFG.W / 2 - muzzleHalfWidth, Math.min(CFG.W / 2 + muzzleHalfWidth, G.px + side * 70));
-      // Tank rounds retain a lane-relative target from muzzle to impact, clamped to the
-      // perspective road at the cutoff—so they cannot drift into the walls.
+      b.x = Math.max(CFG.W / 2 - muzzleHalfWidth, Math.min(CFG.W / 2 + muzzleHalfWidth, muzzleX));
+      // Aim at a lane-relative point on the kill line — never into the walls.
       const cutoff = roadY(0.355) - 6, lane = side * 0.55;
       const targetX = CFG.W / 2 + lane * Math.max(0, roadHalfWidthAtY(cutoff) - b.r);
       const travel = Math.max(0.1, (b.y - cutoff) / -b.vy);
       b.vx = (targetX - b.x) / travel;
-      b.dmg = 30 + rank*16; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false; } }
+      b.dmg = 30 + rank*16; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false;
+      b.laneKeep = true; } }
 }
 function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
   boom(b.x, b.y, 1.6);
@@ -819,7 +830,9 @@ function spawnBoss() {
   G.boss.maxhp = G.boss.hp;
 }
 function damageEnemy(e, dmg, x, y) {
-  e.hp -= dmg;   // no per-hit numbers on regular enemies — kill-streak counter is the big number (reference style); bosses keep theirs
+  e.hp -= dmg;
+  // Floating damage numbers on every real hit so weapon/perk DPS is readable (pool already exists).
+  if (dmg > 0) dmgnum(x !== undefined ? x : e.x, (y !== undefined ? y : e.y) - 12, Math.round(dmg));
   if (e.hp <= 0) {
     G.kills++;
     if (!G.meta.codex) G.meta.codex = {};              // bestiary: unlock this enemy's page on first kill
@@ -949,8 +962,9 @@ const SHOP = [
   // Quality axis (owner spec 2026-07-30): these two are NOT in startRun's per-run reset list,
   // so — unlike the five upgrades above — they persist across runs forever, like codex/bestScore.
   // l starts at 1 (tier 1 = baseline), so the first purchase's exponent is l-1 = 0.
-  {k:'soldierTier',name:'Soldier Tier ', max: SOLDIER_TIER_MAX, cost: l => Math.round(500 * Math.pow(1.8, l - 1))},
-  {k:'weaponTier',  name:'Weapon Tier ', max: WEAPON_TIER_MAX,  cost: l => Math.round(650 * Math.pow(1.8, l - 1))},
+  {k:'soldierTier',name:'Soldier Tier', max: SOLDIER_TIER_MAX, cost: l => Math.round(500 * Math.pow(1.8, l - 1))},
+  // 3.4 — permanent damage multiplier that survives death (not the gun you start with).
+  {k:'weaponTier',  name:'Weapon Tier — permanent +12% dmg (survives death)', max: WEAPON_TIER_MAX,  cost: l => Math.round(650 * Math.pow(1.8, l - 1))},
 ];
 function shopRowH() { return SHOP.length > 5 ? Math.floor(500 / SHOP.length) : 100; }   // fit extra rows above the DEPLOY button
 function shopTap(e) {
@@ -1014,6 +1028,12 @@ function update(dt) {
   // bullets
   bullets.each(b => {
     b.x += b.vx * dt; b.y += b.vy * dt;
+    // Tank shells (and any other laneKeep projectile): stay inside the perspective road so they
+    // never drift over the wall edge into empty space where no enemies exist (task 2.5).
+    if (b.laneKeep || b.grenade) {
+      const hw = roadHalfWidthAtY(b.y) * 0.88;
+      b.x = Math.max(CFG.W / 2 - hw, Math.min(CFG.W / 2 + hw, b.x));
+    }
     // tracers END at the kill line (reference look) — extended reach during boss fights
     const cutoff = G.boss ? Math.max(60, G.boss.y - 40) : roadY(0.355) - 6;
     if (b.y < cutoff) {
@@ -1395,7 +1415,7 @@ const deathFx = [];                            // one-shot 'Die' strip playbacks
 const ENVIMG = {};
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
 let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
-const BG_ZOOM_MAX = 2;                          // deep-background scale when the boss encounter starts
+const BG_ZOOM_START = 0.75, BG_ZOOM_MAX = 2;    // reveal more background at level start; reach 200% at the boss
 // How far the wall tops rise above the horizon at the player's feet, as a fraction of the road's
 // on-screen depth. 0 = tops sit exactly on the horizon; bigger = taller corridor. The walls scroll
 // in lockstep with the floor (shared vAt), so there's no separate scroll rate to tune.
@@ -1678,9 +1698,27 @@ function drawFarHorde(){
   cx.restore();
 }
 function drawHorizonBoss(){
-  if(G.state!=='play')return;const progress=Math.min(1,G.levelT/BAL.waveSec[G.level-1]),loom=.32+progress*.25,y=HORIZON_Y+32;
-  cx.save();cx.translate(CFG.W/2,y);cx.scale(loom,loom);cx.globalAlpha=.22+progress*.42;cx.fillStyle=G.level===CFG.levels?'#b24cff':'#7138a8';cx.shadowColor='#d4f';cx.shadowBlur=35;cx.beginPath();cx.ellipse(0,0,125,165,0,0,7);cx.fill();for(const s of [-1,1]){cx.fillRect(s*85,-15,s*90,34);cx.fillRect(s*42,105,s*42,95);}cx.fillStyle='#ff5';for(let i=-1;i<=1;i++){cx.beginPath();cx.arc(i*35,-42,11,0,7);cx.fill();}cx.restore();
-  cx.fillStyle='rgba(225,210,255,.75)';cx.font='bold 12px Segoe UI';cx.textAlign='center';cx.fillText(G.level===CFG.levels?'ALIEN QUEEN APPROACHING':'HIVE GUARDIAN SIGNAL',CFG.W/2,HORIZON_Y-10);
+  // Text-only telegraph. The old purple loom silhouette at the spawn/horizon was the
+  // "big purple glow at spawn" Eric asked to remove (task 4.3) — signal stays as text.
+  if (G.state !== 'play') return;
+  const progress = Math.min(1, G.levelT / BAL.waveSec[G.level - 1]);
+  if (progress < 0.35) return;   // only once the boss is actually approaching
+  cx.fillStyle = 'rgba(225,210,255,.75)'; cx.font = 'bold 12px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText(G.level === CFG.levels ? 'ALIEN QUEEN APPROACHING' : 'HIVE GUARDIAN SIGNAL', CFG.W / 2, HORIZON_Y - 10);
+}
+function drawBossProgressBar(){
+  // Top-of-screen distance-to-boss bar (task 5.1). Fills as levelT approaches waveSec.
+  if (G.state !== 'play' || G.boss) return;
+  const dur = BAL.waveSec[G.level - 1] || 60;
+  const p = Math.max(0, Math.min(1, G.levelT / dur));
+  const bw = CFG.W - 80, bx = 40, by = 52, bh = 10;
+  cx.fillStyle = 'rgba(6,3,18,.72)'; cx.fillRect(bx - 2, by - 14, bw + 4, bh + 22);
+  cx.fillStyle = '#1a1228'; cx.fillRect(bx, by, bw, bh);
+  cx.fillStyle = G.level === CFG.levels ? '#b24cff' : '#4fd';
+  cx.fillRect(bx, by, bw * p, bh);
+  cx.strokeStyle = 'rgba(255,255,255,.45)'; cx.strokeRect(bx, by, bw, bh);
+  cx.fillStyle = 'rgba(220,235,255,.85)'; cx.font = 'bold 11px Segoe UI'; cx.textAlign = 'center';
+  cx.fillText(G.level === CFG.levels ? 'QUEEN ' + Math.round(p * 100) + '%' : 'BOSS ' + Math.round(p * 100) + '%', CFG.W / 2, by - 3);
 }
 function drawVehicles(){
   // FORGE: UNITS tab drives both size (scale.tank) and how far out they sit (vehicles.spread).
@@ -1701,13 +1739,15 @@ function draw() {
   cx.fillStyle = '#0a0518'; cx.fillRect(-10, -10, CFG.W + 20, CFG.H + 20);
   cx.drawImage(ART.backdrop, 0, 0);
   { const env = envNow(); if (env.bg.ok) {                       // per-level backdrop art (FORGE WORLD)
-      // Deep background / boss area. Scales 100% → 200% over the level's running time, anchored
+      // Deep background / boss area. Scales 75% → 200% over the level's running time, anchored
       // on the vanishing point, so the squad reads as physically closing the length of the
       // corridor. It lands at full 200% exactly when the boss encounter begins, and holds there.
       const dur  = BAL.waveSec[G.level - 1] || 60;
       const prog = G.state === 'play' ? Math.min(1, G.levelT / dur)
                  : G.state === 'boss' ? 1 : 0;
-      const zoom = 1 + prog * (BG_ZOOM_MAX - 1);
+      // ART.backdrop is already drawn beneath this layer, providing a deliberate safe matte while
+      // a 75%-scale background reveals more of the scene instead of exposing canvas edges.
+      const zoom = BG_ZOOM_START + prog * (BG_ZOOM_MAX - BG_ZOOM_START);
       const a = env.bg.width / env.bg.height;
       cx.save();
       cx.translate(CFG.W / 2, HORIZON_Y); cx.scale(zoom, zoom); cx.translate(-CFG.W / 2, -HORIZON_Y);
@@ -1729,6 +1769,7 @@ function draw() {
   if (G.state === 'shop')  { drawShop(); cx.restore(); return; }
 
   drawHorizonBoss();
+  drawBossProgressBar();
   drawFarHorde();
 
   // gates — UPRIGHT 3D energy walls standing on the road, blocking the path.
@@ -1981,7 +2022,17 @@ function draw() {
   cx.restore();
   dmgnums.each(d => { cx.globalAlpha = Math.max(0, d.a); cx.fillStyle = '#ffd75e';
     cx.font = 'bold 16px Segoe UI'; cx.textAlign = 'center'; cx.fillText(d.val, d.x, d.y); cx.globalAlpha = 1; });
-  if(G.streak>1&&G.streakT>0){const pop=1+Math.min(.18,G.streak*.002);cx.save();cx.translate(CFG.W/2,430);cx.scale(pop,pop);cx.textAlign='center';cx.font='900 54px Segoe UI';cx.lineWidth=7;cx.strokeStyle='#130524';cx.strokeText(G.streak,0,0);cx.fillStyle='#fff';cx.shadowColor='#8f4';cx.shadowBlur=16;cx.fillText(G.streak,0,0);cx.font='bold 15px Segoe UI';cx.fillStyle='#9ff';cx.fillText('KILL STREAK',0,25);cx.restore();}
+  // Kill-streak sits on the BACKGROUND band (above the road/horizon) so it no longer blocks
+  // enemies as they appear mid-corridor (task 5.3 — was CFG.W/2, 430).
+  if (G.streak > 1 && G.streakT > 0) {
+    const streakY = Math.max(96, HORIZON_Y * 0.48);
+    const pop = 1 + Math.min(.18, G.streak * .002);
+    cx.save(); cx.translate(CFG.W / 2, streakY); cx.scale(pop, pop); cx.textAlign = 'center';
+    cx.font = '900 48px Segoe UI'; cx.lineWidth = 7; cx.strokeStyle = '#130524';
+    cx.strokeText(G.streak, 0, 0); cx.fillStyle = '#fff'; cx.shadowColor = '#8f4'; cx.shadowBlur = 16;
+    cx.fillText(G.streak, 0, 0); cx.font = 'bold 14px Segoe UI'; cx.fillStyle = '#9ff';
+    cx.fillText('KILL STREAK', 0, 22); cx.restore();
+  }
 
   // deploy cue banner — "TANK INBOUND" / "<PERK> ONLINE": punch in, hold, fade out
   if (G.cueT > 0 && G.cueText) {
@@ -2200,14 +2251,19 @@ function drawShop() {
   if (G.ratingPending) drawRatingBanner(RATING_SHOP_Y, RATING_BANNER_H);
   const rowH = shopRowH(), boxH = Math.round(rowH * 0.8);
   SHOP.forEach((it, i) => {
-    const y = 300 + i * rowH, c = it.cost(G.meta[it.k]),
-          maxed = G.meta[it.k] >= it.max, can = !maxed && G.credits >= c;
+    const y = 300 + i * rowH, rank = G.meta[it.k] || 0, c = it.cost(rank),
+          maxed = rank >= it.max, can = !maxed && G.credits >= c;
     // solid-ish card fills (was 0.12/0.1 — near-invisible once the scrim went in)
     cx.fillStyle = can ? 'rgba(20,70,66,0.85)' : 'rgba(38,38,44,0.8)';
     cx.fillRect(60, y, CFG.W - 120, boxH);
     cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, boxH);
-    cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold ' + (rowH < 90 ? 17 : 20) + 'px Segoe UI';
-    cx.fillText(maxed ? `${it.name}${G.meta[it.k]}  —  MAX` : `${it.name}${G.meta[it.k]}  —  ₵${c}`, CFG.W / 2, y + boxH / 2 + 7);
+    // 3.1 — clean label: "Start Squad +8 (rank 0/8)  —  ₵N" (never append rank into the name string)
+    const fontPx = rowH < 90 ? (it.name.length > 28 ? 13 : 15) : (it.name.length > 28 ? 15 : 18);
+    cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold ' + fontPx + 'px Segoe UI';
+    const label = maxed
+      ? `${it.name} (rank ${rank}/${it.max})  —  MAX`
+      : `${it.name} (rank ${rank}/${it.max})  —  ₵${c}`;
+    cx.fillText(label, CFG.W / 2, y + boxH / 2 + 7);
   });
   cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 840, CFG.W - 120, 70);
   cx.strokeStyle = '#fd4'; cx.strokeRect(60, 840, CFG.W - 120, 70);
