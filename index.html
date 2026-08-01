@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '1.8';
+const GAME_VERSION = '1.9';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -2670,6 +2670,14 @@ function renderTab(){
       <div class="row"><button id="envRep">⇧ REPLACE PNG</button>
         <button id="envClr" class="warn">✕ CLEAR TO DEFAULT</button></div>
       <div class="hint">path = road tile (scrolls toward you) · bg = deep background / boss area, skyline strip or full 540×960 (zooms 100%→200% across the level) · sideL / sideR = the two corridor walls, tiled vertically and scrolled toward you.</div>
+      <div id="envTaint" style="display:none;margin:10px 0;padding:9px 11px;border:1px solid #f66;border-radius:6px;background:#2a0b12;color:#fbb;line-height:1.45">
+        <b style="color:#f88">⚠ THIS TILE CANNOT BE SAVED YET</b><br>
+        The page is running from <b>file://</b>, so the browser locks the shipped PNG and refuses to export anything drawn over it.
+        Paint now and SAVE will fail.<br>
+        <b>Fix:</b> close this and launch with <b>Launch HiVE War.bat</b> (serves the game at http://127.0.0.1:8791 — everything works normally),
+        or import the PNG below to edit it right now.
+        <div class="row" style="margin-top:7px"><button id="envTaintImp" style="border-color:#f88;color:#fbb;font-weight:900">⇧ IMPORT THIS PNG TO EDIT</button></div>
+      </div>
       <div class="hint" style="color:#f4f;margin-top:12px">PAINT — click/drag to draw. SHIFT+CLICK draws a straight line from your last point to the new one (paint or erase, whichever is selected).</div>
       <div class="row">🎨 <input type="color" id="envCol" value="${brush.col}">
         SIZE <input type="range" id="envSize" min="1" max="40" value="${brush.size}">
@@ -2696,6 +2704,13 @@ function renderTab(){
     // before we can paint on it, and a slot with no art yet starts from a blank tile.
     loadEnvWork(key, () => {
       drawPaint(); bindPaint();
+      // Warn BEFORE any painting: on file:// the shipped PNG taints the canvas and SAVE can never
+      // succeed. Importing the same PNG through the file picker re-enters it as a dataURL, which
+      // is clean — so that button genuinely fixes it without leaving the editor.
+      if (canvasTainted(work)) {
+        const warn = body.querySelector('#envTaint'); warn.style.display = '';
+        warn.querySelector('#envTaintImp').onclick = () => { ef2.dataset.key = key; ef2.value = ''; ef2.click(); };
+      }
       const col = body.querySelector('#envCol'), sz = body.querySelector('#envSize');
       col.oninput = () => { brush.col = col.value; brush.erase = false;
         body.querySelector('#envErase').textContent = '⌫ ERASE'; };
@@ -2892,6 +2907,9 @@ function renderSprites(){
       <button id="spRev" class="warn">REVERT</button><button id="spDl">⇩ DOWNLOAD PNG</button></div>
     <div class="row">🎨 <input type="color" id="spCol" value="${brush.col}"> SIZE <input type="range" id="spSize" min="1" max="24" value="${brush.size}">
       <button id="spErase">${brush.erase?'✏ PAINT':'⌫ ERASE'}</button></div>
+    <div id="spTaint" style="display:none;margin:8px 0;padding:8px 10px;border:1px solid #f66;border-radius:6px;background:#2a0b12;color:#fbb">
+      <b style="color:#f88">⚠ CANNOT SAVE</b> — running from <b>file://</b> locks the shipped PNG, so SAVE LIVE and DOWNLOAD will fail.
+      Launch with <b>Launch HiVE War.bat</b> (http://127.0.0.1:8791), or use ⇧ IMPORT PNG to bring this strip in first.</div>
     <canvas id="forgePaint"></canvas>`;
   body.innerHTML = h;
   body.querySelector('#spBack').onclick=()=>{spriteSel=-1;renderSprites();};
@@ -2923,6 +2941,7 @@ function renderSprites(){
   body.querySelector('#spDl').onclick=()=>{ const d=safeDataURL(work); if(!d)return;
     const a=document.createElement('a'); a.href=d; a.download=r.key+'_strip.png'; a.click(); };
   drawFrames(); drawPaint(); bindPaint();
+  if (canvasTainted(work)) { const w = body.querySelector('#spTaint'); if (w) w.style.display = ''; }
 }
 // Load a WORLD tile into the shared `work` canvas as a 1-frame strip, so the sprite painter's
 // drawPaint / pushUndo / undo / bindPaint all apply to it unchanged. Async because the source has
@@ -3001,12 +3020,19 @@ function undo(){ if(!undoStack.length)return; const s=undoStack.pop();
   work=s.c; work._frames=s.c._frames||1;
   frameSel=Math.min(s.f, work._frames-1);
   drawFrames(); drawPaint(); }
+// Cheap up-front taint probe: read one pixel. Used to warn BEFORE any painting happens, so nobody
+// spends twenty minutes on a tile and only discovers at save time that it can never be exported.
+function canvasTainted(c){
+  try { c.getContext('2d').getImageData(0,0,1,1); return false; } catch(e){ return true; }
+}
+const TAINT_FIX = 'Open the game with "Launch HiVE War.bat" (it serves the game at ' +
+  'http://127.0.0.1:8791 and this problem disappears), or use ⇧ REPLACE PNG to import the file first.';
 // Exporting also reads pixels. Fail LOUDLY with the actual fix rather than dying silently.
 function safeDataURL(c){
   try { return c.toDataURL('image/png'); }
   catch(e){ alert('The browser blocked exporting this image (' + e.name + ').\n\n' +
     'The source PNG was read from a file:// page, which taints the canvas so it can never be exported.\n\n' +
-    'Fix: open the game over http (a local server), or use ⇧ REPLACE PNG to import the file first and then edit it.');
+    'Fix: ' + TAINT_FIX);
     return null; }
 }
 // Load an image so the canvas stays CLEAN where possible: fetch the bytes and re-enter them as a
