@@ -6,7 +6,7 @@
 // player-facing string) — only CACHE_VERSION needs bumping to bust stale caches; renaming
 // the prefix would work too, but bumping the version is the documented mechanism and is
 // sufficient on its own to force every returning tester to refetch the shell.
-const CACHE_VERSION = 'v4';   // bumped 2026-07-31 for game v1.6 (quit, tank scale/spread, world-tile painting)
+const CACHE_VERSION = 'v5';   // bumped 2026-08-01 for game v1.7 (paint undo/save fix, line tool, resize/crop, points-only barriers)
 const CACHE_NAME = `hiveswarm-shell-${CACHE_VERSION}`;
 const PRECACHE_URLS = ['./', './index.html', './manifest.webmanifest'];
 

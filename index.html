@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '1.6';
+const GAME_VERSION = '1.7';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -583,9 +583,16 @@ function spawnGatePair() {
   const mk = (lane, allowLocked) => {
     const roll = rng();
     let kind, val, need, locked = false;
+    // POINTS-ONLY RAMP (owner request 2026-08-01): for the first MUL_UNLOCK_ROUND rounds every gate
+    // is a plain +/- point value — no multipliers — so the maths stays readable while players learn
+    // the barrier read. Campaign is exactly 10 levels, so multipliers first appear in endless loops.
+    // A "round" counts across loops: level 3 of endless loop 1 is round 13.
+    const roundNo = G.level + (G.loop || 0) * CFG.levels;
+    const mulAllowed = roundNo > MUL_UNLOCK_ROUND;
     // Reference mix: negatives are COMMON red barriers, multipliers rare
     if (roll < 0.34) { kind = 'add'; const r = GB.plus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
-    else if (roll < 0.42) { kind = 'mul'; const r = GB.mult[li]; val = Math.round(rr(r[0], r[1]) * 10) / 10; need = GB.hpStepMult(G.level); }
+    else if (roll < 0.42 && mulAllowed) { kind = 'mul'; const r = GB.mult[li]; val = Math.round(rr(r[0], r[1]) * 10) / 10; need = GB.hpStepMult(G.level); }
+    else if (roll < 0.42) { kind = 'add'; const r = GB.plus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }   // pre-unlock: that slot becomes points
     else if (roll < 0.52) { kind = 'wpn'; val = 0; need = GB.hpStepWpn(G.level); }
     else { kind = 'add'; const r = GB.minus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
     // LOCKED gates are ALWAYS a big red negative, unshootable, DEVASTATING on contact.
@@ -1387,6 +1394,10 @@ const WALL_UNITS = 14;
 // Boss entrance drop: starting speed, gravity, terminal speed (px/s). Tuned so the fall reads as a
 // heavy body dropping onto the path rather than the old constant 60px/s glide.
 const BOSS_FALL_V0 = 90, BOSS_FALL_G = 900, BOSS_FALL_MAX = 900;
+// Barriers stay POINTS-ONLY (+/- values, no xN multipliers) until this many rounds have been
+// played. Campaign is 10 levels, so 10 = the whole campaign is points and multipliers start in
+// endless. Lower it to let multipliers in earlier.
+const MUL_UNLOCK_ROUND = 10;
 function loadEnv(level) {
   if (ENVIMG[level]) return ENVIMG[level];
   // Each slot walks a candidate list: FORGE override → shipped PNG → the next fallback slot.
@@ -2643,6 +2654,7 @@ function renderTab(){
     // opens a panel like the SPRITES tab does, so you can review it before replacing or clearing.)
     const key = envSel, lvl = +key.match(/^L(\d+)_/)[1], slot = key.split('_')[1];
     const src = ENV_OVR[key] || `assets/env/${key}.png`;
+    const isBgSlot = /_bg$/.test(key);
     body.innerHTML = `<div class="row"><button id="envBack">← BACK</button>
         <b style="color:#4ff">LEVEL ${lvl}</b> <span style="color:#f4f">${slot.toUpperCase()}</span>
         <span class="hint">${(EDIT.env[lvl-1]||{}).name||''}</span></div>
@@ -2652,13 +2664,20 @@ function renderTab(){
       <div class="row"><button id="envRep">⇧ REPLACE PNG</button>
         <button id="envClr" class="warn">✕ CLEAR TO DEFAULT</button></div>
       <div class="hint">path = road tile (scrolls toward you) · bg = deep background / boss area, skyline strip or full 540×960 (zooms 100%→200% across the level) · sideL / sideR = the two corridor walls, tiled vertically and scrolled toward you.</div>
-      <div class="hint" style="color:#f4f;margin-top:12px">PAINT — same brush as the SPRITES tab. Edits are live after 💾 SAVE LIVE.</div>
+      <div class="hint" style="color:#f4f;margin-top:12px">PAINT — click/drag to draw. SHIFT+CLICK draws a straight line from your last point to the new one (paint or erase, whichever is selected).</div>
       <div class="row">🎨 <input type="color" id="envCol" value="${brush.col}">
         SIZE <input type="range" id="envSize" min="1" max="40" value="${brush.size}">
         <button id="envErase">${brush.erase?'✏ PAINT':'⌫ ERASE'}</button>
         <button id="envUndo">↩ UNDO</button>
         <button id="envSave">💾 SAVE LIVE</button>
         <button id="envDl">⇩ DOWNLOAD PNG</button></div>
+      <div class="hint" style="color:#f4f;margin-top:10px">SIZE / CROP — RESIZE rescales the whole image into the new size. CROP keeps only the X/Y/W/H box. Both are undoable.</div>
+      <div class="row">W <input type="number" id="envW" style="width:64px"> H <input type="number" id="envH" style="width:64px">
+        <button id="envResize">⤢ RESIZE</button>
+        <button id="envFit">⤢ FIT SLOT (${isBgSlot?'540×960':'512×512'})</button></div>
+      <div class="row">X <input type="number" id="envCX" style="width:56px" value="0"> Y <input type="number" id="envCY" style="width:56px" value="0">
+        W <input type="number" id="envCW" style="width:64px"> H <input type="number" id="envCH" style="width:64px">
+        <button id="envCrop">⧉ CROP</button></div>
       <div class="row"><canvas id="forgePaint"></canvas></div>
       <input type="file" id="envFile" accept="image/*" style="display:none">`;
     body.querySelector('#envBack').onclick = () => { envSel = null; spriteSel = -1; renderTab(); };
@@ -2680,10 +2699,40 @@ function renderTab(){
       body.querySelector('#envErase').onclick = e => { brush.erase = !brush.erase;
         e.target.textContent = brush.erase ? '✏ PAINT' : '⌫ ERASE'; };
       body.querySelector('#envUndo').onclick = () => undo();
-      body.querySelector('#envDl').onclick = () => { const a = document.createElement('a');
-        a.href = work.toDataURL('image/png'); a.download = key + '.png'; a.click(); };
+      // --- size / crop -------------------------------------------------------------------
+      const wEl=body.querySelector('#envW'), hEl=body.querySelector('#envH');
+      const cwEl=body.querySelector('#envCW'), chEl=body.querySelector('#envCH');
+      const cxEl=body.querySelector('#envCX'), cyEl=body.querySelector('#envCY');
+      const syncDims = () => { wEl.value=work.width; hEl.value=work.height;
+                               cwEl.value=work.width; chEl.value=work.height; };
+      syncDims();
+      // Replace `work` with a new canvas. drawImage-only, so a tainted source still resizes/crops.
+      const reshape = (nw, nh, sx, sy, sw, sh) => {
+        nw=Math.max(1,Math.round(nw)); nh=Math.max(1,Math.round(nh));
+        if(nw>4096||nh>4096) return alert('Max 4096 px per side.');
+        pushUndo();                                   // undo stack holds frame-sized copies…
+        const c=document.createElement('canvas'); c.width=nw; c.height=nh;
+        try{ c.getContext('2d').drawImage(work, sx,sy,sw,sh, 0,0,nw,nh); }catch(e){}
+        work=c; work._frames=1; frameSel=0;
+        undoStack.length=0;                           // …so they're invalid once the canvas resizes
+        syncDims(); drawPaint();
+      };
+      body.querySelector('#envResize').onclick = () =>
+        reshape(+wEl.value||work.width, +hEl.value||work.height, 0,0, work.width, work.height);
+      body.querySelector('#envFit').onclick = () => {
+        const fw=isBgSlot?540:512, fh=isBgSlot?960:512;
+        reshape(fw,fh, 0,0, work.width, work.height); };
+      body.querySelector('#envCrop').onclick = () => {
+        const sx=Math.max(0,+cxEl.value||0), sy=Math.max(0,+cyEl.value||0);
+        const sw=Math.min(work.width-sx, +cwEl.value||work.width);
+        const sh=Math.min(work.height-sy, +chEl.value||work.height);
+        if(sw<1||sh<1) return alert('Crop box is outside the image.');
+        reshape(sw,sh, sx,sy, sw,sh); };
+      // --- export ------------------------------------------------------------------------
+      body.querySelector('#envDl').onclick = () => { const d = safeDataURL(work); if(!d) return;
+        const a = document.createElement('a'); a.href = d; a.download = key + '.png'; a.click(); };
       body.querySelector('#envSave').onclick = () => {
-        const data = work.toDataURL('image/png');
+        const data = safeDataURL(work); if (!data) return;   // tainted: safeDataURL already explained
         const prev = ENV_OVR[key]; ENV_OVR[key] = data;
         try { localStorage.setItem(ENV_KEY, JSON.stringify(ENV_OVR)); }
         catch (err) { if (prev === undefined) delete ENV_OVR[key]; else ENV_OVR[key] = prev;
@@ -2866,25 +2915,22 @@ function renderSprites(){
   body.querySelector('#spSave').onclick=applyWork;
   body.querySelector('#spRev').onclick=()=>{ if(confirm('Revert this sprite to the shipped PNG?')){
     delete savedSprites[r.key]; localStorage.setItem(SKEY,JSON.stringify(savedSprites)); location.reload(); } };
-  body.querySelector('#spDl').onclick=()=>{ const a=document.createElement('a');
-    a.href=work.toDataURL('image/png'); a.download=r.key+'_strip.png'; a.click(); };
+  body.querySelector('#spDl').onclick=()=>{ const d=safeDataURL(work); if(!d)return;
+    const a=document.createElement('a'); a.href=d; a.download=r.key+'_strip.png'; a.click(); };
   drawFrames(); drawPaint(); bindPaint();
 }
 // Load a WORLD tile into the shared `work` canvas as a 1-frame strip, so the sprite painter's
 // drawPaint / pushUndo / undo / bindPaint all apply to it unchanged. Async because the source has
 // to decode first; a slot with no art yet opens as a blank tile at that slot's natural size.
 function loadEnvWork(key, done){
-  const im = new Image();
-  const blank = () => { const isBg = /_bg$/.test(key);
+  const isBg = /_bg$/.test(key);
+  loadCleanImage(ENV_OVR[key] || ('assets/env/' + key + '.png'), im => {
     work = document.createElement('canvas');
-    work.width = isBg ? 540 : 512; work.height = isBg ? 960 : 512; };
-  im.onload = () => {
-    work = document.createElement('canvas');
-    work.width = im.naturalWidth || 512; work.height = im.naturalHeight || 512;
-    try { work.getContext('2d').drawImage(im, 0, 0); } catch (e) {}
-    work._frames = 1; frameSel = 0; undoStack = []; done(true); };
-  im.onerror = () => { blank(); work._frames = 1; frameSel = 0; undoStack = []; done(false); };
-  im.src = ENV_OVR[key] || ('assets/env/' + key + '.png');
+    if (im) { work.width = im.naturalWidth || 512; work.height = im.naturalHeight || 512;
+              try { work.getContext('2d').drawImage(im, 0, 0); } catch (e) {} }
+    else { work.width = isBg ? 540 : 512; work.height = isBg ? 960 : 512; }   // empty slot: blank tile
+    work._frames = 1; frameSel = 0; undoStack = []; done(!!im);
+  });
 }
 function loadWork(){ const r=REG[spriteSel], im=r.h.img, cell=r.cell||128;
   work=document.createElement('canvas');
@@ -2904,21 +2950,62 @@ function drawPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return;
   pc.width=cw*scale; pc.height=chh*scale; pc._scale=scale;
   const g=pc.getContext('2d'); g.imageSmoothingEnabled=false;
   g.clearRect(0,0,pc.width,pc.height); g.drawImage(work,frameSel*cw,0,cw,chh,0,0,pc.width,pc.height); }
-function pushUndo(){ const cw=work.width/work._frames;
-  undoStack.push(work.getContext('2d').getImageData(frameSel*cw,0,cw,work.height));
+// Undo snapshots are CANVAS COPIES, not getImageData. getImageData READS pixels, which throws a
+// SecurityError the moment the canvas is tainted — and it taints as soon as a shipped assets/*.png
+// is drawn into it from a file:// page. That threw inside the pointerdown handler BEFORE the first
+// dot was drawn, so the stack stayed empty (UNDO looked dead) while dragging still painted, because
+// `painting` had already been set. drawImage never reads pixels, so this works tainted or not.
+function pushUndo(){ const cw=work.width/work._frames, c=document.createElement('canvas');
+  c.width=cw; c.height=work.height;
+  try{ c.getContext('2d').drawImage(work, frameSel*cw,0,cw,work.height, 0,0,cw,work.height); }catch(e){}
+  undoStack.push({ f:frameSel, c });
   if(undoStack.length>25)undoStack.shift(); }
-function undo(){ if(!undoStack.length)return; const cw=work.width/work._frames;
-  work.getContext('2d').putImageData(undoStack.pop(),frameSel*cw,0); drawFrames(); drawPaint(); }
-function bindPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return; let painting=false;
-  const dot=(e)=>{ const rct=pc.getBoundingClientRect(), s=pc._scale, cw=work.width/work._frames;
-    const x=frameSel*cw+(e.clientX-rct.left)/s, y=(e.clientY-rct.top)/s;
-    const g=work.getContext('2d'); g.save();
-    if(brush.erase){g.globalCompositeOperation='destination-out';g.fillStyle='#000';}
-    else g.fillStyle=brush.col;
-    g.beginPath(); g.arc(x,y,brush.size/2,0,7); g.fill(); g.restore(); drawPaint(); };
-  pc.addEventListener('pointerdown',e=>{painting=true;pushUndo();dot(e);pc.setPointerCapture(e.pointerId);});
-  pc.addEventListener('pointermove',e=>{if(painting)dot(e);});
-  pc.addEventListener('pointerup',()=>{painting=false;drawFrames();}); }
+function undo(){ if(!undoStack.length)return; const s=undoStack.pop(), cw=work.width/work._frames;
+  const g=work.getContext('2d');
+  g.clearRect(s.f*cw,0,cw,work.height); g.drawImage(s.c,s.f*cw,0);   // clear+draw = replace the frame
+  drawFrames(); drawPaint(); }
+// Exporting also reads pixels. Fail LOUDLY with the actual fix rather than dying silently.
+function safeDataURL(c){
+  try { return c.toDataURL('image/png'); }
+  catch(e){ alert('The browser blocked exporting this image (' + e.name + ').\n\n' +
+    'The source PNG was read from a file:// page, which taints the canvas so it can never be exported.\n\n' +
+    'Fix: open the game over http (a local server), or use ⇧ REPLACE PNG to import the file first and then edit it.');
+    return null; }
+}
+// Load an image so the canvas stays CLEAN where possible: fetch the bytes and re-enter them as a
+// dataURL (same-origin http). dataURLs are already safe. If fetch is unavailable (file://) fall
+// back to a direct load — the canvas will taint, but undo still works and export explains itself.
+function loadCleanImage(src, cb){
+  const done = d => { const im=new Image(); im.onload=()=>cb(im); im.onerror=()=>cb(null); im.src=d; };
+  if (/^data:/.test(src)) return done(src);
+  try {
+    fetch(src).then(r => { if(!r.ok) throw new Error('http '+r.status); return r.blob(); })
+      .then(b => new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(b); }))
+      .then(done)
+      .catch(() => done(src));
+  } catch(e) { done(src); }
+}
+function bindPaint(){ const pc=body.querySelector('#forgePaint'); if(!pc)return;
+  let painting=false, last=null;                       // last = previous point, in WORK coordinates
+  const pt=(e)=>{ const rct=pc.getBoundingClientRect(), s=pc._scale, cw=work.width/work._frames;
+    return { x: frameSel*cw + (e.clientX-rct.left)/s, y: (e.clientY-rct.top)/s }; };
+  // One stroke primitive for everything. Round caps + a line between successive points means a fast
+  // drag leaves a continuous stroke instead of the gapped row of dots the old per-event arc drew.
+  const stroke=(a,b)=>{ const g=work.getContext('2d'); g.save();
+    if(brush.erase){ g.globalCompositeOperation='destination-out'; g.strokeStyle='#000'; g.fillStyle='#000'; }
+    else { g.strokeStyle=brush.col; g.fillStyle=brush.col; }
+    g.lineWidth=Math.max(1,brush.size); g.lineCap='round'; g.lineJoin='round';
+    if(!b || (a.x===b.x && a.y===b.y)){ g.beginPath(); g.arc(a.x,a.y,Math.max(0.5,brush.size/2),0,7); g.fill(); }
+    else { g.beginPath(); g.moveTo(a.x,a.y); g.lineTo(b.x,b.y); g.stroke(); }
+    g.restore(); drawPaint(); };
+  pc.addEventListener('pointerdown',e=>{
+    const p=pt(e);
+    // SHIFT + click = straight line from the last point to this one, in whichever tool is active
+    // (paint or erase). Anchor updates, so shift-clicking repeatedly chains connected segments.
+    if(e.shiftKey && last){ pushUndo(); stroke(last,p); last=p; drawFrames(); return; }
+    painting=true; pushUndo(); stroke(p,null); last=p; pc.setPointerCapture(e.pointerId); });
+  pc.addEventListener('pointermove',e=>{ if(!painting)return; const p=pt(e); stroke(last||p,p); last=p; });
+  pc.addEventListener('pointerup',()=>{ painting=false; drawFrames(); }); }
 function frameOp(op){ const cw=work.width/work._frames, chh=work.height, n=work._frames;
   if(op==='del'&&n<=1)return alert('A sprite needs at least 1 frame');
   const n2=op==='dup'?n+1:n-1;
@@ -2929,7 +3016,8 @@ function frameOp(op){ const cw=work.width/work._frames, chh=work.height, n=work.
     if(op==='dup'&&f===frameSel){g.drawImage(work,f*cw,0,cw,chh,dst*cw,0,cw,chh);dst++;} }
   work=c2; work._frames=n2; frameSel=Math.min(frameSel,n2-1); undoStack=[];
   drawFrames(); drawPaint(); }
-function applyWork(){ const r=REG[spriteSel], data=work.toDataURL('image/png');
+function applyWork(){ const r=REG[spriteSel], data=safeDataURL(work);
+  if(!data) return;                                  // tainted canvas — safeDataURL already explained why
   r.h.img.src=data; r.h.img.ok=true; r.h.frames=work._frames;
   savedSprites[r.key]={data,frames:work._frames,fps:r.h.fps};   // persist from the work canvas, not the (maybe undecoded) Image
   try{localStorage.setItem(SKEY,JSON.stringify(savedSprites));}catch(e){alert('Sprite too large for localStorage — use DOWNLOAD instead');}
