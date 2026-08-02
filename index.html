@@ -121,7 +121,7 @@ const G = {
   perks: {},               // name -> stacks
   droneT: 0, orbitalT: 0, laserT: 0, laserX: 0, laserSeq: 0,
   hitStop:0, flashT:0, graceT:0, squadFlash:0, bossKillT:0, vehicleT:0, vehicleCD:4, vehicleFire:0,
-  mode:'campaign', loop:0, runStart:0, maxSquad:10, runBosses:0, creditsStart:0, firstShopCredits:null, reviveUsed:false,
+  mode:'campaign', loop:0, runStart:0, maxSquad:10, runBosses:0, creditsStart:0, firstShopCredits:null, lastDeathCause:null, reviveUsed:false,
   boss: null,
   meta: load(),
 };
@@ -531,7 +531,7 @@ function startRun(mode='campaign') {
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
-  G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.firstShopCredits=null;G.reviveUsed=false;
+  G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.firstShopCredits=null;G.lastDeathCause=null;G.reviveUsed=false;
   G.paused=false; rollers.length=0; G.rollT=5; loadEnv(G.level);
   seed = runSeed(G.level);
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
@@ -728,7 +728,7 @@ function gatePass(g) {
   if (!g.locked) {
     for (const o of gates) if (o !== g && o.pairId === g.pairId && o.live && !o.locked && !o.spent) { o.spent = true; o.val = 0; }
   }
-  if (G.squad <= 0) die();
+  if (G.squad <= 0) die('gate');
 }
 
 // ---------- deploy cues (big center-screen banner: "TANK INBOUND" etc.) ----------
@@ -945,13 +945,13 @@ function queueBlast(x, y, r, dmg) {
   blastQueue.length = 0;
   blastDraining = false;
 }
-function die() {
+function die(cause='damage') {
   // Second guard for the invincible toggle: barrier penalties cut the squad directly, so they can
   // reach 0 without ever going through loseUnits(). Catch it here too, and keep the run alive.
   if (window.FORGE_DBG && FORGE_DBG.invincible) { G.squad = Math.max(1, G.squad); return; }
-  G.state='dead'; AUDIO.loopTank(false); G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
+  G.lastDeathCause=cause; G.state='dead'; AUDIO.loopTank(false); G.endElapsed=(performance.now()-G.runStart)/1000;   // freeze the clock at death
   if(G.mode==='endless')G.meta.bestScore=Math.max(G.meta.bestScore||0,endlessScore());save(); }
-function loseUnits(n, x, y) {
+function loseUnits(n, x, y, cause='damage') {
   // FORGE PLAYER tab test toggle — absorb every combat loss, but still show a hit spark so you can
   // see WHAT would have hurt you while testing.
   if (window.FORGE_DBG && FORGE_DBG.invincible) { fx(x, y, '#6f6'); return; }
@@ -961,7 +961,7 @@ function loseUnits(n, x, y) {
   n = Math.round(n * (1 - Math.min(90, EDIT.player.armor) / 100));   // FORGE armor: % of losses prevented
   G.squad -= Math.max(1, n - (shield ? 1 : 0));
   G.squadFlash = 0.22; fx(x, y, '#48f');
-  if (G.squad <= 0) die();
+  if (G.squad <= 0) die(cause);
 }
 
 // ---------- fx ----------
@@ -1129,7 +1129,27 @@ function update(dt) {
     // A roller that is about to reach the squad outranks a distant gate; choose the clear road edge.
     const threat = rollers.find(r => r.y > CFG.H - 360 && r.y < CFG.H - 120);
     if (threat) tx = threat.x < CFG.W / 2 ? CFG.W - 58 : 58;
-    G.px += Math.sign(tx - G.px) * Math.min(Math.abs(tx - G.px), 320 * dt);
+    // Before enemies latch they home toward the current player lane. A touch player can kite
+    // them; do the same unless a gate is about to be crossed.
+    const imminentGate = best && best.y > CFG.H - 330;
+    const enemyThreat = telemetryBot && !imminentGate
+      ? (() => { let near = null; enemies.each(e => { if (e.mode !== 2 && e.y > CFG.H - 330 && (!near || e.y > near.y)) near = e; }); return near; })()
+      : null;
+    if (enemyThreat && !threat) tx = enemyThreat.x < CFG.W / 2 ? CFG.W - 58 : 58;
+    // Boss attacks are explicitly telegraphed lanes; move clear before their active window.
+    if (telemetryBot && G.boss && G.boss.attack) {
+      if (G.boss.attack === 'acid') tx = G.boss.attackX < CFG.W / 2 ? CFG.W - 58 : 58;
+      else if (G.boss.attack === 'sweep') {
+        const p = Math.max(0, Math.min(1, (G.boss.attackClock - .75) / .65));
+        const slashX = G.boss.attackSide < 0 ? CFG.W - p * CFG.W : p * CFG.W;
+        tx = slashX < CFG.W / 2 ? CFG.W - 58 : 58;
+      }
+    }
+    // Human touch movement writes the desired lane directly. Preserve the legacy
+    // finite-rate `?test=1` fixture, but let continuous telemetry use the same
+    // instantaneous lane reach a player actually has.
+    if (telemetryBot) G.px = tx;
+    else G.px += Math.sign(tx - G.px) * Math.min(Math.abs(tx - G.px), 320 * dt);
   }
 
   fire(dt);
@@ -1205,7 +1225,7 @@ function update(dt) {
         // throttled like the death cue — a latched swarm would otherwise machine-gun the attack sample
         if (G.t - (G.atkSfxT || 0) > 0.25) { G.atkSfxT = G.t;
           AUDIO.sample(enemyRow(e.kind).sfxAttack || 'xenohit'); }
-        loseUnits(loss, e.x, e.y);
+        loseUnits(loss, e.x, e.y, `enemy:${e.kind}`);
         if (G.squad <= 0) return;
       }
     } else {
@@ -1351,7 +1371,7 @@ function bossAttackUpdate(B, dt) {
   if(B.attackClock>=tele&&B.attackClock<tele+active&&!B.attackHit){let hit=false;
     if(B.attack==='acid')hit=Math.abs(G.px-B.attackX)<48;else{const p=(B.attackClock-tele)/active;
       const x=B.attackSide<0?CFG.W-p*CFG.W:p*CFG.W;hit=Math.abs(G.px-x)<42;}
-    if(hit){B.attackHit=true;loseUnits(B.queen?10:Math.max(2,Math.round(1.5+G.level*0.5)),G.px,CFG.H-110);G.shake=7;}}
+    if(hit){B.attackHit=true;loseUnits(B.queen?10:Math.max(2,Math.round(1.5+G.level*0.5)),G.px,CFG.H-110,'boss');G.shake=7;}}
   if(B.attackClock>=tele+active)B.attack=null;
 }
 function bossKill() {
@@ -1658,7 +1678,7 @@ function rollerUpdate(dt) {
       } });
     if (smashed) { boom(r.x, r.y, 1.1); G.credits += 5; AUDIO.sample('grenade'); rollers.splice(i, 1); continue; }
     if (r.y > CFG.H - 150 && Math.abs(r.x - G.px) < r.size / 2 + 42) {   // plows into the squad
-      loseUnits(R.dmg, r.x, r.y); boom(r.x, r.y, 1.2); G.shake = Math.max(G.shake, 5); rollers.splice(i, 1); continue; }
+      loseUnits(R.dmg, r.x, r.y, 'roller'); boom(r.x, r.y, 1.2); G.shake = Math.max(G.shake, 5); rollers.splice(i, 1); continue; }
     if (r.y > CFG.H + 60) rollers.splice(i, 1);
   }
 }
@@ -3528,7 +3548,7 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0,
-  testBot, telemetryBot, telemetrySpeed, telemetrySeed, simTime:G.t, firstShopCredits:G.firstShopCredits });
+  testBot, telemetryBot, telemetrySpeed, telemetrySeed, simTime:G.t, firstShopCredits:G.firstShopCredits, lastDeathCause:G.lastDeathCause });
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is

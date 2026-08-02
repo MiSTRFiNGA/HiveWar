@@ -33,11 +33,11 @@ def one_run(browser, base_url, index, cap_sec, speed):
             if state.get("state") in ("dead", "win"):
                 return {"run": index, "seed": seed, "sim_sec": round(elapsed, 1), "state": state["state"],
                         "level": state.get("level"), "credits": state.get("credits"),
-                        "first_shop_credits": first_shop_credits, "kills": state.get("kills"),
+                        "first_shop_credits": first_shop_credits, "death_cause": state.get("lastDeathCause"), "kills": state.get("kills"),
                         "errors": errors}
         return {"run": index, "seed": seed, "sim_sec": cap_sec, "state": "TIMEOUT", "level": state.get("level"),
                 "credits": state.get("credits"), "first_shop_credits": first_shop_credits,
-                "kills": state.get("kills"), "errors": errors}
+                "death_cause": state.get("lastDeathCause"), "kills": state.get("kills"), "errors": errors}
     finally:
         page.close()
 
