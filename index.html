@@ -856,20 +856,27 @@ function spawnWave(dt) {
     const e = enemies.alloc(); if (!e) return;
     e.kind = pickKind(lvl);                     // FORGE: weighted spawn %s, editable live
     const K = enemyRow(e.kind);
-    if (G.clusterT === undefined || G.clusterT <= 0) {         // re-roll swarm cluster lane ~2s
+    if (G.clusterT === undefined || G.clusterT <= 0 || !Number.isFinite(G.clusterLane)) {
+      // re-roll swarm cluster lane ~2s — always a finite seed (NaN here used to poison e.x → gradient crash)
       G.clusterLane = rr(-0.7, 0.7); G.clusterT = 1.6 + rng() * 1.2;
     }
     // lane -1..1 across the road; looser clusters + more scatter so the swarm BLANKETS the
     // road's full width up top (convergence on the player only happens near the bottom)
-    e.lane = e.kind === 4 ? (G.px - CFG.W/2) / Math.max(1, roadHalfWidth(0.75))
-           : Math.max(-0.92, Math.min(0.92, rng() < 0.55 ? G.clusterLane + rr(-0.4, 0.4) : rr(-0.9, 0.9)));
+    const px = Number.isFinite(G.px) ? G.px : CFG.W / 2;
+    let lane = e.kind === 4 ? (px - CFG.W / 2) / Math.max(1, roadHalfWidth(0.75))
+           : (rng() < 0.55 ? G.clusterLane + rr(-0.4, 0.4) : rr(-0.9, 0.9));
+    if (!Number.isFinite(lane)) lane = 0;
+    e.lane = Math.max(-0.92, Math.min(0.92, lane));
     e.lane0 = e.lane;                                  // remembered roaming lane for the spread phase
     e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = 0; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
-    e.x = CFG.W/2 + e.lane * roadHalfWidthAtY(e.y);
-    e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
+    const hw = roadHalfWidthAtY(e.y);
+    e.x = CFG.W / 2 + e.lane * (Number.isFinite(hw) ? hw : CFG.W * 0.08);
+    if (!Number.isFinite(e.x)) e.x = CFG.W / 2;
+    e.vx = rr(-18, 18); e.vy = (K && Number.isFinite(K.spd) ? K.spd : 40) + lvl * 7 + CFG.scrollSpd * 0.35;
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
-    e.r = K.r * enemyRow(e.kind).scale; e.t = 0; e.acidT = 0; e.buffed = 0;
+    const sc = (enemyRow(e.kind) || {}).scale; e.r = (K && K.r ? K.r : 14) * (Number.isFinite(sc) ? sc : 1);
+    e.t = 0; e.acidT = 0; e.buffed = 0;
   }
 }
 function spawnBoss() {
@@ -1136,9 +1143,14 @@ function update(dt) {
     const hw = roadHalfWidthAtY(e.y);   // lateral extent must match the DRAWN road, not roadY's curve
     // per-enemy crowd offset so the swarm mobs the squad as a pack, not a single-file line
     if (e.crowd === undefined) e.crowd = ((e.phase * 2.13) % 1 - 0.5) * 0.55;
+    // Heal any poisoned lane/x before movement or draw (createRadialGradient non-finite crash).
+    if (!Number.isFinite(e.lane)) e.lane = 0;
+    if (!Number.isFinite(e.x)) e.x = CFG.W / 2;
+    if (!Number.isFinite(e.y)) e.y = HORIZON_Y + 20;
     if (e.mode === 2) {
       // LATCHED: reached the squad — stay at the front line and keep attacking until killed
-      const tx = G.px + e.crowd * 150;                       // crowd around the squad, tracking its moves
+      const px = Number.isFinite(G.px) ? G.px : CFG.W / 2;
+      const tx = px + e.crowd * 150;                       // crowd around the squad, tracking its moves
       e.x += (tx - e.x) * Math.min(1, 7 * dt);
       const lunge = Math.max(0, Math.sin(e.t * 6 + e.phase)) * 14;   // rhythmic biting lunges
       e.y += ((CFG.H - 145 + lunge) - e.y) * Math.min(1, 8 * dt);
@@ -1159,20 +1171,24 @@ function update(dt) {
       // hard toward the player. Early swarm = wide wall you must sweep; late swarm = converging bite.
       const FUNNEL_Y = CFG.H - 330;                      // "blue circle": where the turn toward the player begins
       const funnel = Math.max(0, Math.min(1, (e.y - FUNNEL_Y) / 140));   // 0 above the line → 1 near the squad
+      const px = Number.isFinite(G.px) ? G.px : CFG.W / 2;
+      const safeHw = Number.isFinite(hw) && hw > 0 ? hw : CFG.W * 0.08;
       const targetLane = funnel === 0 ? e.lane
-        : (G.px - CFG.W/2) / Math.max(1, hw) + e.crowd * (1 - ez) * 0.6;
+        : (px - CFG.W / 2) / Math.max(1, safeHw) + e.crowd * (1 - ez) * 0.6;
       const homing = funnel * 2.6 * (e.buffed ? 1.5 : 1);
       if (e.kind === 3) {                                // winged diver: swoop wide, dive at the squad late
         const swoop = Math.sin(e.t * 4 + e.phase) * (0.35 * (1 - funnel * 0.7));
         e.lane += (targetLane - e.lane) * homing * 1.4 * dt;
-        e.x = CFG.W/2 + Math.max(-0.95, Math.min(0.95, e.lane + swoop)) * hw;
+        if (!Number.isFinite(e.lane)) e.lane = 0;
+        e.x = CFG.W/2 + Math.max(-0.95, Math.min(0.95, e.lane + swoop)) * safeHw;
         e.y += e.vy * dt;
       } else {
         if (e.wig === undefined) e.wig = 2.0 + (e.phase * 3.3) % 2.6;   // per-enemy skitter rate
         const weave = Math.sin(e.t * e.wig + e.phase) * 0.06 + Math.sin(e.t * 0.7 + e.phase * 2.0) * 0.09;
         e.lane += (targetLane - e.lane) * homing * dt;
+        if (!Number.isFinite(e.lane)) e.lane = 0;
         const lane = Math.max(-0.96, Math.min(0.96, e.lane + weave));
-        e.x = CFG.W/2 + lane * hw;
+        e.x = CFG.W/2 + lane * safeHw;
         const crawl = 0.5 + 0.8 * Math.max(0, Math.sin(e.t * (2.3 + (e.phase % 1.0)) + e.phase));  // creep surges
         e.y += e.vy * crawl * (e.buffed ? 1.45 : 1) * dt;
       }
@@ -1482,7 +1498,7 @@ const deathFx = [];                            // one-shot 'Die' strip playbacks
 const ENVIMG = {};
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
 let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
-const BG_ZOOM_START = 0.75, BG_ZOOM_MAX = 2;    // reveal more background at level start; reach 200% at the boss
+const BG_ZOOM_START = 1.0, BG_ZOOM_MAX = 2;     // Eric ruling 2026-08-01: retain full backdrop at level start
 // How far the wall tops rise above the horizon at the player's feet, as a fraction of the road's
 // on-screen depth. 0 = tops sit exactly on the horizon; bigger = taller corridor. The walls scroll
 // in lockstep with the floor (shared vAt), so there's no separate scroll rate to tune.
@@ -1934,7 +1950,8 @@ function draw() {
     if (e.kind === 5) {                               // psychoid coordination aura (pulsing purple ring)
       cx.save(); cx.globalCompositeOperation = 'lighter';
       const pr = 140 + Math.sin(e.t * 3) * 10; cx.globalAlpha = 0.10 + 0.06 * Math.sin(e.t * 3);
-      const rg = cx.createRadialGradient(e.x, e.y, 10, e.x, e.y, pr);
+      if (!Number.isFinite(e.x) || !Number.isFinite(e.y) || !Number.isFinite(pr)) return;
+      const rg = cx.createRadialGradient(e.x, e.y, 10, e.x, e.y, Math.max(1, pr));
       rg.addColorStop(0, 'rgba(200,120,255,.5)'); rg.addColorStop(1, 'rgba(120,60,255,0)');
       cx.fillStyle = rg; cx.beginPath(); cx.arc(e.x, e.y, pr, 0, 7); cx.fill(); cx.restore();
     } else if (e.buffed) {                             // enemies under a psychoid aura glow purple
@@ -1979,6 +1996,7 @@ function draw() {
     if (!s.boom && k < 0.35) { const bw = 26 * (1 - k / 0.35);         // orbital beam column
       cx.fillStyle = 'rgba(180,240,255,.9)'; cx.fillRect(s.x - bw / 2, 0, bw, s.y); }
     if (s.boom) {                                     // fireball: hot white core → orange → red ring
+      if (!Number.isFinite(s.x) || !Number.isFinite(s.y) || !Number.isFinite(s.r)) return;
       const grad = cx.createRadialGradient(s.x, s.y, 1, s.x, s.y, Math.max(1, s.r * (0.4 + 0.9 * k)));
       grad.addColorStop(0, 'rgba(255,255,240,' + (0.95 * (1 - k)) + ')');
       grad.addColorStop(0.4, 'rgba(255,180,60,' + (0.8 * (1 - k)) + ')');
@@ -3460,7 +3478,8 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   perks: Object.assign({}, G.perks), laserActive: G.laserT > 0,
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
-  boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0, testBot });
+  boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0,
+  env: (()=>{const e=ENVIMG[G.level]||{};return {path:!!e.path?.ok,bg:!!e.bg?.ok,sideL:!!e.sideL?.ok,sideR:!!e.sideR?.ok};})(), testBot });
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is
