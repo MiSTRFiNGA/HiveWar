@@ -1569,6 +1569,9 @@ const ENVIMG = {};
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
 let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
 const BG_ZOOM_START = 1.0, BG_ZOOM_MAX = 2;     // Eric ruling 2026-08-01: retain full backdrop at level start
+// Eric ruling 2026-08-02: the backdrop occupies the upper band only (his red-box sketch) and is
+// never stretched. 0.55 clears HORIZON_Y (0.407) with headroom; the road/wall layer masks the rest.
+const BG_BAND_FRAC = 0.55;
 // How far the wall tops rise above the horizon at the player's feet, as a fraction of the road's
 // on-screen depth. 0 = tops sit exactly on the horizon; bigger = taller corridor. The walls scroll
 // in lockstep with the floor (shared vAt), so there's no separate scroll rate to tune.
@@ -1913,12 +1916,17 @@ function draw() {
       // ART.backdrop is already drawn beneath this layer, providing a deliberate safe matte while
       // a 75%-scale background reveals more of the scene instead of exposing canvas edges.
       const zoom = BG_ZOOM_START + prog * (BG_ZOOM_MAX - BG_ZOOM_START);
-      const a = env.bg.width / env.bg.height;
+      // Owner ruling 2026-08-02: the backdrop is NEVER stretched. It keeps its own aspect ratio,
+      // sits inside the upper band, and zooms about ITS OWN CENTRE. The old `drawImage(bg,0,0,W,H)`
+      // squashed non-portrait art to the canvas, which is what made the skyline look smeared.
+      const bandH = CFG.H * BG_BAND_FRAC;      // drawPerspectiveRoad() paints over the lower part
+      const iw = env.bg.width, ih = env.bg.height;
+      // Uniform COVER scale — one factor on both axes, so the aspect ratio cannot distort.
+      const fit = Math.max(CFG.W / iw, bandH / ih) * zoom;
+      const dw = iw * fit, dh = ih * fit;
       cx.save();
-      cx.translate(CFG.W / 2, HORIZON_Y); cx.scale(zoom, zoom); cx.translate(-CFG.W / 2, -HORIZON_Y);
-      if (a > 1.8) { const h = CFG.W / a;                        // wide skyline strip: sit it on the horizon
-        cx.drawImage(env.bg, 0, HORIZON_Y - h + 8, CFG.W, h); }
-      else cx.drawImage(env.bg, 0, 0, CFG.W, CFG.H);             // full-frame art: cover the canvas
+      cx.beginPath(); cx.rect(0, 0, CFG.W, bandH); cx.clip();    // hold it inside the band
+      cx.drawImage(env.bg, (CFG.W - dw) / 2, (bandH - dh) / 2, dw, dh);   // grows from its centre
       cx.restore();
   } }
   // sparse drifting embers (subtle, not confetti)
