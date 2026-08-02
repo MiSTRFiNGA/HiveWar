@@ -1764,7 +1764,13 @@ function drawPerspectiveRoad(){
   cx.rect(-10,-10,CFG.W+20,CFG.H+20);
   cx.moveTo(CFG.W/2-top,HORIZON_Y); cx.lineTo(CFG.W/2+top,HORIZON_Y);
   cx.lineTo(CFG.W/2+bot,CFG.H);     cx.lineTo(CFG.W/2-bot,CFG.H); cx.closePath();
-  const openEdgeY=HORIZON_Y-120, openLipY=HORIZON_Y+8, openLipX=top+35;
+  // Background opening — traced from Eric's red-outline sketch, 2026-08-02 (3rd attempt; the
+  // 08-01 values were never checked against the mock). Measured off his 517x883 capture and
+  // scaled to the 540x960 playfield:
+  //   sides   y~330/883 -> 359 = HORIZON_Y-32   (was 271 — walls reached far too high)
+  //   chimney y~410/883 -> 446 = HORIZON_Y+55   (was 399 — too shallow to see down the corridor)
+  //   chimney x 204..324/517 -> half-width ~63 = top+20 (was top+35, slightly too wide)
+  const openEdgeY=HORIZON_Y-32, openLipY=HORIZON_Y+55, openLipX=top+20;
   cx.moveTo(-10,-10); cx.lineTo(CFG.W+10,-10); cx.lineTo(CFG.W+10,openEdgeY);
   cx.lineTo(CFG.W/2+openLipX,openLipY); cx.lineTo(CFG.W/2-openLipX,openLipY);
   cx.lineTo(-10,openEdgeY); cx.closePath();
