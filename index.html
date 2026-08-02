@@ -2539,9 +2539,9 @@ css.textContent = `
 #forge .dbgBtn{margin-left:4px;cursor:pointer;color:#8ff;border:1px solid rgba(0,255,255,.4);border-radius:6px;padding:1px 8px;font-size:13px;user-select:none}
 #forge .dbgBtn.on{color:#ff4;border-color:#ff4;box-shadow:0 0 8px rgba(255,255,0,.5)}
 #forgeTabs{display:flex;gap:2px;padding:6px 10px 0}
-#forgeTabs div{padding:6px 12px;cursor:pointer;border:1px solid rgba(0,255,255,.25);border-bottom:none;
+#forgeTabs button{padding:6px 12px;cursor:pointer;border:1px solid rgba(0,255,255,.25);border-bottom:none;
   border-radius:8px 8px 0 0;color:#8ac;letter-spacing:1px;font-size:11px;font-weight:700}
-#forgeTabs div.on{background:rgba(0,255,255,.12);color:#4ff;text-shadow:0 0 8px #0ff}
+#forgeTabs button.on{background:rgba(0,255,255,.12);color:#4ff;text-shadow:0 0 8px #0ff}
 #forgeBody{overflow-y:auto;padding:12px 14px;flex:1}
 #forge table{width:100%;border-collapse:collapse}
 #forge th{color:#f4f;font-size:10px;text-align:left;letter-spacing:1px;padding:3px 4px;border-bottom:1px solid rgba(255,0,255,.3)}
@@ -2555,6 +2555,11 @@ css.textContent = `
 #forge button{background:linear-gradient(135deg,#0c2030,#103a50);border:1px solid #4ff;color:#8ff;border-radius:6px;
   padding:4px 10px;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:1px;margin:2px}
 #forge button:hover{box-shadow:0 0 10px rgba(0,255,255,.6)}
+#forge button:focus-visible,#forge input:focus-visible,#forge label:has(input:focus-visible){outline:2px solid #ffe23d;outline-offset:2px}
+#forge .entityThumb{width:44px;height:44px;padding:1px;margin:0}
+#forge .entityThumb canvas{width:40px;height:40px;image-rendering:pixelated;pointer-events:none}
+#forge .entityTable{min-width:980px}
+#forge .na{color:#536078;text-align:center;display:inline-block;min-width:24px}
 #forge button.warn{border-color:#f66;color:#f88;background:linear-gradient(135deg,#300c10,#501020)}
 #forge .frames{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0}
 #forge .frames canvas{border:1px solid #333;border-radius:4px;cursor:pointer;background:#111;image-rendering:pixelated}
@@ -2590,6 +2595,7 @@ dbgBtn('fSkip').onclick = () => {
   if (G.state === 'play') { enemies.each(e => enemies.release(e)); G.boss = null; nextLevel(); }  // straight to next level (shop)
 };
 const body = win.querySelector('#forgeBody'), tabsEl = win.querySelector('#forgeTabs');
+body.setAttribute('role','tabpanel'); body.setAttribute('tabindex','-1');
 function openForge(){ win.classList.add('open'); FORGE_DBG.pause = true; syncDbg(); renderTab(); }   // opening FORGE freezes the game — press ▶ to run
 function closeForge(){ win.classList.remove('open'); FORGE_DBG.pause = false; syncDbg(); }
 function toggleForge(){ win.classList.contains('open') ? closeForge() : openForge(); }
@@ -2615,14 +2621,19 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
   setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
 
-const TABS = ['UNITS','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
+const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false};
+let entityClassFilter = 'all', entityReturnId = null;
 // Crop mode. While cropBox is set the paint canvas drags the box instead of painting, and drawPaint
 // overlays it. cropOnChange lets the editor refresh its size readout as the box moves.
 let cropBox = null, cropOnChange = null;
 let envSel = null;   // WORLD tab: which env tile key (e.g. 'L3_bg') is open in the tile editor, null = grid
-TABS.forEach((t,i)=>{ const d=document.createElement('div'); d.textContent=t;
-  d.onclick=()=>{tab=i;spriteSel=-1;envSel=null;renderTab();}; tabsEl.appendChild(d); });
+tabsEl.setAttribute('role','tablist');
+TABS.forEach((t,i)=>{ const d=document.createElement('button'); d.type='button'; d.textContent=t; d.id='forgeTab'+i; d.setAttribute('role','tab');
+  d.setAttribute('aria-controls','forgeBody'); d.onclick=()=>{tab=i;spriteSel=-1;entityReturnId=null;envSel=null;renderTab();}; tabsEl.appendChild(d); });
+tabsEl.addEventListener('keydown', e => { if (!['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) return;
+  e.preventDefault(); const next = e.key==='Home' ? 0 : e.key==='End' ? TABS.length-1 : (tab + (e.key==='ArrowRight'?1:-1) + TABS.length) % TABS.length;
+  tab=next; spriteSel=-1; entityReturnId=null; envSel=null; renderTab(); tabsEl.querySelector('#forgeTab'+next).focus(); });
 
 function hpPreview(k){ let s=''; for(let L=1;L<=10;L++) s+=`L${L}:${Math.round(kindHp(k,L))} `; return s; }
 function pctShare(k){ let tot=0; for(let i=0;i<6;i++) tot+=EDIT.kinds[i].weight;
@@ -2631,11 +2642,64 @@ function refreshComputed(){
   body.querySelectorAll('[data-hp]').forEach(el=>el.textContent=hpPreview(+el.dataset.hp));
   body.querySelectorAll('[data-pct]').forEach(el=>el.textContent=pctShare(+el.dataset.pct));
 }
-function num(p,step,w){ return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} data-p="${p}" value="${getP(p)}">`; }
+function num(p,step,w,aria){ return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} ${aria?`aria-label="${forgeEsc(aria)}"`:''} data-p="${p}" value="${getP(p)}">`; }
 function col(p){ return `<input type="color" data-p="${p}" value="${getP(p)}" style="width:34px;height:24px;padding:0;border:none;vertical-align:middle">`; }
-function snd(p){ const cur=getP(p); return `<select data-p="${p}" data-str="1">` +
+function snd(p,aria){ const cur=getP(p); return `<select data-p="${p}" data-str="1" ${aria?`aria-label="${forgeEsc(aria)}"`:''}>` +
   AUDIO.names().map(n=>`<option value="${n}" ${n===cur?'selected':''}>${n}</option>`).join('') + `</select>`; }
 function txt(p,w,ph){ return `<input type="text" data-p="${p}" data-str="1" placeholder="${ph||''}" value="${getP(p)||''}" style="width:${w||110}px">`; }
+function forgeEsc(s){ return String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+const ENTITY_SPRITE_KEY = {
+  'player.soldier':'soldier', 'enemy.xenoid':'xenoid', 'enemy.eldritchSponge':'eldritch',
+  'enemy.cyberMutant':'cyber', 'enemy.xenoptera':'xenoptera', 'enemy.subterra':'subterra',
+  'enemy.psychoid':'psychoid', 'boss.praetorian':'praetIdle', 'boss.alienQueen':'queen',
+  'hazard.rollerBreakable':'rollerB', 'hazard.rollerArmored':'rollerA', 'vehicle.tank':'tank'
+};
+function entitySpriteIndex(id){ return REG.findIndex(r => r.key === ENTITY_SPRITE_KEY[id]); }
+function renderEntities(){
+  const classes = ['all','player','enemy','boss','hazard','vehicle','prop'];
+  const rows = EDIT.entities.filter(e => entityClassFilter === 'all' || e.class === entityClassFilter);
+  let h = `<div class="hint" id="entityHelp">One entity registry for squad units, enemies, bosses, hazards, vehicles, and props. Enemy combat fields feed the live spawn model; grey cells are not applicable.</div>
+    <fieldset class="row" style="border:1px solid rgba(0,255,255,.22);border-radius:6px;padding:5px 8px;margin:0 0 10px"><legend class="hint" style="padding:0 4px">ENTITY CLASS</legend>`;
+  for (const c of classes) h += `<label><input type="radio" name="entityClass" value="${c}" ${entityClassFilter===c?'checked':''}> ${c==='all'?'All':c[0].toUpperCase()+c.slice(1)}</label>`;
+  h += `</fieldset><div id="entityStatus" class="hint" aria-live="polite">Showing ${rows.length} ${entityClassFilter==='all'?'entities':entityClassFilter+' entities'}.</div>
+    <div style="overflow-x:auto"><table class="entityTable" aria-describedby="entityHelp entityStatus"><caption class="hint" style="text-align:left">Entity tuning registry</caption><thead><tr>
+      <th scope="col">SPRITE</th><th scope="col">ENTITY</th><th scope="col">CLASS</th><th scope="col">SCALE</th><th scope="col">HP BASE</th><th scope="col">HP/LVL</th><th scope="col">SPEED</th><th scope="col">RADIUS</th><th scope="col">CREDITS</th><th scope="col">WEIGHT</th><th scope="col">MIN LVL</th><th scope="col">RANGE</th><th scope="col">ATTACK SFX</th><th scope="col">DIE SFX</th><th scope="col">HP PREVIEW</th><th scope="col">SPAWN SHARE</th></tr></thead><tbody>`;
+  for (const entity of rows) {
+    const ix = EDIT.entities.indexOf(entity), enemy = ENEMY_ENTITY_IDS.indexOf(entity.id), spriteIx = entitySpriteIndex(entity.id);
+    const spriteReg = REG[spriteIx], hasSprite = spriteReg && spriteReg.h;
+    const sprite = spriteIx >= 0 ? (hasSprite
+      ? `<button type="button" class="entityThumb" data-entity-sprite="${entity.id}" data-sp="${spriteIx}" aria-label="Edit ${forgeEsc(entity.label)} sprite"><canvas data-entity-thumb="${spriteIx}" width="40" height="40" aria-hidden="true"></canvas></button>`
+      : `<button type="button" class="entityThumb" data-entity-sprite="${entity.id}" data-sp="${spriteIx}" aria-label="Create ${forgeEsc(entity.label)} sprite">＋</button>`)
+      : `<span class="na" aria-hidden="true">—</span>`;
+    const entityNum = (path, step, label) => num(path,step,undefined,entity.label+' '+label);
+    const val = (key, label, step=1) => enemy >= 0 ? entityNum('kinds.'+enemy+'.'+key,step,label) : '<span class="na" aria-label="Not applicable">—</span>';
+    const range = entity.id === 'vehicle.tank' ? entityNum('entities.'+ix+'.range',1,'range') : '<span class="na" aria-label="Not applicable">—</span>';
+    const attack = enemy >= 0 ? snd('kinds.'+enemy+'.sfxAttack',entity.label+' attack sound') : '<span class="na" aria-hidden="true">—</span>';
+    const death = enemy >= 0 ? snd('kinds.'+enemy+'.sfxDie',entity.label+' death sound') : '<span class="na" aria-hidden="true">—</span>';
+    const preview = enemy >= 0 ? `<span class="hpprev" data-hp="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
+    const share = enemy >= 0 ? `<span class="pct" data-pct="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
+    h += `<tr><td>${sprite}</td><th scope="row" style="color:#4ff">${forgeEsc(entity.label)}</th><td>${forgeEsc(entity.class)}</td><td>${entityNum('entities.'+ix+'.scale',0.05,'scale')}</td><td>${val('hpBase','base health')}</td><td>${val('hpLvl','health per level',0.1)}</td><td>${val('spd','speed')}</td><td>${val('r','radius')}</td><td>${val('credits','credits')}</td><td>${val('weight','spawn weight',0.5)}</td><td>${val('minLvl','minimum level')}</td><td>${range}</td><td>${attack}</td><td>${death}</td><td>${preview}</td><td>${share}</td></tr>`;
+  }
+  body.innerHTML = h + '</tbody></table></div>';
+  refreshComputed();
+  const status = body.querySelector('#entityStatus'), statusText = status.textContent;
+  status.textContent = ''; requestAnimationFrame(() => { status.textContent = statusText; });
+  body.querySelectorAll('input[name="entityClass"]').forEach(input => input.onchange = () => { entityClassFilter = input.value; renderEntities();
+    body.querySelector(`input[name="entityClass"][value="${entityClassFilter}"]`)?.focus(); });
+  body.querySelectorAll('[data-entity-sprite]').forEach(button => button.onclick = () => {
+    entityReturnId = button.dataset.entitySprite; spriteSel = +button.dataset.sp; const r = REG[spriteSel];
+    if (!r.h) { const c = document.createElement('canvas'); c.width = c.height = r.cell || 128;
+      savedSprites[r.key] = {data:c.toDataURL('image/png'), frames:1, fps:8};
+      try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); } catch(e) {}
+      makeHolder(r, savedSprites[r.key].data, 1, 8); }
+    frameSel = 0; loadWork(); tab = 5; renderTab();
+    setTimeout(() => body.querySelector('#spBack')?.focus(), 0);
+  });
+  body.querySelectorAll('[data-entity-thumb]').forEach(canvas => { const r = REG[+canvas.dataset.entityThumb], im = r && r.h && r.h.img;
+    if (im && (im.ok || im.complete)) { const w = (im.naturalWidth||im.width) / Math.max(1,r.h.frames), hh = im.naturalHeight||im.height;
+      try { canvas.getContext('2d').drawImage(im, 0, 0, w, hh, 0, 0, 40, 40); } catch(e) {} }
+  });
+}
 // Shared env-art import: downscales on the way in so 10 levels of art stay inside the localStorage
 // quota, then live-reloads that level. Used by BOTH the WORLD grid and the single-tile editor —
 // keep it one function so the quota guard can't be forgotten in one of them.
@@ -2711,35 +2775,9 @@ function forgePlay(lvl, boss){
 }
 function renderTab(){
   cropBox = null; cropOnChange = null;   // never let a crop box leak across tabs or editors
-  tabsEl.querySelectorAll('div').forEach((d,i)=>d.classList.toggle('on', i===tab));
-  if (tab===0){ // UNITS
-    let h = `<div class="hint">HP = BASE + PER-LVL × level. WEIGHT = spawn share (live %). MIN-LVL = first level it appears. Changes apply INSTANTLY — tweak mid-run and test.</div>
-      <table><tr><th></th><th>UNIT</th><th>HP BASE</th><th>HP/LVL</th><th>SPD</th><th>SIZE</th><th>💰</th><th>WEIGHT</th><th>%</th><th>MIN-LVL</th><th>ATTACK SFX</th><th>DIE SFX</th></tr>`;
-    EDIT.kinds.forEach((k,i)=>{ h+=`<tr><td><canvas class="kthumb" data-kt="${i}" width="40" height="40"></canvas></td>
-      <td style="color:#4ff">${k.name}</td>
-      <td>${num('kinds.'+i+'.hpBase',1)}</td><td>${num('kinds.'+i+'.hpLvl',0.5)}</td>
-      <td>${num('kinds.'+i+'.spd',1,44)}</td><td>${num('kinds.'+i+'.r',1,40)}</td>
-      <td>${num('kinds.'+i+'.credits',1,36)}</td><td>${num('kinds.'+i+'.weight',0.5,44)}</td>
-      <td class="pct" data-pct="${i}"></td><td>${num('kinds.'+i+'.minLvl',1,36)}</td>
-      <td>${snd('kinds.'+i+'.sfxAttack')}</td><td>${snd('kinds.'+i+'.sfxDie')}</td></tr>
-      <tr><td></td><td colspan="11" class="hpprev" data-hp="${i}"></td></tr>`; });
-    h += `</table>
-      <div class="hint" style="color:#f4f;margin-top:14px">PER-ENTITY SCALE — compatibility controls until the dedicated ENTITIES table lands in Forge F2.</div>
-      <table><tr><th>SOLDIER</th><th>XENOID</th><th>PRAETORIAN</th><th>QUEEN</th><th>ROLL B</th><th>ROLL A</th><th>BARRIER</th><th>TANK</th></tr>
-      <tr><td>${num('entities.0.scale',0.05,52)}</td><td>${num('entities.1.scale',0.05,52)}</td>
-          <td>${num('entities.7.scale',0.05,52)}</td><td>${num('entities.8.scale',0.05,52)}</td>
-          <td>${num('entities.9.scale',0.05,52)}</td><td>${num('entities.10.scale',0.05,52)}</td>
-          <td>${num('entities.12.scale',0.05,52)}</td><td>${num('entities.11.scale',0.05,52)}</td></tr></table>
-      <table><tr><th>ELDRITCH</th><th>CYBER</th><th>XENOPTERA</th><th>SUBTERRA</th><th>PSYCHOID</th></tr>
-      <tr><td>${num('entities.2.scale',0.05,52)}</td><td>${num('entities.3.scale',0.05,52)}</td>
-          <td>${num('entities.4.scale',0.05,52)}</td><td>${num('entities.5.scale',0.05,52)}</td>
-          <td>${num('entities.6.scale',0.05,52)}</td></tr></table>
-      <div class="row">TANK SPREAD ${num('entities.11.range',5,56)} <span class="hint">px from squad centre to each tank. The formation reaches ~155px, so below that they sit inside the ranks.</span></div>
-      <div class="hint">BARRIERS use the per-entity Barrier scale; panel width remains locked to the road edge and centreline gap.</div>`;
-    body.innerHTML = h;
-    body.querySelectorAll('[data-kt]').forEach(c=>{ const a=ANIM[+c.dataset.kt];
-      if(a&&a.img.ok){const cs=a.img.height;c.getContext('2d').drawImage(a.img,0,0,cs,cs,0,0,40,40);} });
-  }
+  tabsEl.querySelectorAll('button').forEach((d,i)=>{ d.classList.toggle('on', i===tab); d.setAttribute('aria-selected', String(i===tab)); d.tabIndex=i===tab?0:-1; });
+  body.setAttribute('aria-labelledby','forgeTab'+tab);
+  if (tab===0){ renderEntities(); }
   else if (tab===1){ // PLAYER
     const inv = !!(window.FORGE_DBG && FORGE_DBG.invincible);
     body.innerHTML = `<div class="hint">Global player combat knobs — multiply on top of weapons/shop upgrades.</div>
@@ -3035,7 +3073,7 @@ function renderSprites(){
     return;
   }
   const r = REG[spriteSel];
-  let h = `<div class="row"><button id="spBack">◀ ALL SPRITES</button><b style="color:#4ff">${r.unit} · ${r.action}</b>
+  let h = `<div class="row"><button id="spBack">◀ ALL SPRITES</button><h2 id="spTitle" style="color:#4ff;font-size:13px;margin:0">Sprite editor: ${r.unit} · ${r.action}</h2>
     ${r.h.fps!==undefined?`FPS <input type="number" id="spFps" style="width:44px" value="${r.h.fps}">`:''}</div>
     <div class="frames" id="spFrames"></div>
     <div class="row"><button id="spDup">+ DUP FRAME</button><button id="spDel" class="warn">− DEL FRAME</button>
@@ -3049,7 +3087,9 @@ function renderSprites(){
       Launch with <b>Launch HiVE War.bat</b> (http://127.0.0.1:8791), or use ⇧ IMPORT PNG to bring this strip in first.</div>
     <canvas id="forgePaint"></canvas>`;
   body.innerHTML = h;
-  body.querySelector('#spBack').onclick=()=>{spriteSel=-1;renderSprites();};
+  body.querySelector('#spBack').onclick=()=>{ const returnId = entityReturnId; spriteSel=-1; entityReturnId=null;
+    if (returnId) { tab=0; renderTab(); setTimeout(()=>body.querySelector(`[data-entity-sprite="${returnId}"]`)?.focus(),0); }
+    else renderSprites(); };
   const fpsEl=body.querySelector('#spFps'); if(fpsEl)fpsEl.oninput=()=>{const v=parseFloat(fpsEl.value);if(v>0){r.h.fps=v;persistSprite(r);}};
   body.querySelector('#spCol').oninput=e=>{brush.col=e.target.value;brush.erase=false;body.querySelector('#spErase').textContent='⌫ ERASE';};
   body.querySelector('#spSize').oninput=e=>brush.size=+e.target.value;
