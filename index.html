@@ -125,7 +125,7 @@ const G = {
   boss: null,
   meta: load(),
 };
-// Weapon DPS ratios follow balance/balance.json dpsMult [1,1.55,2.3,3.4,5]
+// Weapon gates trade coverage/shape for damage rather than guaranteeing a raw-DPS increase.
 // sfx/sfxRate/sfxVol/sfxMinGap + shape/len/wid are the FORGE-adjacent "look and sound
 // different" data (owner request 2026-07-30): every weapon repurposes an existing
 // assets/SFX sample (tuned by pitch/volume so it reads as its own gun, not the sample's
@@ -695,9 +695,9 @@ function fire(dt) {
     b.x = G.px; b.y = CFG.H - 150; b.tier = G.weapon;
     b.vx = 0; b.vy = -520;                // slower than a normal bolt — you watch it travel
     b.vis = true; b.pierce = true; b._hit = new Set();   // fresh per shot; cleared on release
-    // The Ion Cannon remains one focused beam; its damage comes from weapon and tier stats,
-    // not from bypassing the capped squad bolt ladder.
-    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
+    // The Ion Cannon remains one focused beam, but carries the full squad volley's damage.
+    // The 1/2/3 ladder limits visible projectiles, never the soldiers contributing to DPS.
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * G.squad * EDIT.player.dmgMul * tierDmgMult;
     b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false;
     return;
   }
@@ -715,9 +715,9 @@ function fire(dt) {
     b.x = bx; b.y = by; b.tier = G.weapon;
     b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
     b.vis = true;
-    // Divide base damage across the ladder so gaining a second/third bolt changes coverage,
-    // not raw DPS. Weapon damage/ROF and the permanent tiers provide the damage progression.
-    b.dmg = w.dmg / pellets * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
+    // Each visual bolt represents an equal share of the squad. The ladder controls coverage,
+    // while squad size, weapon stats, and permanent tiers remain the damage progression.
+    b.dmg = w.dmg * G.squad / pellets * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
     b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
   }
 }
@@ -1595,14 +1595,19 @@ function drawPerspectiveRoad(){
   // we take the wall's height from the perspective scale at that depth and sample a texture
   // window whose width is the depth-span it covers. Result: panels foreshorten and bunch up
   // toward the vanishing point, and the top edge converges on the horizon.
-  // Clip every wall to "anywhere except the road". The columns below are allowed to overshoot
-  // inward; this trims them on the exact road-edge line, so the wall base and the path SHARE
-  // that edge with no seam and no staircase from the column step.
+  // Clip every wall to "anywhere except the road", minus the broad overhead background opening.
+  // The opening's low outer corners and tapered central lip match the supplied composition:
+  // the deep city remains visible above the horizon instead of being covered by side-wall tiles.
+  // Columns below are allowed to overshoot inward; the road hole trims them on the exact edge.
   cx.save();
   cx.beginPath();
   cx.rect(-10,-10,CFG.W+20,CFG.H+20);
   cx.moveTo(CFG.W/2-top,HORIZON_Y); cx.lineTo(CFG.W/2+top,HORIZON_Y);
   cx.lineTo(CFG.W/2+bot,CFG.H);     cx.lineTo(CFG.W/2-bot,CFG.H); cx.closePath();
+  const openEdgeY=HORIZON_Y-120, openLipY=HORIZON_Y+8, openLipX=top+35;
+  cx.moveTo(-10,-10); cx.lineTo(CFG.W+10,-10); cx.lineTo(CFG.W+10,openEdgeY);
+  cx.lineTo(CFG.W/2+openLipX,openLipY); cx.lineTo(CFG.W/2-openLipX,openLipY);
+  cx.lineTo(-10,openEdgeY); cx.closePath();
   cx.clip('evenodd');
   for(const s of [-1,1]){
     const img = s<0 ? env.sideL : env.sideR;

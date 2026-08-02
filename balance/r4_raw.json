@@ -1,605 +1,393 @@
 {
-  "50% gates +1 death": {
-    "died_before_L8": null,
+  "50% safe-gate decisions": {
+    "representative_died_before_L8": 4,
+    "summary": {
+      "samples": 400,
+      "survival_p10_s": 180.0,
+      "survival_p50_s": 408.8,
+      "survival_p90_s": 1153.5,
+      "proxy_wave_deaths_before_L8": 336
+    },
     "rows": [
       {
         "L": 1,
-        "start": 8,
-        "end": 136,
-        "peak": 136,
+        "start": 1,
+        "end": 1,
+        "peak": 1,
         "weapon": 0,
-        "dps_mid": 281.7,
-        "dps_end": 433.5,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.035,
-        "boss_ttk": 5.1,
+        "dps_mid": 9.9,
+        "dps_end": 9.9,
+        "kill_pct": 64.3,
+        "bio_ttk": 1.01,
+        "boss_ttk": 363.6,
         "boss_bud": 18.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 2,
-        "start": 136,
-        "end": 872,
-        "peak": 872,
+        "start": 1,
+        "end": 9,
+        "peak": 9,
         "weapon": 0,
-        "dps_mid": 585.6,
-        "dps_end": 609.1,
+        "dps_mid": 39.6,
+        "dps_end": 89.1,
         "kill_pct": 100.0,
-        "bio_ttk": 0.02,
-        "boss_ttk": 5.6,
+        "bio_ttk": 0.303,
+        "boss_ttk": 62.9,
         "boss_bud": 19.5,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 3,
-        "start": 872,
-        "end": 3765,
-        "peak": 3765,
+        "start": 1,
+        "end": 13,
+        "peak": 13,
         "weapon": 0,
-        "dps_mid": 637.1,
-        "dps_end": 657.7,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.022,
-        "boss_ttk": 7.6,
+        "dps_mid": 49.5,
+        "dps_end": 128.7,
+        "kill_pct": 85.4,
+        "bio_ttk": 0.283,
+        "boss_ttk": 68.4,
         "boss_bud": 21.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 4,
-        "start": 3765,
-        "end": 31571,
-        "peak": 31571,
+        "start": 1,
+        "end": 1,
+        "peak": 1,
         "weapon": 0,
-        "dps_mid": 703.4,
-        "dps_end": 728.4,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.023,
-        "boss_ttk": 9.9,
+        "dps_mid": 9.9,
+        "dps_end": 9.9,
+        "kill_pct": 8.9,
+        "bio_ttk": 1.616,
+        "boss_ttk": 1292.9,
         "boss_bud": 22.5,
-        "flags": []
-      },
-      {
-        "L": 5,
-        "start": 31571,
-        "end": 641113,
-        "peak": 641113,
-        "weapon": 1,
-        "dps_mid": 1240.6,
-        "dps_end": 1284.1,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.015,
-        "boss_ttk": 7.8,
-        "boss_bud": 24.0,
-        "flags": []
-      },
-      {
-        "L": 6,
-        "start": 641113,
-        "end": 13707316,
-        "peak": 13707316,
-        "weapon": 3,
-        "dps_mid": 3051.1,
-        "dps_end": 3146.5,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.007,
-        "boss_ttk": 4.3,
-        "boss_bud": 25.5,
-        "flags": []
-      },
-      {
-        "L": 7,
-        "start": 13707316,
-        "end": 849217445,
-        "peak": 849217445,
-        "weapon": 4,
-        "dps_mid": 5195.2,
-        "dps_end": 5343.7,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 3.0,
-        "boss_bud": 27.0,
-        "flags": []
-      },
-      {
-        "L": 8,
-        "start": 849217445,
-        "end": 27362185888,
-        "peak": 27362185888,
-        "weapon": 4,
-        "dps_mid": 5776.6,
-        "dps_end": 5921.5,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 3.5,
-        "boss_bud": 28.5,
-        "flags": []
-      },
-      {
-        "L": 9,
-        "start": 27362185888,
-        "end": 2935768183618,
-        "peak": 2935768183618,
-        "weapon": 4,
-        "dps_mid": 6549.4,
-        "dps_end": 6699.6,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 4.2,
-        "boss_bud": 30.0,
-        "flags": []
-      },
-      {
-        "L": 10,
-        "start": 2935768183618,
-        "end": 137280398882073,
-        "peak": 137280398882073,
-        "weapon": 4,
-        "dps_mid": 7192.2,
-        "dps_end": 7339.4,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 11.7,
-        "boss_bud": 35,
-        "flags": []
+        "flags": [
+          "WAVE_LEAK",
+          "BOSS_SLOW",
+          "DEATH"
+        ]
       }
     ]
   },
-  "70% gates no meta": {
-    "died_before_L8": null,
+  "70% safe-gate decisions": {
+    "representative_died_before_L8": 5,
+    "summary": {
+      "samples": 400,
+      "survival_p10_s": 180.0,
+      "survival_p50_s": 532.5,
+      "survival_p90_s": 1193.8,
+      "proxy_wave_deaths_before_L8": 301
+    },
     "rows": [
       {
         "L": 1,
-        "start": 8,
-        "end": 535,
-        "peak": 535,
+        "start": 1,
+        "end": 7,
+        "peak": 7,
         "weapon": 0,
-        "dps_mid": 563.1,
-        "dps_end": 592.9,
+        "dps_mid": 29.7,
+        "dps_end": 69.3,
         "kill_pct": 100.0,
-        "bio_ttk": 0.018,
-        "boss_ttk": 3.7,
+        "bio_ttk": 0.337,
+        "boss_ttk": 51.9,
         "boss_bud": 18.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 2,
-        "start": 535,
-        "end": 10249,
-        "peak": 10249,
+        "start": 1,
+        "end": 7,
+        "peak": 7,
         "weapon": 0,
-        "dps_mid": 663.0,
-        "dps_end": 691.0,
+        "dps_mid": 29.7,
+        "dps_end": 69.3,
         "kill_pct": 100.0,
-        "bio_ttk": 0.018,
-        "boss_ttk": 4.9,
+        "bio_ttk": 0.404,
+        "boss_ttk": 80.8,
         "boss_bud": 19.5,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 3,
-        "start": 10249,
-        "end": 122096,
-        "peak": 122096,
-        "weapon": 2,
-        "dps_mid": 1702.7,
-        "dps_end": 1763.2,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.008,
-        "boss_ttk": 2.8,
+        "start": 1,
+        "end": 11,
+        "peak": 11,
+        "weapon": 0,
+        "dps_mid": 49.5,
+        "dps_end": 108.9,
+        "kill_pct": 85.4,
+        "bio_ttk": 0.283,
+        "boss_ttk": 80.8,
         "boss_bud": 21.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 4,
-        "start": 122096,
-        "end": 1890525,
-        "peak": 1890525,
-        "weapon": 4,
-        "dps_mid": 4190.3,
-        "dps_end": 4327.4,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 1.7,
+        "start": 1,
+        "end": 20,
+        "peak": 20,
+        "weapon": 0,
+        "dps_mid": 79.2,
+        "dps_end": 198.0,
+        "kill_pct": 71.4,
+        "bio_ttk": 0.202,
+        "boss_ttk": 64.6,
         "boss_bud": 22.5,
-        "flags": []
+        "flags": [
+          "BOSS_SLOW"
+        ]
       },
       {
         "L": 5,
-        "start": 1890525,
-        "end": 38014648,
-        "peak": 38014648,
-        "weapon": 4,
-        "dps_mid": 4686.3,
-        "dps_end": 4826.8,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 2.1,
+        "start": 1,
+        "end": 11,
+        "peak": 11,
+        "weapon": 0,
+        "dps_mid": 49.5,
+        "dps_end": 108.9,
+        "kill_pct": 26.2,
+        "bio_ttk": 0.364,
+        "boss_ttk": 165.3,
         "boss_bud": 24.0,
-        "flags": []
-      },
-      {
-        "L": 6,
-        "start": 38014648,
-        "end": 812286891,
-        "peak": 812286891,
-        "weapon": 4,
-        "dps_mid": 5195.1,
-        "dps_end": 5336.3,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 2.5,
-        "boss_bud": 25.5,
-        "flags": []
-      },
-      {
-        "L": 7,
-        "start": 812286891,
-        "end": 50322660163,
-        "peak": 50322660163,
-        "weapon": 4,
-        "dps_mid": 5874.4,
-        "dps_end": 6022.9,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 2.7,
-        "boss_bud": 27.0,
-        "flags": []
-      },
-      {
-        "L": 8,
-        "start": 50322660163,
-        "end": 3863030540169,
-        "peak": 3863030540169,
-        "weapon": 4,
-        "dps_mid": 6596.0,
-        "dps_end": 6745.3,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 3.1,
-        "boss_bud": 28.5,
-        "flags": []
-      },
-      {
-        "L": 9,
-        "start": 3863030540169,
-        "end": 2689846458627426,
-        "peak": 2689846458627426,
-        "weapon": 4,
-        "dps_mid": 7682.4,
-        "dps_end": 7834.5,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 3.6,
-        "boss_bud": 30.0,
-        "flags": []
-      },
-      {
-        "L": 10,
-        "start": 2689846458627426,
-        "end": 125780774097772625,
-        "peak": 125780774097772625,
-        "weapon": 4,
-        "dps_mid": 8327.1,
-        "dps_end": 8474.4,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 10.1,
-        "boss_bud": 35,
-        "flags": []
+        "flags": [
+          "WAVE_LEAK",
+          "BOSS_SLOW",
+          "DEATH"
+        ]
       }
     ]
   },
-  "70% gates meta dmg2": {
-    "died_before_L8": null,
+  "70% safe-gate decisions + meta dmg2": {
+    "representative_died_before_L8": 6,
+    "summary": {
+      "samples": 400,
+      "survival_p10_s": 180.0,
+      "survival_p50_s": 644.1,
+      "survival_p90_s": 1216.5,
+      "proxy_wave_deaths_before_L8": 278
+    },
     "rows": [
       {
         "L": 1,
-        "start": 8,
-        "end": 535,
-        "peak": 535,
+        "start": 1,
+        "end": 4,
+        "peak": 4,
         "weapon": 0,
-        "dps_mid": 653.2,
-        "dps_end": 687.7,
+        "dps_mid": 23.0,
+        "dps_end": 45.9,
         "kill_pct": 100.0,
-        "bio_ttk": 0.015,
-        "boss_ttk": 3.2,
+        "bio_ttk": 0.435,
+        "boss_ttk": 78.4,
         "boss_bud": 18.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 2,
-        "start": 535,
-        "end": 10249,
-        "peak": 10249,
+        "start": 1,
+        "end": 13,
+        "peak": 13,
         "weapon": 0,
-        "dps_mid": 769.1,
-        "dps_end": 801.5,
+        "dps_mid": 57.4,
+        "dps_end": 149.3,
         "kill_pct": 100.0,
-        "bio_ttk": 0.016,
-        "boss_ttk": 4.2,
+        "bio_ttk": 0.209,
+        "boss_ttk": 37.5,
         "boss_bud": 19.5,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 3,
-        "start": 10249,
-        "end": 122096,
-        "peak": 122096,
-        "weapon": 2,
-        "dps_mid": 1975.2,
-        "dps_end": 2045.3,
+        "start": 1,
+        "end": 19,
+        "peak": 19,
+        "weapon": 0,
+        "dps_mid": 91.9,
+        "dps_end": 218.2,
         "kill_pct": 100.0,
-        "bio_ttk": 0.007,
-        "boss_ttk": 2.4,
+        "bio_ttk": 0.152,
+        "boss_ttk": 40.3,
         "boss_bud": 21.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 4,
-        "start": 122096,
-        "end": 1890525,
-        "peak": 1890525,
-        "weapon": 4,
-        "dps_mid": 4860.7,
-        "dps_end": 5019.7,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 1.4,
+        "start": 1,
+        "end": 10,
+        "peak": 10,
+        "weapon": 0,
+        "dps_mid": 45.9,
+        "dps_end": 114.8,
+        "kill_pct": 41.4,
+        "bio_ttk": 0.348,
+        "boss_ttk": 111.5,
         "boss_bud": 22.5,
-        "flags": []
+        "flags": [
+          "WAVE_LEAK",
+          "BOSS_SLOW"
+        ]
       },
       {
         "L": 5,
-        "start": 1890525,
-        "end": 38014648,
-        "peak": 38014648,
-        "weapon": 4,
-        "dps_mid": 5436.1,
-        "dps_end": 5599.1,
+        "start": 1,
+        "end": 89,
+        "peak": 89,
+        "weapon": 0,
+        "dps_mid": 413.4,
+        "dps_end": 1022.1,
         "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 1.8,
+        "bio_ttk": 0.044,
+        "boss_ttk": 17.6,
         "boss_bud": 24.0,
         "flags": []
       },
       {
         "L": 6,
-        "start": 38014648,
-        "end": 812286891,
-        "peak": 812286891,
-        "weapon": 4,
-        "dps_mid": 6026.3,
-        "dps_end": 6190.1,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 2.2,
+        "start": 1,
+        "end": 14,
+        "peak": 14,
+        "weapon": 0,
+        "dps_mid": 68.9,
+        "dps_end": 160.8,
+        "kill_pct": 22.2,
+        "bio_ttk": 0.29,
+        "boss_ttk": 155.5,
         "boss_bud": 25.5,
-        "flags": []
-      },
-      {
-        "L": 7,
-        "start": 812286891,
-        "end": 50322660163,
-        "peak": 50322660163,
-        "weapon": 4,
-        "dps_mid": 6814.4,
-        "dps_end": 6986.6,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 2.3,
-        "boss_bud": 27.0,
-        "flags": []
-      },
-      {
-        "L": 8,
-        "start": 50322660163,
-        "end": 3863030540169,
-        "peak": 3863030540169,
-        "weapon": 4,
-        "dps_mid": 7651.4,
-        "dps_end": 7824.5,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 2.7,
-        "boss_bud": 28.5,
-        "flags": []
-      },
-      {
-        "L": 9,
-        "start": 3863030540169,
-        "end": 2689846458627426,
-        "peak": 2689846458627426,
-        "weapon": 4,
-        "dps_mid": 8911.6,
-        "dps_end": 9088.0,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 3.1,
-        "boss_bud": 30.0,
-        "flags": []
-      },
-      {
-        "L": 10,
-        "start": 2689846458627426,
-        "end": 125780774097772625,
-        "peak": 125780774097772625,
-        "weapon": 4,
-        "dps_mid": 9659.5,
-        "dps_end": 9830.3,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 8.7,
-        "boss_bud": 35,
-        "flags": []
+        "flags": [
+          "WAVE_LEAK",
+          "BOSS_SLOW",
+          "DEATH"
+        ]
       }
     ]
   },
-  "90% gates no meta": {
-    "died_before_L8": null,
+  "90% safe-gate decisions": {
+    "representative_died_before_L8": 6,
+    "summary": {
+      "samples": 400,
+      "survival_p10_s": 287.7,
+      "survival_p50_s": 662.5,
+      "survival_p90_s": 1225.5,
+      "proxy_wave_deaths_before_L8": 248
+    },
     "rows": [
       {
         "L": 1,
-        "start": 8,
-        "end": 844,
-        "peak": 844,
-        "weapon": 2,
-        "dps_mid": 1317.9,
-        "dps_end": 1386.3,
+        "start": 1,
+        "end": 5,
+        "peak": 5,
+        "weapon": 0,
+        "dps_mid": 19.8,
+        "dps_end": 49.5,
         "kill_pct": 100.0,
-        "bio_ttk": 0.008,
-        "boss_ttk": 1.6,
+        "bio_ttk": 0.505,
+        "boss_ttk": 72.7,
         "boss_bud": 18.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 2,
-        "start": 844,
-        "end": 14847,
-        "peak": 14847,
-        "weapon": 4,
-        "dps_mid": 3382.0,
-        "dps_end": 3520.8,
+        "start": 1,
+        "end": 9,
+        "peak": 9,
+        "weapon": 0,
+        "dps_mid": 39.6,
+        "dps_end": 89.1,
         "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 1.0,
+        "bio_ttk": 0.303,
+        "boss_ttk": 62.9,
         "boss_bud": 19.5,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 3,
-        "start": 14847,
-        "end": 175798,
-        "peak": 175798,
-        "weapon": 4,
-        "dps_mid": 3799.5,
-        "dps_end": 3932.1,
+        "start": 1,
+        "end": 18,
+        "peak": 18,
+        "weapon": 0,
+        "dps_mid": 69.3,
+        "dps_end": 178.2,
         "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 1.3,
+        "bio_ttk": 0.202,
+        "boss_ttk": 49.4,
         "boss_bud": 21.0,
         "flags": [
-          "TRIVIAL_EARLY"
+          "BOSS_SLOW"
         ]
       },
       {
         "L": 4,
-        "start": 175798,
-        "end": 2720249,
-        "peak": 2720249,
-        "weapon": 4,
-        "dps_mid": 4250.8,
-        "dps_end": 4387.9,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 1.6,
+        "start": 1,
+        "end": 14,
+        "peak": 14,
+        "weapon": 0,
+        "dps_mid": 59.4,
+        "dps_end": 138.6,
+        "kill_pct": 53.6,
+        "bio_ttk": 0.269,
+        "boss_ttk": 92.4,
         "boss_bud": 22.5,
-        "flags": []
+        "flags": [
+          "WAVE_LEAK",
+          "BOSS_SLOW"
+        ]
       },
       {
         "L": 5,
-        "start": 2720249,
-        "end": 54696063,
-        "peak": 54696063,
-        "weapon": 4,
-        "dps_mid": 4746.8,
-        "dps_end": 4887.3,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 2.0,
+        "start": 1,
+        "end": 36,
+        "peak": 36,
+        "weapon": 0,
+        "dps_mid": 148.5,
+        "dps_end": 356.4,
+        "kill_pct": 78.6,
+        "bio_ttk": 0.121,
+        "boss_ttk": 50.5,
         "boss_bud": 24.0,
-        "flags": []
+        "flags": [
+          "BOSS_SLOW"
+        ]
       },
       {
         "L": 6,
-        "start": 54696063,
-        "end": 5402442041,
-        "peak": 5402442041,
-        "weapon": 4,
-        "dps_mid": 5501.6,
-        "dps_end": 5651.6,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.004,
-        "boss_ttk": 2.4,
+        "start": 1,
+        "end": 18,
+        "peak": 18,
+        "weapon": 0,
+        "dps_mid": 69.3,
+        "dps_end": 178.2,
+        "kill_pct": 22.3,
+        "bio_ttk": 0.289,
+        "boss_ttk": 140.3,
         "boss_bud": 25.5,
-        "flags": []
-      },
-      {
-        "L": 7,
-        "start": 5402442041,
-        "end": 9084211244590,
-        "peak": 9084211244590,
-        "weapon": 4,
-        "dps_mid": 6735.2,
-        "dps_end": 6887.6,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 2.3,
-        "boss_bud": 27.0,
-        "flags": []
-      },
-      {
-        "L": 8,
-        "start": 9084211244590,
-        "end": 9430842658577686,
-        "peak": 9430842658577686,
-        "weapon": 4,
-        "dps_mid": 7891.0,
-        "dps_end": 8043.3,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 2.6,
-        "boss_bud": 28.5,
-        "flags": []
-      },
-      {
-        "L": 9,
-        "start": 9430842658577686,
-        "end": 42616544569014468830,
-        "peak": 42616544569014468830,
-        "weapon": 4,
-        "dps_mid": 9291.3,
-        "dps_end": 9443.8,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 3.0,
-        "boss_bud": 30.0,
-        "flags": []
-      },
-      {
-        "L": 10,
-        "start": 42616544569014468830,
-        "end": 1992805926921608626821,
-        "peak": 1992805926921608626821,
-        "weapon": 4,
-        "dps_mid": 9936.4,
-        "dps_end": 10083.6,
-        "kill_pct": 100.0,
-        "bio_ttk": 0.003,
-        "boss_ttk": 8.5,
-        "boss_bud": 35,
-        "flags": []
+        "flags": [
+          "WAVE_LEAK",
+          "BOSS_SLOW",
+          "DEATH"
+        ]
       }
     ]
   }
