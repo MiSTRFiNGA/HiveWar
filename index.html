@@ -3235,8 +3235,8 @@ function renderSprites(){
   body.querySelector('#spDup').onclick=()=>frameOp('dup');
   body.querySelector('#spDel').onclick=()=>frameOp('del');
   body.querySelector('#spImp').onclick=()=>{ const inp=document.createElement('input');
-    inp.type='file'; inp.accept='image/png,image/gif,image/*';
-    inp.onchange=()=>{ const f=inp.files[0]; if(!f)return;
+    inp.type='file'; inp.id='spFile'; inp.accept='image/png,image/gif,image/*'; inp.style.display='none'; document.body.appendChild(inp);
+    inp.onchange=()=>{ const f=inp.files[0]; inp.remove(); if(!f)return;
       ((f.type==='image/gif'||/\.gif$/i.test(f.name))?readGif(f, c=>{
         work=c; appliedRotation=0; frameSel=0; undoStack=[]; drawFrames();drawPaint();
       }):readPng(f, c=>{
