@@ -362,6 +362,8 @@ function save() {
 // survival/economy measurements are continuous real-browser observations.
 const telemetryBot = /[?&]telemetry=1/.test(location.search);
 const telemetrySpeed = Math.max(1, Math.min(60, Number((location.search.match(/[?&]telemetrySpeed=(\d+)/) || [])[1]) || 1));
+const telemetrySeed = Math.max(0, Math.floor(Number((location.search.match(/[?&]telemetrySeed=(\d+)/) || [])[1]) || 0));
+function runSeed(level) { return 1000 + level * 777 + (telemetryBot ? telemetrySeed : 0); }
 let dragX = null, testBot = /[?&]test=1/.test(location.search) || telemetryBot, debugCanvas=/[?&]dbg=1/.test(location.search);
 function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / scale; }
 function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.top)/scale; }
@@ -531,7 +533,7 @@ function startRun(mode='campaign') {
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
   G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.firstShopCredits=null;G.reviveUsed=false;
   G.paused=false; rollers.length=0; G.rollT=5; loadEnv(G.level);
-  seed = 1000 + G.level * 777;
+  seed = runSeed(G.level);
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
   gates.length = 0; blastQueue.length = 0; blastDraining = false;
 }
@@ -578,7 +580,7 @@ function pickRandomWeapon(exclude, level) {
   let idx; do { idx = pool[Math.floor(rng() * pool.length)]; } while (idx === exclude);
   return idx;
 }
-function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
+function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = runSeed(G.level); gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
   // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
   // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
@@ -1060,10 +1062,14 @@ function telemetryBotAdvanceScreens() {
     G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1);
     G.state = G.boss ? 'boss' : 'play';
   } else if (G.state === 'shop') {
-    // Choose the first affordable combat upgrade, then deploy. This is a
-    // documented deterministic policy, not a proxy for a human purchase choice.
-    const pick = SHOP.find(it => G.meta[it.k] < it.max && G.credits >= shopPrice(it));
-    if (pick) { G.credits -= shopPrice(pick); G.meta[pick.k]++; save(); }
+    // Spend the whole visit on the most immediately useful combat growth, then
+    // deploy. This is a documented deterministic policy, not a human proxy.
+    const priorities = ['squad', 'dmg', 'soldierTier', 'weaponTier', 'perkSlot', 'vehicleDrop'];
+    for (let buys = 0; buys < 32; buys++) {
+      const pick = priorities.map(key => SHOP.find(it => it.k === key)).find(it => it && G.meta[it.k] < it.max && G.credits >= shopPrice(it));
+      if (!pick) break;
+      G.credits -= shopPrice(pick); G.meta[pick.k]++; save();
+    }
     levelStart();
   }
 }
@@ -1102,7 +1108,12 @@ function update(dt) {
   if (testBot) {                                      // auto-play: pick the best safe gate / dodge hazards
     let tx = CFG.W / 2, best = null, bestScore = -Infinity;
     const weaponDps = w => { const x = WEAPONS[w] || WEAPONS[0]; return x.dmg * x.rof * x.n; };
-    for (const g of gates) if (g.live && !g.spent && g.y > 0 && g.y < 820) {
+    // Resolve the closest incoming gate/pair first. Chasing a more valuable
+    // distant gate while crossing a nearer red gate is an impossible route.
+    const incoming = gates.filter(g => g.live && !g.spent && g.y > 0 && g.y < 820);
+    const nearestY = incoming.reduce((y, g) => Math.max(y, g.y), -Infinity);
+    const choices = incoming.filter(g => g.y >= nearestY - 8);
+    for (const g of choices) {
       let score = g.locked ? -100000 : 0;
       if (g.kind === 'add') score += g.val > 0 ? g.val * 100 : g.val * 1000;
       else if (g.kind === 'mul') score += Math.max(-1000, (g.val - 1) * Math.max(1, G.squad) * 100);
@@ -1114,6 +1125,7 @@ function update(dt) {
       if (score > bestScore) { bestScore = score; best = g; }
     }
     if (best && bestScore > 0) { const gr = gateRect(best); tx = gr.x + gr.w / 2; }
+    else if (best) tx = best.lane === 'L' ? CFG.W - 58 : 58;
     // A roller that is about to reach the squad outranks a distant gate; choose the clear road edge.
     const threat = rollers.find(r => r.y > CFG.H - 360 && r.y < CFG.H - 120);
     if (threat) tx = threat.x < CFG.W / 2 ? CFG.W - 58 : 58;
@@ -2474,7 +2486,7 @@ function screenText(big, small, col) {
 
 // ---------- loop ----------
 function frame(ts) {
-  const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
+  const dt = telemetryBot ? 1 / 60 : Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
   const dbg = window.FORGE_DBG;                       // FORGE transport: pause / ×4 fast-forward
   telemetryBotAdvanceScreens();
   if ((!testBot || telemetryBot) && !(dbg && dbg.pause))
@@ -3516,7 +3528,7 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0,
-  testBot, telemetryBot, telemetrySpeed, simTime:G.t, firstShopCredits:G.firstShopCredits });
+  testBot, telemetryBot, telemetrySpeed, telemetrySeed, simTime:G.t, firstShopCredits:G.firstShopCredits });
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is
