@@ -219,7 +219,26 @@ const CODEX = [
 // so Eric can tweak + test without touching code. Persisted per-browser.
 // ============================================================
 const EDIT_KEY = 'hiveswarm_forge_v1';
+const FORGE_ENTITY_VERSION = 2;
+const ENEMY_ENTITY_IDS = ['enemy.xenoid','enemy.eldritchSponge','enemy.cyberMutant','enemy.xenoptera','enemy.subterra','enemy.psychoid'];
+function entityDefaults(){ return [
+  {id:'player.soldier', class:'player', label:'Soldier', scale:1},
+  {id:'enemy.xenoid', class:'enemy', label:'Xenoid', scale:1},
+  {id:'enemy.eldritchSponge', class:'enemy', label:'Eldritch Sponge', scale:1},
+  {id:'enemy.cyberMutant', class:'enemy', label:'Cyber-Mutant', scale:1},
+  {id:'enemy.xenoptera', class:'enemy', label:'Xenoptera', scale:1},
+  {id:'enemy.subterra', class:'enemy', label:'Subterra', scale:1},
+  {id:'enemy.psychoid', class:'enemy', label:'Psychoid', scale:1},
+  {id:'boss.praetorian', class:'boss', label:'Praetorian', scale:1},
+  {id:'boss.alienQueen', class:'boss', label:'Alien Queen', scale:1},
+  {id:'hazard.rollerBreakable', class:'hazard', label:'Roller (Breakable)', scale:1},
+  {id:'hazard.rollerArmored', class:'hazard', label:'Roller (Armored)', scale:1},
+  {id:'vehicle.tank', class:'vehicle', label:'Tank', scale:1, range:175},
+  {id:'prop.barrier', class:'prop', label:'Barrier', scale:1},
+]; }
 function editDefaults() { return {
+  forgeEntityVersion: FORGE_ENTITY_VERSION,
+  entities: entityDefaults(),
   player: { rofMul: 1, dmgMul: 1, armor: 0 },   // armor = % of squad-loss prevented (0-90)
   // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
   // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears
@@ -251,17 +270,35 @@ function editDefaults() { return {
     name: ['Security Outpost','City Ruins','Commercial District','Central Spire','Overrun Factory',
            'Reactor Nursery','Hive Gate','Chitin Fields','Brood Caverns',"Queen's Chamber"][i] })),
   rollers: { interval: 8, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 4, minLvl: 2 },
-  // Global SIZE multipliers, one per entity class. Kept as a separate group (not folded into each
-  // entity's own size field) so a shared MOD PACK can rescale a whole class without overwriting the
-  // per-unit tuning underneath it — see PACK_FORMAT. 1 = shipped size.
-  scale: { player: 1, enemy: 1, boss: 1, queen: 1, roller: 1, gate: 1, tank: 1 },
   // Escort tanks. spread = px from the squad centre to each tank. The squad formation is 7 wide at
   // 42px spacing, so it reaches ~155px from centre — the old hardcoded 74 put both tanks INSIDE
   // the ranks. 175 clears the widest formation plus the trooper sprite.
-  vehicles: { spread: 175 },
+  vehicles: { spread: 175 }, // legacy UI/import compatibility; vehicle.tank.range is runtime truth
 }; }
-// Convenience accessor — always returns a full scale set even for packs saved before `scale` existed.
-function SCL() { return (EDIT && EDIT.scale) || { player:1, enemy:1, boss:1, queen:1, roller:1, gate:1 }; }
+function entityById(entities, id) { return (entities || []).find(e => e && e.id === id); }
+// Runtime-facing lookup. The fallback keeps a partially imported legacy pack playable.
+function ENT(id) { return entityById(EDIT && EDIT.entities, id) || entityById(entityDefaults(), id) || {scale:1}; }
+function enemyRow(kind) { return Object.assign({}, ((EDIT && EDIT.kinds) || [])[kind] || {}, ENT(ENEMY_ENTITY_IDS[kind] || ENEMY_ENTITY_IDS[0])); }
+function migrateForgeValues(saved) {
+  if (!saved || typeof saved !== 'object') return saved || {};
+  const next = Object.assign({}, saved), entities = entityDefaults();
+  if (Array.isArray(next.entities)) {
+    next.entities.forEach(row => { const target = row && entityById(entities, row.id); if (target) Object.assign(target, row); });
+  }
+  const hasExplicitEntities = Array.isArray(next.entities) && next.entities.some(row => row && row.id);
+  const oldScale = next.scale || {};
+  const scaleFor = { 'player.soldier':'player', 'boss.praetorian':'boss', 'boss.alienQueen':'queen',
+    'hazard.rollerBreakable':'roller', 'hazard.rollerArmored':'roller', 'vehicle.tank':'tank', 'prop.barrier':'gate' };
+  entities.forEach((row, i) => { const legacy = scaleFor[row.id] || (row.class === 'enemy' ? 'enemy' : null);
+    if (!hasExplicitEntities && legacy && Number.isFinite(oldScale[legacy])) row.scale = oldScale[legacy];
+    // F1 leaves legacy enemy combat fields in `kinds` until the F2 table owns their editors.
+    // Copying them here would make the compatibility controls appear to save while ENT shadows them.
+  });
+  if (!hasExplicitEntities && next.vehicles && Number.isFinite(next.vehicles.spread)) entityById(entities, 'vehicle.tank').range = next.vehicles.spread;
+  next.entities = entities; next.forgeEntityVersion = FORGE_ENTITY_VERSION;
+  delete next.scale; // global class scale is fully migrated to individual entity rows
+  return next;
+}
 function mergeEdit(base, saved) {                // deep-ish merge so new fields appear after updates
   for (const k in saved) {
     if (Array.isArray(base[k]) && Array.isArray(saved[k]))
@@ -271,7 +308,7 @@ function mergeEdit(base, saved) {                // deep-ish merge so new fields
   }
   return base;
 }
-let EDIT = (() => { try { return mergeEdit(editDefaults(), JSON.parse(localStorage.getItem(EDIT_KEY) || '{}')); }
+let EDIT = (() => { try { return mergeEdit(editDefaults(), migrateForgeValues(JSON.parse(localStorage.getItem(EDIT_KEY) || '{}'))); }
                     catch (e) { return editDefaults(); } })();
 function saveEdit() { try { localStorage.setItem(EDIT_KEY, JSON.stringify(EDIT)); } catch (e) {} }
 function applyEditWeapons() {                    // WEAPONS is read all over — mutate it in place
@@ -280,13 +317,13 @@ function applyEditWeapons() {                    // WEAPONS is read all over —
 }
 applyEditWeapons();
 function pickKind(lvl) {                          // weighted spawn pick from editor weights (minLvl-gated)
-  let tot = 0; for (let k = 0; k < 6; k++) if (lvl >= EDIT.kinds[k].minLvl) tot += EDIT.kinds[k].weight;
+  let tot = 0; for (let k = 0; k < 6; k++) if (lvl >= enemyRow(k).minLvl) tot += enemyRow(k).weight;
   if (tot <= 0) return 0;
   let r = rng() * tot;
-  for (let k = 0; k < 6; k++) { if (lvl < EDIT.kinds[k].minLvl) continue; r -= EDIT.kinds[k].weight; if (r <= 0) return k; }
+  for (let k = 0; k < 6; k++) { const row=enemyRow(k); if (lvl < row.minLvl) continue; r -= row.weight; if (r <= 0) return k; }
   return 0;
 }
-function kindHp(k, lvl) { return Math.max(1, EDIT.kinds[k].hpBase + EDIT.kinds[k].hpLvl * lvl); }
+function kindHp(k, lvl) { const row=enemyRow(k); return Math.max(1, row.hpBase + row.hpLvl * lvl); }
 
 // NOTE: the localStorage key below ('hiveswarm_v1') predates the HiVE WAR rename and is
 // intentionally NOT renamed — it is load-bearing for every existing player's save data.
@@ -769,8 +806,8 @@ function vehicleUpdate(dt) {
   // Origin = TOP-CENTRE of the tank sprite (matches drawVehicles: y=CFG.H-168, image -th/2).
   // Trajectory aims up its own road lane and is re-clamped every frame (task 2.4 / 2.5).
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
-    const spread = ((EDIT.vehicles && EDIT.vehicles.spread) || 175);
-    const tSc = SCL().tank, th = 72 * tSc;
+    const spread = ENT('vehicle.tank').range || ((EDIT.vehicles && EDIT.vehicles.spread) || 175);
+    const tSc = ENT('vehicle.tank').scale, th = 72 * tSc;
     for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
       b.y = (CFG.H - 168) - th / 2; b.r = 13; b.vy = -320 - rank * 18;   // top-centre of tank sprite
       const muzzleX = G.px + side * spread;
@@ -802,7 +839,7 @@ function spawnWave(dt) {
     spawnAcc--;
     const e = enemies.alloc(); if (!e) return;
     e.kind = pickKind(lvl);                     // FORGE: weighted spawn %s, editable live
-    const K = EDIT.kinds[e.kind];
+    const K = enemyRow(e.kind);
     if (G.clusterT === undefined || G.clusterT <= 0) {         // re-roll swarm cluster lane ~2s
       G.clusterLane = rr(-0.7, 0.7); G.clusterT = 1.6 + rng() * 1.2;
     }
@@ -816,7 +853,7 @@ function spawnWave(dt) {
     e.vx = rr(-18, 18); e.vy = K.spd + lvl * 7 + CFG.scrollSpd * 0.35;
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
-    e.r = K.r * SCL().enemy; e.t = 0; e.acidT = 0; e.buffed = 0;
+    e.r = K.r * enemyRow(e.kind).scale; e.t = 0; e.acidT = 0; e.buffed = 0;
   }
 }
 function spawnBoss() {
@@ -840,12 +877,12 @@ function damageEnemy(e, dmg, x, y) {
     G.meta.codex[e.kind]++;
     G.streak++; G.streakT=0.5; G.streakPeak=Math.max(G.streakPeak,G.streak);   // tighter combo window — resets in lulls
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
-    const K = EDIT.kinds[e.kind];
+    const K = enemyRow(e.kind);
     G.credits += Math.round(K.credits*(G.mode==='endless'?Math.pow(1.12,G.loop):1));
     if (e.kind >= 3) G.hitStop = 0.04;
     // throttled per-enemy death sound (~4/sec max, so a dense swarm doesn't machine-gun the SFX)
     if (G.t - (G.hitSfxT || 0) > 0.22) { G.hitSfxT = G.t;
-      AUDIO.sample((EDIT.kinds[e.kind] || {}).sfxDie || 'xenohit'); }   // FORGE-assignable per-enemy death cue
+      AUDIO.sample(enemyRow(e.kind).sfxDie || 'xenohit'); }   // FORGE-assignable per-enemy death cue
     gore(e.x, e.y, e.kind);
     const dieA = XANIM[e.kind+':Die'];                // FORGE-authored death anim (optional)
     if (dieA && dieA.img.ok && deathFx.length < 40) deathFx.push({ x:e.x, y:e.y, kind:e.kind, r:e.r, t:0 });
@@ -1080,7 +1117,7 @@ function update(dt) {
         const loss = Math.max(1, Math.round(([4,16,8,9,8,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
         // throttled like the death cue — a latched swarm would otherwise machine-gun the attack sample
         if (G.t - (G.atkSfxT || 0) > 0.25) { G.atkSfxT = G.t;
-          AUDIO.sample((EDIT.kinds[e.kind] || {}).sfxAttack || 'xenohit'); }
+          AUDIO.sample(enemyRow(e.kind).sfxAttack || 'xenohit'); }
         loseUnits(loss, e.x, e.y);
         if (G.squad <= 0) return;
       }
@@ -1192,9 +1229,9 @@ function bossUpdate(dt) {
   // minion pressure — spawn them from ABOVE the boss so they still march the road's full length
   if (rng() < (B.queen ? 2.2 : 1.1) * dt) {
     const e = enemies.alloc();
-    if (e) { e.kind = 0; const K = EDIT.kinds[0];
+    if (e) { e.kind = 0; const K = enemyRow(0);
       e.x = B.x + rr(-90, 90); e.y = Math.min(B.y - 120, 260); e.vx = rr(-30,30); e.vy = K.spd + 90;
-      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r * SCL().enemy; e.t = 0; e.phase = rr(0, 6.283);
+      e.maxhp = e.hp = kindHp(0, G.level) * 1.4; e.r = K.r * enemyRow(0).scale; e.t = 0; e.phase = rr(0, 6.283);
       // boss-spawned enemies skip spawnWave()'s field set — lane/phase must be initialized here too,
       // or the lane-homing movement code reads e.lane as undefined and NaNs e.x (crashes gradient draws).
       e.lane = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W/2) / roadHalfWidthAtY(e.y))); }
@@ -1207,9 +1244,9 @@ function bossUpdate(dt) {
       B.eggT += dt;
       if (B.eggT >= Q.eggInt) { B.eggT = 0;
         for (let i = 0; i < Q.hatch; i++) { const e = enemies.alloc(); if (!e) break;
-          e.kind = 0; const K = EDIT.kinds[0];
+          e.kind = 0; const K = enemyRow(0);
           e.x = B.x + rr(-100, 100); e.y = Math.min(B.y - 110, 300); e.vx = rr(-40, 40); e.vy = K.spd + 110;
-          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8 * SCL().enemy; e.t = 0; e.phase = rr(0, 6.283);
+          e.maxhp = e.hp = Q.eggHp * 0.2; e.r = K.r * 0.8 * enemyRow(0).scale; e.t = 0; e.phase = rr(0, 6.283);
           e.lane = Math.max(-0.92, Math.min(0.92, (e.x - CFG.W/2) / roadHalfWidthAtY(e.y))); } }
     }
   }
@@ -1271,7 +1308,7 @@ function gateRect(g){
   else { x = c - hw + 3; w = hw * 0.875 - 3; }   // 'L' (default)
   // gh: panel height grows with depth. Only the HEIGHT takes the scale knob — width is tied to the
   // road edge and the centreline gap, so scaling it would reopen the "barriers wall off the lane" bug.
-  return { x, w, z, gh: (22 + 46*z) * SCL().gate };
+  return { x, w, z, gh: (22 + 46*z) * ENT('prop.barrier').scale };
 }
 
 // ---------- pre-rendered art (offscreen canvases, built ONCE at load) ----------
@@ -1516,7 +1553,7 @@ function rollerUpdate(dt) {
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, r.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
     const hw = roadHalfWidthAtY(r.y);   // lateral: match the DRAWN road (ez stays for size/speed feel)
     r.x = CFG.W/2 + r.lane * (hw - 20);
-    r.size = R.size * SCL().roller * (0.35 + 0.85 * ez);   // grows as it rolls toward the camera
+    r.size = R.size * ENT(r.armored ? 'hazard.rollerArmored' : 'hazard.rollerBreakable').scale * (0.35 + 0.85 * ez);   // grows as it rolls toward the camera
     r.y += R.speed * (0.35 + 0.75 * ez) * dt;
     r.rot += dt * (2.2 + 3 * ez);
     let smashed = false;
@@ -1726,8 +1763,8 @@ function drawBossProgressBar(){
   cx.fillText(G.level === CFG.levels ? 'QUEEN ' + Math.round(p * 100) + '%' : 'BOSS ' + Math.round(p * 100) + '%', CFG.W / 2, by - 3);
 }
 function drawVehicles(){
-  // FORGE: UNITS tab drives both size (scale.tank) and how far out they sit (vehicles.spread).
-  const tSc=SCL().tank, spread=((EDIT.vehicles&&EDIT.vehicles.spread)||175);
+  // FORGE: the Tank entity drives both its own size and how far out it sits.
+  const tSc=ENT('vehicle.tank').scale, spread=ENT('vehicle.tank').range || ((EDIT.vehicles&&EDIT.vehicles.spread)||175);
   for(const side of [-1,1]){const x=G.px+side*spread,y=CFG.H-168;cx.save();cx.translate(x,y);   // one tank per side
     if(IMGS.tank&&IMGS.tank.ok){const th=72*tSc,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
     cx.scale(tSc,tSc);
@@ -2136,7 +2173,7 @@ function drawSquad() {
     cx.strokeStyle=tierCol;cx.shadowColor=tierCol;cx.shadowBlur=14;cx.lineWidth=4;cx.beginPath();cx.ellipse(x,y+15,21*tierScale,9*tierScale,0,0,7);cx.stroke();
     if(G.squadFlash>0){cx.globalAlpha=.85;cx.globalCompositeOperation='lighter';}
     if(IMGS.soldierAnim&&IMGS.soldierAnim.ok){                 // animated rear-view trooper (fire loop)
-      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58*tierScale*SCL().player;
+      const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58*tierScale*ENT('player.soldier').scale;
       cx.drawImage(IMGS.soldierAnim, f*cs,0,cs,cs, x-sz/2, y-sz+10+bob, sz, sz);
     } else {
       const tw=48*tierScale, th=63*tierScale;
@@ -2197,7 +2234,7 @@ function drawBoss() {
     else if (B.attack && PRAET.attack.img.ok) { a = PRAET.attack; f = Math.floor(B.attackClock * a.fps) % a.frames; }
     else { f = Math.floor(B.t * a.fps) % a.frames; }
     const cs = a.img.height, breathe = B.dead ? 1 : 1 + 0.03 * Math.sin(B.t * 2);
-    const ph = 300 * breathe * (B.queen ? SCL().queen : SCL().boss), pw = ph * (cs / cs);
+    const ph = 300 * breathe * ENT(B.queen ? 'boss.alienQueen' : 'boss.praetorian').scale, pw = ph * (cs / cs);
     cx.save(); cx.shadowColor = glow; cx.shadowBlur = 26;
     cx.drawImage(a.img, f * cs, 0, cs, cs, B.x - ph / 2, B.y - ph / 2, ph, ph); cx.restore();
     drawBossHud(B, B.y - ph / 2); return;
@@ -2208,7 +2245,7 @@ function drawBoss() {
   const bossImg = queenAtk || (B.queen ? IMGS.queen : IMGS.praet);  // Alien Queen (final)
   if (bossImg && bossImg.ok) {
     const breathe = 1 + 0.03 * Math.sin(B.t * 2);
-    const ph = (B.queen ? 420 * SCL().queen : 300 * SCL().boss) * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
+    const ph = (B.queen ? 420 : 300) * ENT(B.queen ? 'boss.alienQueen' : 'boss.praetorian').scale * breathe, pw = ph * (bossImg.width / bossImg.height);   // scale-ref sizes
     cx.save(); cx.shadowColor = glow; cx.shadowBlur = 30;
     cx.drawImage(bossImg, B.x - pw / 2, B.y - ph / 2, pw, ph); cx.restore();
     drawBossHud(B, B.y - ph / 2); return;
@@ -2645,7 +2682,7 @@ function applyPack(j) {
   if (isPack && j.hiveWarPack > PACK_FORMAT)
     throw new Error(`pack needs a newer game build (pack format ${j.hiveWarPack}, this build reads ${PACK_FORMAT})`);
   if (!j.values && !j.sprites && !j.env) throw new Error('pack contains no content');
-  if (j.values) { EDIT = mergeEdit(editDefaults(), j.values); saveEdit(); applyEditWeapons(); }
+  if (j.values) { EDIT = mergeEdit(editDefaults(), migrateForgeValues(j.values)); saveEdit(); applyEditWeapons(); }
   if (j.sprites) { savedSprites = j.sprites;
     try { localStorage.setItem(SKEY, JSON.stringify(savedSprites)); } catch (e) {}
     for (const r of REG) { const s = savedSprites[r.key];
@@ -2686,19 +2723,19 @@ function renderTab(){
       <td class="pct" data-pct="${i}"></td><td>${num('kinds.'+i+'.minLvl',1,36)}</td>
       <td>${snd('kinds.'+i+'.sfxAttack')}</td><td>${snd('kinds.'+i+'.sfxDie')}</td></tr>
       <tr><td></td><td colspan="11" class="hpprev" data-hp="${i}"></td></tr>`; });
-    // SIZE SCALE — everything the UNITS tab didn't previously cover (owner request 2026-07-31).
-    // Multipliers, not absolute sizes, so a shared pack can rescale a class without stomping the
-    // per-unit tuning above. Enemy scale multiplies each unit's SIZE column.
     h += `</table>
-      <div class="hint" style="color:#f4f;margin-top:14px">SIZE SCALE — × multiplier on every member of the class. 1 = shipped size.
-        Applies to NEW spawns (enemies/obstacles); player and boss update instantly.</div>
-      <table><tr><th>PLAYER</th><th>ENEMIES</th><th>BOSS</th><th>QUEEN</th><th>OBSTACLES</th><th>BARRIERS</th><th>TANKS</th></tr>
-      <tr><td>${num('scale.player',0.05,52)}</td><td>${num('scale.enemy',0.05,52)}</td>
-          <td>${num('scale.boss',0.05,52)}</td><td>${num('scale.queen',0.05,52)}</td>
-          <td>${num('scale.roller',0.05,52)}</td><td>${num('scale.gate',0.05,52)}</td>
-          <td>${num('scale.tank',0.05,52)}</td></tr></table>
-      <div class="row">TANK SPREAD ${num('vehicles.spread',5,56)} <span class="hint">px from squad centre to each tank. The formation reaches ~155px, so below that they sit inside the ranks.</span></div>
-      <div class="hint">BARRIERS scales panel HEIGHT only — width is locked to the road edge and the centreline gap.</div>`;
+      <div class="hint" style="color:#f4f;margin-top:14px">PER-ENTITY SCALE — compatibility controls until the dedicated ENTITIES table lands in Forge F2.</div>
+      <table><tr><th>SOLDIER</th><th>XENOID</th><th>PRAETORIAN</th><th>QUEEN</th><th>ROLL B</th><th>ROLL A</th><th>BARRIER</th><th>TANK</th></tr>
+      <tr><td>${num('entities.0.scale',0.05,52)}</td><td>${num('entities.1.scale',0.05,52)}</td>
+          <td>${num('entities.7.scale',0.05,52)}</td><td>${num('entities.8.scale',0.05,52)}</td>
+          <td>${num('entities.9.scale',0.05,52)}</td><td>${num('entities.10.scale',0.05,52)}</td>
+          <td>${num('entities.12.scale',0.05,52)}</td><td>${num('entities.11.scale',0.05,52)}</td></tr></table>
+      <table><tr><th>ELDRITCH</th><th>CYBER</th><th>XENOPTERA</th><th>SUBTERRA</th><th>PSYCHOID</th></tr>
+      <tr><td>${num('entities.2.scale',0.05,52)}</td><td>${num('entities.3.scale',0.05,52)}</td>
+          <td>${num('entities.4.scale',0.05,52)}</td><td>${num('entities.5.scale',0.05,52)}</td>
+          <td>${num('entities.6.scale',0.05,52)}</td></tr></table>
+      <div class="row">TANK SPREAD ${num('entities.11.range',5,56)} <span class="hint">px from squad centre to each tank. The formation reaches ~155px, so below that they sit inside the ranks.</span></div>
+      <div class="hint">BARRIERS use the per-entity Barrier scale; panel width remains locked to the road edge and centreline gap.</div>`;
     body.innerHTML = h;
     body.querySelectorAll('[data-kt]').forEach(c=>{ const a=ANIM[+c.dataset.kt];
       if(a&&a.img.ok){const cs=a.img.height;c.getContext('2d').drawImage(a.img,0,0,cs,cs,0,0,40,40);} });
@@ -2949,7 +2986,7 @@ function renderTab(){
     body.querySelector('#fImpB').onclick=()=>body.querySelector('#fImp').click();
     body.querySelector('#fImp').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader();
       rd.onload=()=>{ try{ const j=JSON.parse(rd.result);
-        if(j.values){EDIT=mergeEdit(editDefaults(),j.values);saveEdit();applyEditWeapons();}
+        if(j.values){EDIT=mergeEdit(editDefaults(),migrateForgeValues(j.values));saveEdit();applyEditWeapons();}
         if(j.sprites){savedSprites=j.sprites;localStorage.setItem(SKEY,JSON.stringify(savedSprites));
           for(const r of REG){const s=savedSprites[r.key];if(s&&s.data){if(r.h){r.h.img.src=s.data;if(s.frames)r.h.frames=s.frames;}else makeHolder(r,s.data,s.frames,s.fps);}}}
         if(j.env){ENV_OVR=j.env;localStorage.setItem(ENV_KEY,JSON.stringify(ENV_OVR));for(const k in ENVIMG)delete ENVIMG[k];}
