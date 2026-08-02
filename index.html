@@ -2543,6 +2543,13 @@ function readPng(file, cb){                // file -> canvas, alpha preserved (n
     im.src = rd.result; };
   rd.readAsDataURL(file);
 }
+async function readGif(file, cb){
+  if (!window.ImageDecoder) throw new Error('GIF import needs a current Chromium browser');
+  const dec=new ImageDecoder({data:await file.arrayBuffer(),type:'image/gif'}), n=dec.tracks.selectedTrack.frameCount;
+  if(n>120&&!confirm(`This GIF has ${n} frames. It may be slow to edit, but no frames will be discarded. Continue?`))return;
+  const first=await dec.decode({frameIndex:0}), w=first.image.displayWidth,h=first.image.displayHeight,c=document.createElement('canvas');c.width=w*n;c.height=h;const g=c.getContext('2d');g.drawImage(first.image,0,0);first.image.close();
+  for(let i=1;i<n;i++){const f=await dec.decode({frameIndex:i});g.drawImage(f.image,i*w,0);f.image.close();}dec.close();c._frames=n;cb(c);
+}
 // a strip lays frames side by side, so width/height rounds to the frame count (single image -> 1)
 function askFrames(c){ const guess = Math.max(1, Math.round(c.width / c.height));
   const n = parseInt(prompt('Frames across in this PNG?\n(1 = single image, N = animation strip)', guess), 10);
@@ -2665,7 +2672,7 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
   setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
 
 const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
-let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false};
+let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false}, appliedRotation=0;
 let entityClassFilter = 'all', entityReturnId = null;
 // Crop mode. While cropBox is set the paint canvas drags the box instead of painting, and drawPaint
 // overlays it. cropOnChange lets the editor refresh its size readout as the box moves.
@@ -3071,6 +3078,15 @@ function renderTab(){
 
 // ---- SPRITES: strip browser + per-frame paint editor with add/remove ----
 function cellW(r){ const im=r.h.img; return Math.round((im.naturalWidth||im.width)/Math.max(1,r.h.frames)); }
+// Art-only transform: redraw each animation cell into its original bounds. Runtime collision/range
+// values never read this canvas, so rotation cannot alter gameplay hitboxes.
+function rotateSpriteArt(degrees){ if(!work) return; pushUndo(); const frames=work._frames||1, cw=work.width/frames, ch=work.height;
+  const out=document.createElement('canvas'); out.width=work.width; out.height=ch; const g=out.getContext('2d'), rad=degrees*Math.PI/180;
+  for(let f=0;f<frames;f++){ g.save(); g.translate(f*cw+cw/2,ch/2); g.rotate(rad); g.drawImage(work,f*cw,0,cw,ch,-cw/2,-ch/2,cw,ch); g.restore(); }
+  out._frames=frames; work=out; drawFrames(); drawPaint(); }
+function alphaKeySprite(hex,tolerance){ if(!work||canvasTainted(work)){alert('Alpha key needs a clean imported image; use ⇧ IMPORT PNG/GIF first.');return;} const m=/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex); if(!m)return;
+  pushUndo(); const [r,g,b]=[1,2,3].map(i=>parseInt(m[i],16)), c=document.createElement('canvas'); c.width=work.width;c.height=work.height;const x=c.getContext('2d');x.drawImage(work,0,0);const d=x.getImageData(0,0,c.width,c.height);for(let i=0;i<d.data.length;i+=4){const q=Math.hypot(d.data[i]-r,d.data[i+1]-g,d.data[i+2]-b);if(q<=tolerance)d.data[i+3]=0;}x.putImageData(d,0,0);c._frames=work._frames;work=c;drawFrames();drawPaint(); }
+function tileSpriteArt(nx,ny){ if(!work)return;nx=Math.min(16,Math.max(1,nx));ny=Math.min(16,Math.max(1,ny));const f=work._frames||1,cw=work.width/f,ch=work.height;if(cw*nx*f*ch*ny>16000000){alert('Tile output exceeds the 16 MP editing budget.');return;}pushUndo();const out=document.createElement('canvas');out.width=cw*nx*f;out.height=ch*ny;const g=out.getContext('2d');for(let i=0;i<f;i++)for(let y=0;y<ny;y++)for(let x=0;x<nx;x++)g.drawImage(work,i*cw,0,cw,ch,i*cw*nx+x*cw,y*ch,cw,ch);out._frames=f;work=out;drawFrames();drawPaint(); }
 function renderSprites(){
   if (spriteSel < 0){
     let h = `<div class="hint"><b style="color:#4ff">⇧</b> on any slot = pick a transparent PNG from disk — it goes live in the game instantly
@@ -3109,9 +3125,12 @@ function renderSprites(){
     ${r.h.fps!==undefined?`FPS <input type="number" id="spFps" style="width:44px" value="${r.h.fps}">`:''}</div>
     <div class="frames" id="spFrames"></div>
     <div class="row"><button id="spDup">+ DUP FRAME</button><button id="spDel" class="warn">− DEL FRAME</button>
-      <button id="spImp">⇧ IMPORT PNG</button>
+      <button id="spImp">⇧ IMPORT PNG / GIF</button>
       <button id="spUndo">↩ UNDO</button><button id="spSave">💾 SAVE LIVE</button>
       <button id="spRev" class="warn">REVERT</button><button id="spDl">⇩ DOWNLOAD PNG</button></div>
+    <div class="row">ART ROTATE <input type="number" id="spRot" min="-180" max="180" step="1" value="0" style="width:54px" aria-label="Rotate sprite art degrees"><label><input type="checkbox" id="spRotLock"> 15° LOCK</label><button id="spRotGo">↻ APPLY</button><button id="spRotL">◀ 1°</button><button id="spRotR">1° ▶</button><span class="hint">art only — frame bounds and gameplay hitboxes stay unchanged</span></div>
+    <div class="row">ALPHA KEY <input type="color" id="spKey" value="#ff00ff" aria-label="Alpha key color"> TOL <input type="number" id="spKeyTol" min="0" max="442" value="24" style="width:48px" aria-label="Alpha key tolerance"><button id="spKeyGo">✦ REMOVE</button></div>
+    <div class="row">TILE <input type="number" id="spTileX" min="1" max="16" value="1" style="width:42px" aria-label="Horizontal tiles"> × <input type="number" id="spTileY" min="1" max="16" value="1" style="width:42px" aria-label="Vertical tiles"><button id="spTileGo">▦ APPLY</button><span class="hint">seam preview is the canvas grid</span></div>
     <div class="row">🎨 <input type="color" id="spCol" value="${brush.col}"> SIZE <input type="range" id="spSize" min="1" max="24" value="${brush.size}">
       <button id="spErase">${brush.erase?'✏ PAINT':'⌫ ERASE'}</button></div>
     <div id="spTaint" style="display:none;margin:8px 0;padding:8px 10px;border:1px solid #f66;border-radius:6px;background:#2a0b12;color:#fbb">
@@ -3129,11 +3148,13 @@ function renderSprites(){
   body.querySelector('#spDup').onclick=()=>frameOp('dup');
   body.querySelector('#spDel').onclick=()=>frameOp('del');
   body.querySelector('#spImp').onclick=()=>{ const inp=document.createElement('input');
-    inp.type='file'; inp.accept='image/png,image/*';
+    inp.type='file'; inp.accept='image/png,image/gif,image/*';
     inp.onchange=()=>{ const f=inp.files[0]; if(!f)return;
-      readPng(f, c=>{
+      ((f.type==='image/gif'||/\.gif$/i.test(f.name))?readGif(f, c=>{
+        work=c; appliedRotation=0; frameSel=0; undoStack=[]; drawFrames();drawPaint();
+      }):readPng(f, c=>{
         if (confirm('OK = replace the WHOLE strip with this PNG.\nCancel = drop it into the selected frame only.')) {
-          work = c; work._frames = askFrames(c); frameSel = 0; undoStack = [];
+          work = c; work._frames = askFrames(c); appliedRotation=0; frameSel = 0; undoStack = [];
         } else {                                        // fit into the current cell, centred, transparency intact
           pushUndo();
           const cw = work.width/work._frames, chh = work.height, g = work.getContext('2d');
@@ -3141,9 +3162,15 @@ function renderSprites(){
           g.clearRect(frameSel*cw, 0, cw, chh);
           g.drawImage(c, frameSel*cw + (cw-w)/2, (chh-hh)/2, w, hh);
         }
-        drawFrames(); drawPaint(); }); };
+        drawFrames(); drawPaint(); })).catch(e=>alert('Could not import GIF: '+e.message)); };
     inp.click(); };
   body.querySelector('#spUndo').onclick=undo;
+  const rotateFromControl=delta=>{const el=body.querySelector('#spRot'), lock=body.querySelector('#spRotLock').checked;let base=parseFloat(el.value)||0, v=base+delta;if(lock&&delta)v=(delta>0?Math.floor(base/15)+1:Math.ceil(base/15)-1)*15;else if(lock)v=Math.round(v/15)*15;el.value=v;const d=v-appliedRotation;if(d){rotateSpriteArt(d);appliedRotation=v;}};
+  body.querySelector('#spRotGo').onclick=()=>rotateFromControl(0);
+  body.querySelector('#spRotL').onclick=()=>rotateFromControl(-1);
+  body.querySelector('#spRotR').onclick=()=>rotateFromControl(1);
+  body.querySelector('#spKeyGo').onclick=()=>alphaKeySprite(body.querySelector('#spKey').value,Math.max(0,+body.querySelector('#spKeyTol').value||0));
+  body.querySelector('#spTileGo').onclick=()=>tileSpriteArt(Math.max(1,+body.querySelector('#spTileX').value||1),Math.max(1,+body.querySelector('#spTileY').value||1));
   body.querySelector('#spSave').onclick=applyWork;
   body.querySelector('#spRev').onclick=()=>{ if(confirm('Revert this sprite to the shipped PNG?')){
     delete savedSprites[r.key]; queueMedia(()=>mediaDel('sprite:'+r.key)).then(()=>location.reload()).catch(()=>alert('Could not revert sprite in IndexedDB.')); } };
@@ -3174,7 +3201,7 @@ function loadEnvWork(key, done){
     work._frames = 1; frameSel = 0; undoStack = []; done(!!im);
   });
 }
-function loadWork(){ const r=REG[spriteSel], im=r.h.img, cell=r.cell||128;
+function loadWork(){ appliedRotation=0; const r=REG[spriteSel], im=r.h.img, cell=r.cell||128;
   work=document.createElement('canvas');
   work.width=im.naturalWidth||im.width||cell*r.h.frames;   // fallback: image not decoded yet (fresh slot)
   work.height=im.naturalHeight||im.height||cell;
@@ -3234,7 +3261,7 @@ function pushUndo(){ const c=document.createElement('canvas');
   try{ c.getContext('2d').drawImage(work,0,0); }catch(e){}
   c._frames=work._frames; undoStack.push({ f:frameSel, c });
   if(undoStack.length>15)undoStack.shift(); }
-function undo(){ if(!undoStack.length)return; const s=undoStack.pop();
+function undo(){ if(!undoStack.length)return; const s=undoStack.pop(); appliedRotation=0; const rot=body.querySelector('#spRot'); if(rot)rot.value=0;
   work=s.c; work._frames=s.c._frames||1;
   frameSel=Math.min(s.f, work._frames-1);
   drawFrames(); drawPaint(); }
