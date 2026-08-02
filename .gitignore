@@ -2,3 +2,11 @@ _game_extract.js
 _headless_harness_stub.js
 node_modules/
 __pycache__/
+
+# local harness/debug debris
+_debug_*.js
+*_dbg.js
+_game_extract.js
+art_src/_desktop_import/
+.pytest_cache/
+__pycache__/
