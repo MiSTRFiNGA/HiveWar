@@ -10,4 +10,4 @@ To close the human balance acceptance target (198–413 seconds), collect at lea
 4. Report minimum, median, and maximum run duration. Separately report first-shop-arrival rate and first-shop credits.
 5. Compare the human band to the 198–413-second acceptance band. If it misses, choose and document a balance change before claiming the spawn/economy rows are complete.
 
-The current seeded continuous-bot baseline is deliberately kept separate: 15 seeds at `?telemetry=1&telemetrySpeed=60`, min/p50/max 18.1/84.0/413.0 seconds, 3/15 first-shop arrivals at 356–363 credits, zero page errors.
+Eric selected the bot-target calibration option on 2026-08-02. The approved seeded continuous-bot result is 15 seeds at `?telemetry=1&telemetrySpeed=60`: min/p50/max **59.5/212.6/413.0 seconds**, first-shop arrival **14/15** at **185–198 credits**, zero page errors. It closes the bot target only; use this human protocol for any future human-experience claim.

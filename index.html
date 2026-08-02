@@ -167,12 +167,15 @@ const SOLDIER_TIER_COLORS = ['#5ff', '#5f9fff', '#b45fff', '#ff9d3d', '#ffe23d']
 const BAL = {
   // Retuned with the one-soldier opening: the old horizon pass compressed travel time, and the
   // old values were calibrated for a much larger opening volley.
-  spawnRate: [1.0,1.5,2.5,4.0,6.0,8.5,12.0,16.5,22.0,28.0],
+  // Bot-target calibration (2026-08-02): a one-soldier run needs a reliable
+  // first clear/shop before the campaign ramps.  The curve remains steep after
+  // level 3, rather than front-loading the entire campaign into the opener.
+  spawnRate: [0.03,0.10,0.32,0.90,1.60,2.80,4.50,6.80,10.00,14.00],
   waveSec:   [75,78,82,86,90,94,98,102,106,60],
   mixEld:    [0,4,8,14,18,22,26,28,30,32],              // % eldritch — zeroed on L1
   mixCyb:    [0,0,3,8,12,16,20,23,25,27],               // % cyber-mutant — zeroed on L1-2
   hp: { bio: L => 8 + 2.0*L, eld: L => 38 + 9.5*L, cyb: L => 20 + 4.5*L },   // R2
-  bossHp:    [3600,5600,8800,12800,18000,25000,30000,40000,52000,0],
+  bossHp:    [60,100,200,900,1900,3000,4500,6500,9000,0],
   queen:     { p1:28000, p2:36000, p3:22000, eggInt:1.8, eggHp:120, hatch:6 },
   gates: {
     interval: L => Math.max(14.0, 20.0 - 0.35*(L-1)),  // CG KPI tune 2026-07-29: rarer gates, more room to breathe
@@ -273,7 +276,9 @@ function editDefaults() { return {
   env: Array.from({length:10}, (_,i) => ({      // per-level theming; art drops into assets/env/L<n>_*.png
     name: ['Security Outpost','City Ruins','Commercial District','Central Spire','Overrun Factory',
            'Reactor Nursery','Hive Gate','Chitin Fields','Brood Caverns',"Queen's Chamber"][i] })),
-  rollers: { interval: 8, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 4, minLvl: 2 },
+  // Keep the first two levels focused on gates and the swarm.  Rollers enter
+  // once the player has had a shop visit and enough squad growth to react.
+  rollers: { interval: 12, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 3, minLvl: 3 },
   // Escort tanks. spread = px from the squad centre to each tank. The squad formation is 7 wide at
   // 42px spacing, so it reaches ~155px from centre — the old hardcoded 74 put both tanks INSIDE
   // the ranks. 175 clears the widest formation plus the trooper sprite.
