@@ -267,6 +267,9 @@ function editDefaults() { return {
   levelMusic: Array.from({length:10}, () => ''),
   bossMusic:  Array.from({length:10}, () => ''),
   gateInterval: Array.from({length:10}, (_,i) => Math.max(12, 18 - 0.4*i)),   // sec between barrier pairs, per level
+  // Optional authored timeline per level. Empty event arrays deliberately preserve the campaign's
+  // procedural cadence; placing a marker makes that system explicit for that level.
+  levelLayout: Array.from({length:10}, (_,i) => ({ duration:BAL.waveSec[i], bossAt:BAL.waveSec[i], gates:[], hazards:[], spawns:[] })),
   env: Array.from({length:10}, (_,i) => ({      // per-level theming; art drops into assets/env/L<n>_*.png
     name: ['Security Outpost','City Ruins','Commercial District','Central Spire','Overrun Factory',
            'Reactor Nursery','Hive Gate','Chitin Fields','Brood Caverns',"Queen's Chamber"][i] })),
@@ -325,6 +328,18 @@ function pickKind(lvl) {                          // weighted spawn pick from ed
   return 0;
 }
 function kindHp(k, lvl) { const row=enemyRow(k); return Math.max(1, row.hpBase + row.hpLvl * lvl); }
+function levelLayout(li, create) {
+  const fallback = { duration:BAL.waveSec[li] || 60, bossAt:BAL.waveSec[li] || 60, gates:[], hazards:[], spawns:[] };
+  if (!Array.isArray(EDIT.levelLayout)) EDIT.levelLayout = [];
+  let row = EDIT.levelLayout[li];
+  if (!row || typeof row !== 'object') { if (!create) return fallback; row = EDIT.levelLayout[li] = fallback; }
+  for (const key of ['gates','hazards','spawns']) if (!Array.isArray(row[key])) row[key] = [];
+  row.duration = Math.max(10, Number(row.duration) || fallback.duration);
+  const bossAt = Number(row.bossAt);
+  row.bossAt = Math.max(0, Math.min(row.duration, Number.isFinite(bossAt) ? bossAt : row.duration));
+  return row;
+}
+function levelDuration(li) { return levelLayout(li).duration; }
 
 // NOTE: the localStorage key below ('hiveswarm_v1') predates the HiVE WAR rename and is
 // intentionally NOT renamed — it is load-bearing for every existing player's save data.
@@ -557,7 +572,7 @@ function pickRandomWeapon(exclude, level) {
   let idx; do { idx = pool[Math.floor(rng() * pool.length)]; } while (idx === exclude);
   return idx;
 }
-function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
+function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = 1000 + G.level * 777; gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
   // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
   // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
@@ -1025,6 +1040,17 @@ function shopTap(e) {
 // ---------- update ----------
 function balanceMul(key){ const v=Number(EDIT.balance&&EDIT.balance[key]), fallback=key==='startCredits'?0:1; return Number.isFinite(v)?Math.max(0,v):fallback; }
 function shopPrice(it){ return Math.round(it.cost(G.meta[it.k])*balanceMul('shopCostMul')); }
+function processLevelLayout() {
+  const layout = levelLayout(G.level - 1), fired = G.layoutFired || (G.layoutFired = {gates:[],hazards:[],spawns:[]});
+  const fire = (key, fn) => layout[key].forEach((mark, i) => {
+    const at = Math.max(0, Number(mark && mark.t) || 0);
+    if (G.levelT >= at && !fired[key][i]) { fired[key][i] = true; fn(mark || {}); }
+  });
+  fire('gates', () => spawnGatePair());
+  fire('hazards', mark => spawnRoller(mark.armored));
+  fire('spawns', mark => { spawnAcc += Math.max(1, Math.round(Number(mark.count) || 8)); });
+  return layout;
+}
 let gateT = 0, last = 0;
 function update(dt) {
   if (G.state !== 'play' && G.state !== 'boss') return;
@@ -1061,8 +1087,9 @@ function update(dt) {
 
   if (G.state === 'play') {
     spawnWave(dt);
-    gateT -= dt; if (gateT <= 0) { spawnGatePair(); gateT = EDIT.gateInterval[G.level - 1] || 15; }   // FORGE: barrier frequency per level
-    if (G.levelT >= BAL.waveSec[G.level - 1]) spawnBoss();
+    const layout = processLevelLayout();
+    if (!layout.gates.length) { gateT -= dt; if (gateT <= 0) { spawnGatePair(); gateT = EDIT.gateInterval[G.level - 1] || 15; } }
+    if (G.levelT >= layout.bossAt) spawnBoss();
   } else bossUpdate(dt);
 
   // bullets
@@ -1546,11 +1573,10 @@ function rollerArt(armored) {                   // temp art until Eric's sprites
 }
 function rollerUpdate(dt) {
   const R = EDIT.rollers;
-  if (G.state === 'play' && G.level >= R.minLvl) {
+  const authored = levelLayout(G.level - 1).hazards.length > 0;
+  if (G.state === 'play' && G.level >= R.minLvl && !authored) {
     G.rollT = (G.rollT === undefined ? 5 : G.rollT) - dt;
-    if (G.rollT <= 0) { G.rollT = R.interval * rr(0.7, 1.3);
-      if (rollers.length < 10) rollers.push({ lane: rr(-0.75, 0.75), y: HORIZON_Y + 6, rot: 0,
-        armored: rng() * 100 < R.pctArmored, hp: R.hp + R.hpLvl * G.level, maxhp: R.hp + R.hpLvl * G.level }); }
+    if (G.rollT <= 0) { G.rollT = R.interval * rr(0.7, 1.3); spawnRoller(); }
   }
   for (let i = rollers.length - 1; i >= 0; i--) { const r = rollers[i];
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, r.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
@@ -1574,6 +1600,12 @@ function rollerUpdate(dt) {
       loseUnits(R.dmg, r.x, r.y); boom(r.x, r.y, 1.2); G.shake = Math.max(G.shake, 5); rollers.splice(i, 1); continue; }
     if (r.y > CFG.H + 60) rollers.splice(i, 1);
   }
+}
+function spawnRoller(armored) { const R = EDIT.rollers;
+  if (rollers.length >= 10) return;
+  const a = armored === undefined ? rng() * 100 < R.pctArmored : !!armored;
+  rollers.push({ lane: rr(-0.75, 0.75), y: HORIZON_Y + 6, rot: 0, armored:a,
+    hp:R.hp + R.hpLvl * G.level, maxhp:R.hp + R.hpLvl * G.level });
 }
 function drawRollers() {
   for (const r of rollers) {
@@ -1746,7 +1778,7 @@ function drawHorizonBoss(){
   // Text-only telegraph. The old purple loom silhouette at the spawn/horizon was the
   // "big purple glow at spawn" Eric asked to remove (task 4.3) — signal stays as text.
   if (G.state !== 'play') return;
-  const progress = Math.min(1, G.levelT / BAL.waveSec[G.level - 1]);
+  const progress = Math.min(1, G.levelT / levelDuration(G.level - 1));
   if (progress < 0.35) return;   // only once the boss is actually approaching
   cx.fillStyle = 'rgba(225,210,255,.75)'; cx.font = 'bold 12px Segoe UI'; cx.textAlign = 'center';
   cx.fillText(G.level === CFG.levels ? 'ALIEN QUEEN APPROACHING' : 'HIVE GUARDIAN SIGNAL', CFG.W / 2, HORIZON_Y - 10);
@@ -1754,7 +1786,7 @@ function drawHorizonBoss(){
 function drawBossProgressBar(){
   // Top-of-screen distance-to-boss bar (task 5.1). Fills as levelT approaches waveSec.
   if (G.state !== 'play' || G.boss) return;
-  const dur = BAL.waveSec[G.level - 1] || 60;
+  const dur = levelDuration(G.level - 1);
   const p = Math.max(0, Math.min(1, G.levelT / dur));
   const bw = CFG.W - 80, bx = 40, by = 52, bh = 10;
   cx.fillStyle = 'rgba(6,3,18,.72)'; cx.fillRect(bx - 2, by - 14, bw + 4, bh + 22);
@@ -1787,7 +1819,7 @@ function draw() {
       // Deep background / boss area. Scales 75% → 200% over the level's running time, anchored
       // on the vanishing point, so the squad reads as physically closing the length of the
       // corridor. It lands at full 200% exactly when the boss encounter begins, and holds there.
-      const dur  = BAL.waveSec[G.level - 1] || 60;
+      const dur  = levelDuration(G.level - 1);
       const prog = G.state === 'play' ? Math.min(1, G.levelT / dur)
                  : G.state === 'boss' ? 1 : 0;
       // ART.backdrop is already drawn beneath this layer, providing a deliberate safe matte while
@@ -2701,6 +2733,29 @@ function snd(p,aria){ const cur=getP(p); return `<select data-p="${p}" data-str=
   AUDIO.names().map(n=>`<option value="${n}" ${n===cur?'selected':''}>${n}</option>`).join('') + `</select>`; }
 function txt(p,w,ph){ return `<input type="text" data-p="${p}" data-str="1" placeholder="${ph||''}" value="${getP(p)||''}" style="width:${w||110}px">`; }
 function forgeEsc(s){ return String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+let levelEditorSel = 0, levelPreviewT = 0;
+function levelPreviewSummary(L, t) { return [['BOSS',L.bossAt], ...L.gates.map(m=>['BARRIER',m.t]), ...L.hazards.map(m=>['HAZARD',m.t]), ...L.spawns.map(m=>['SPAWN',m.t])]
+  .filter(e=>e[1] >= t).sort((a,b)=>a[1]-b[1]).slice(0,3).map(e=>`${e[0]} @ ${e[1]}s`).join(' · ') || 'end of level'; }
+function levelTimelineHTML() { const li = Math.max(0, Math.min(9, levelEditorSel)), L = levelLayout(li, true), pos = t => Math.max(0, Math.min(100, 100 * t / L.duration));
+  levelPreviewT = Math.max(0, Math.min(L.duration, levelPreviewT));
+  const previewEvents = levelPreviewSummary(L, levelPreviewT);
+  const mark = (type, i, t, label, color) => `<button class="lvMark" data-lv-kind="${type}" data-lv-i="${i}" title="Drag ${label}" style="position:absolute;left:calc(${pos(t)}% - 8px);top:${type==='boss'?3:type==='gates'?29:type==='hazards'?55:81}px;width:16px;height:16px;padding:0;border-radius:50%;border:2px solid #fff;background:${color};cursor:ew-resize">${label}</button>`;
+  const rows = (type, label, color, extra) => L[type].map((m,i) => `<div class="row" style="margin:3px 0;color:${color}">${label} ${num('levelLayout.'+li+'.'+type+'.'+i+'.t',0.5,62)}s ${extra ? extra(i,m) : ''} <button data-lv-del="${type}.${i}">✕</button></div>`).join('');
+  let h = `<div class="hint" style="color:#4ff;margin-top:16px">VISUAL LEVEL EDITOR — drag markers on the side-on track. Snap = ${num('levelLayout.'+li+'.snap',0.5,48)}s; numeric fields remain available for exact values.</div>
+    <div class="row">LEVEL <select id="lvPick">${Array.from({length:10},(_,i)=>`<option value="${i}" ${i===li?'selected':''}>${i+1} — ${(EDIT.env[i]||{}).name||'Untitled'}</option>`).join('')}</select>
+    LENGTH ${num('levelLayout.'+li+'.duration',1,62)}s &nbsp; BOSS ${num('levelLayout.'+li+'.bossAt',0.5,62)}s
+    <button data-lv-add="gates">＋ BARRIER</button><button data-lv-add="hazards">＋ HAZARD</button><button data-lv-add="spawns">＋ SPAWN GROUP</button></div>
+    <div class="row">SCRUB PREVIEW <input id="lvScrub" type="range" min="0" max="${L.duration}" step="0.5" value="${levelPreviewT}" style="width:220px"> <span id="lvPreviewText" class="hint">${levelPreviewT.toFixed(1)}s — next: ${previewEvents}</span></div>
+    <div id="lvTrack" style="position:relative;height:108px;margin:8px 3px;border:1px solid #36a;background:linear-gradient(90deg,#091321,#142445);overflow:visible">
+      <span style="position:absolute;left:4px;top:4px;color:#f8f;font-size:10px">BOSS</span><span style="position:absolute;left:4px;top:31px;color:#ff8;font-size:10px">BARRIER</span><span style="position:absolute;left:4px;top:57px;color:#f86;font-size:10px">HAZARD</span><span style="position:absolute;left:4px;top:83px;color:#6ff;font-size:10px">SPAWN</span>
+      <button class="lvMark" data-lv-kind="boss" title="Drag boss point" style="position:absolute;left:calc(${pos(L.bossAt)}% - 8px);top:3px;width:16px;height:16px;padding:0;border-radius:50%;border:2px solid #fff;background:#f8f;cursor:ew-resize">★</button>
+      <button class="lvMark" data-lv-kind="end" title="Drag level end" style="position:absolute;left:calc(100% - 4px);top:0;width:8px;height:108px;padding:0;border:0;background:#4ff;cursor:ew-resize"></button>
+      <span id="lvPreviewCursor" style="position:absolute;left:${pos(levelPreviewT)}%;top:0;height:108px;border-left:2px dashed #fff;pointer-events:none"></span>
+      ${L.gates.map((m,i)=>mark('gates',i,m.t,'▣','#f8c')).join('')}${L.hazards.map((m,i)=>mark('hazards',i,m.t,'◆','#f86')).join('')}${L.spawns.map((m,i)=>mark('spawns',i,m.t,'+','#6ff')).join('')}</div>
+    <div class="hint">The boss point, barriers, hazards and spawn groups are live gameplay events. An empty barrier/hazard row keeps its legacy procedural cadence; adding markers replaces that cadence for the level.</div>
+    ${rows('gates','BARRIER','#f8c')}${rows('hazards','HAZARD','#f86',i=>`ARMORED <input type="checkbox" data-lv-armored="${i}">`)}${rows('spawns','SPAWN','#6ff',i=>`COUNT ${num('levelLayout.'+li+'.spawns.'+i+'.count',1,46)}`)}`;
+  return h;
+}
 const ENTITY_SPRITE_KEY = {
   'player.soldier':'soldier', 'enemy.xenoid':'xenoid', 'enemy.eldritchSponge':'eldritch',
   'enemy.cyberMutant':'cyber', 'enemy.xenoptera':'xenoptera', 'enemy.subterra':'subterra',
@@ -2993,6 +3048,7 @@ function renderTab(){
       <table><tr><th>LVL</th>`;
     for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SEC</th>';
     for(let i=0;i<10;i++)h+=`<td>${num('gateInterval.'+i,0.5,40)}</td>`; h+='</tr></table>';
+    h += levelTimelineHTML();
     h += `<div class="hint" style="color:#f4f;margin-top:14px">ROLLING HAZARDS — tumble down the path; breakables die to gunfire, armored ones must be dodged</div>
       <div class="row">EVERY ${num('rollers.interval',0.5,44)}s &nbsp; ARMORED % ${num('rollers.pctArmored',5,44)} &nbsp; FROM LVL ${num('rollers.minLvl',1,36)}</div>
       <div class="row">HP ${num('rollers.hp',2,44)} + ${num('rollers.hpLvl',1,40)}/lvl &nbsp; SPEED ${num('rollers.speed',10,48)} &nbsp; SIZE ${num('rollers.size',2,40)} &nbsp; SQUAD DMG ${num('rollers.dmg',1,36)}</div>
@@ -3020,6 +3076,29 @@ function renderTab(){
       <div class="hint">Music = filenames inside <b>assets/music/</b> (e.g. <i>level1.mp3</i>). Blank = silence. A missing file just stays silent, it won't error. Boss track replaces the level track when that level's boss spawns.</div>
       <input type="file" id="envFile" accept="image/*" style="display:none">`;
     body.innerHTML = h;
+    const lvPick = body.querySelector('#lvPick'), lvTrack = body.querySelector('#lvTrack');
+    if (lvPick) lvPick.onchange = () => { levelEditorSel = +lvPick.value; renderTab(); };
+    const lvScrub = body.querySelector('#lvScrub');
+    if (lvScrub) lvScrub.oninput = () => { const L = levelLayout(levelEditorSel, true); levelPreviewT = +lvScrub.value;
+      const cursor = body.querySelector('#lvPreviewCursor'), text = body.querySelector('#lvPreviewText');
+      if (cursor) cursor.style.left = (100 * levelPreviewT / L.duration) + '%';
+      if (text) text.textContent = levelPreviewT.toFixed(1) + 's — next: ' + levelPreviewSummary(L, levelPreviewT); };
+    body.querySelectorAll('[data-lv-add]').forEach(b => b.onclick = () => { const L = levelLayout(levelEditorSel, true), key = b.dataset.lvAdd;
+      const mark = {t:Math.round(L.duration * .5)}; if (key === 'spawns') mark.count = 8; if (key === 'hazards') mark.armored = false;
+      L[key].push(mark); saveEdit(); renderTab(); });
+    body.querySelectorAll('[data-lv-del]').forEach(b => b.onclick = () => { const [key, i] = b.dataset.lvDel.split('.'); levelLayout(levelEditorSel, true)[key].splice(+i, 1); saveEdit(); renderTab(); });
+    body.querySelectorAll('[data-lv-armored]').forEach((box, i) => { box.checked = !!levelLayout(levelEditorSel, true).hazards[i].armored; box.onchange = () => { levelLayout(levelEditorSel, true).hazards[i].armored = box.checked; saveEdit(); }; });
+    if (lvTrack) { let drag = null;
+      const timeAt = (ev, extend) => { const r = lvTrack.getBoundingClientRect(), L = levelLayout(levelEditorSel, true), span = extend ? Math.max(180, L.duration * 1.5) : L.duration, raw = (ev.clientX - r.left) / Math.max(1,r.width) * span, snap = Math.max(.1, Number(L.snap) || 1); return Math.max(0, Math.min(span, Math.round(raw / snap) * snap)); };
+      const move = ev => { if (!drag) return; const L = levelLayout(levelEditorSel, true), t = timeAt(ev, drag.kind === 'end');
+        if (drag.kind === 'end') { L.duration = Math.max(10, t); L.bossAt = Math.min(L.duration, L.bossAt); ['gates','hazards','spawns'].forEach(k=>L[k].forEach(m=>m.t=Math.min(m.t,L.duration))); }
+        else if (drag.kind === 'boss') L.bossAt = t; else L[drag.kind][drag.i].t = t;
+        const b = lvTrack.querySelector(`[data-lv-kind="${drag.kind}"]${drag.i>=0?`[data-lv-i="${drag.i}"]`:''}`);
+        if (b) b.style.left = drag.kind === 'end' ? 'calc(100% - 4px)' : `calc(${100 * t / L.duration}% - 8px)`;
+        saveEdit(); };
+      lvTrack.addEventListener('pointerdown', ev => { const b = ev.target.closest('.lvMark'); if (!b) return; drag = {kind:b.dataset.lvKind, i:+b.dataset.lvI}; lvTrack.setPointerCapture(ev.pointerId); ev.preventDefault(); });
+      lvTrack.addEventListener('pointermove', move); lvTrack.addEventListener('pointerup', () => { drag = null; renderTab(); }); lvTrack.addEventListener('pointercancel', () => { drag = null; renderTab(); });
+    }
     body.querySelectorAll('[data-env]').forEach(inp=>inp.oninput=()=>{ EDIT.env[+inp.dataset.env].name = inp.value; saveEdit(); });
     if (!body._envWired) { body._envWired = true;      // one delegated listener, survives re-renders
       body.addEventListener('click', ev => {
