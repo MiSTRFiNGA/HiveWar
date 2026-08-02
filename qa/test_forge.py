@@ -71,6 +71,16 @@ class ForgeBrowserTests(unittest.TestCase):
                 self.assertEqual(self.page.locator(f'#forgeTab{tab}').inner_text(), name)
                 self.assertGreater(self.page.locator('#forgeBody input, #forgeBody button, #forgeBody select').count(), 0)
 
+    def test_telemetry_mode_advances_across_real_animation_frames(self):
+        self.page.goto(f'{self.base}/index.html?telemetry=1', wait_until='domcontentloaded')
+        self.page.wait_for_function("window.__dbg().state === 'play'")
+        before = self.page.evaluate('window.__dbg().levelT')
+        self.page.wait_for_timeout(900)
+        after = self.page.evaluate('window.__dbg().levelT')
+        self.assertTrue(self.page.evaluate('window.__dbg().telemetryBot'))
+        self.assertGreater(after, before + .2, 'telemetry mode must use continuous rAF, not the fixed test fixture')
+        self.assertFalse(self.errors, self.errors)
+
     def test_live_value_persists_and_pack_round_trips(self):
         self.open_tab(4)
         credit = self.page.locator('input[data-p="balance.startCredits"]')

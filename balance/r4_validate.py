@@ -1,42 +1,82 @@
 """HiVE SWARM R4 full-run sign-off under R3-merged model."""
 import math
 import json
+import re
 from pathlib import Path
 
 """Default-loadout analytic proxy for the live HiVE WAR balance tables.
 
-Keep this file manually synchronised with index.html: it intentionally does not
-parse JavaScript so it stays reproducible. It models default Forge values and
-no purchases/perks/combat losses; its outputs are not live-harness measurements.
+Inputs are read from the checked-in default `index.html` rather than copied by
+hand. This stays a proxy (no purchases, perks, or combat losses), but it can no
+longer silently validate an earlier balance table after a source change.
 """
 
-WEAPONS = [
-    {"dmg": 2.00, "rof": 4.5},
-    {"dmg": 0.62, "rof": 10},
-    {"dmg": 0.38, "rof": 12},
-    {"dmg": 0.82, "rof": 11},
-    {"dmg": 16.0, "rof": 1.6},
-]
-spawn = [1.0, 1.5, 2.5, 4.0, 6.0, 8.5, 12.0, 16.5, 22.0, 28.0]
-wave_sec = [75, 78, 82, 86, 90, 94, 98, 102, 106, 60]
-# Default EDIT.kinds mirror. The live wave picker uses weights/minLvl, not BAL.mixEld/mixCyb.
-KINDS = [
-    {"hp_base": 8, "hp_lvl": 2.0, "weight": 60, "min_level": 1},
-    {"hp_base": 38, "hp_lvl": 9.5, "weight": 20, "min_level": 1},
-    {"hp_base": 20, "hp_lvl": 4.5, "weight": 12, "min_level": 2},
-    {"hp_base": 30, "hp_lvl": 7.0, "weight": 4.5, "min_level": 4},
-    {"hp_base": 45, "hp_lvl": 10.0, "weight": 2.5, "min_level": 6},
-    {"hp_base": 40, "hp_lvl": 14.0, "weight": 1, "min_level": 3},
-]
-plus_cap = [8, 14, 22, 32, 45, 60, 80, 105, 135, 170]
-plus_spawn = [[2,6],[3,9],[4,12],[6,16],[8,22],[10,28],[13,34],[16,42],[20,52],[24,64]]
+LIVE_SOURCE = Path(__file__).resolve().parents[1] / "index.html"
+SOURCE = LIVE_SOURCE.read_text(encoding="utf-8")
+
+
+def js_array_after(marker):
+    """Read a JSON-compatible JS numeric array after a unique source marker."""
+    marker_at = SOURCE.index(marker)
+    start = SOURCE.index("[", marker_at)
+    depth = 0
+    for pos in range(start, len(SOURCE)):
+        if SOURCE[pos] == "[":
+            depth += 1
+        elif SOURCE[pos] == "]":
+            depth -= 1
+            if depth == 0:
+                return json.loads(SOURCE[start:pos + 1])
+    raise ValueError(f"unterminated array after {marker!r}")
+
+
+def numeric_field(text, name):
+    match = re.search(rf"\b{name}:\s*(-?[0-9]+(?:\.[0-9]+)?)", text)
+    if not match:
+        raise ValueError(f"missing {name!r} in {text!r}")
+    value = float(match.group(1))
+    return int(value) if value.is_integer() else value
+
+
+def load_live_defaults():
+    weapon_block = SOURCE[SOURCE.index("const WEAPONS = ["):SOURCE.index("];", SOURCE.index("const WEAPONS = ["))]
+    weapons = [{"dmg": numeric_field(row, "dmg"), "rof": numeric_field(row, "rof")}
+               for row in re.findall(r"\{name:.*?\}", weapon_block, flags=re.S)]
+    kinds_start = SOURCE.index("  kinds: [")
+    kinds_end = SOURCE.index("  ],", kinds_start)
+    kinds_block = SOURCE[kinds_start:kinds_end]
+    kinds = [{"hp_base": numeric_field(row, "hpBase"), "hp_lvl": numeric_field(row, "hpLvl"),
+              "weight": numeric_field(row, "weight"), "min_level": numeric_field(row, "minLvl")}
+             for row in re.findall(r"\{ name:.*?\}", kinds_block, flags=re.S)]
+    values = {
+        "WEAPONS": weapons,
+        "spawn": js_array_after("spawnRate:"),
+        "wave_sec": js_array_after("waveSec:"),
+        "KINDS": kinds,
+        "plus_cap": js_array_after("plusCap:"),
+        "plus_spawn": js_array_after("plus:  [["),
+        "minus_spawn": js_array_after("minus: [["),
+        "boss_hp": js_array_after("bossHp:"),
+    }
+    if len(values["WEAPONS"]) != 5 or len(values["KINDS"]) != 6:
+        raise ValueError(f"live source no longer matches the R4 proxy's five weapons / six enemy kinds: {len(values['WEAPONS'])}/{len(values['KINDS'])}")
+    return values
+
+
+LIVE = load_live_defaults()
+WEAPONS = LIVE["WEAPONS"]
+spawn = LIVE["spawn"]
+wave_sec = LIVE["wave_sec"]
+KINDS = LIVE["KINDS"]
+plus_cap = LIVE["plus_cap"]
+plus_spawn = LIVE["plus_spawn"]
 mult_opts = [
     [1.2, 1.5], [1.3, 1.6], [1.4, 1.7], [1.5, 1.8], [1.5, 2.0],
     [1.6, 2.0], [1.7, 2.2], [1.8, 2.3], [2.0, 2.5], [2.0, 2.6],
 ]
 mult_cap = [2.0, 2.2, 2.4, 2.6, 2.8, 2.8, 2.9, 3.0, 3.1, 3.2]
-minus_spawn = [[-4,-1],[-6,-2],[-10,-4],[-16,-7],[-24,-10],[-34,-14],[-46,-18],[-58,-24],[-70,-30],[-85,-40]]
-boss_hp = [3600,5600,8800,12800,18000,25000,30000,40000,52000,0]
+minus_spawn = LIVE["minus_spawn"]
+boss_hp = LIVE["boss_hp"]
 queen_hp = 86000  # p1 28000 + p2 36000 + p3 22000
 
 
@@ -228,6 +268,7 @@ def sample_campaigns(skill, meta_dmg=0, samples=400):
 
 
 def main():
+    print(f"live defaults: {LIVE_SOURCE}")
     print("cols check:", [(s, cols(s)) for s in [1, 8, 14, 50, 100, 200, 500, 2000]])
     print("T5 dps@14/100/400:", dps(14, 4), dps(100, 4), dps(400, 4))
     print("DEFAULT-LOADOUT PROXY ONLY: default EDIT values, no shop tiers/perks/combat losses; not a live-harness measurement")

@@ -121,7 +121,7 @@ const G = {
   perks: {},               // name -> stacks
   droneT: 0, orbitalT: 0, laserT: 0, laserX: 0, laserSeq: 0,
   hitStop:0, flashT:0, graceT:0, squadFlash:0, bossKillT:0, vehicleT:0, vehicleCD:4, vehicleFire:0,
-  mode:'campaign', loop:0, runStart:0, maxSquad:10, runBosses:0, creditsStart:0, reviveUsed:false,
+  mode:'campaign', loop:0, runStart:0, maxSquad:10, runBosses:0, creditsStart:0, firstShopCredits:null, reviveUsed:false,
   boss: null,
   meta: load(),
 };
@@ -357,7 +357,12 @@ function save() {
 }
 
 // ---------- input ----------
-let dragX = null, testBot = /[?&]test=1/.test(location.search), debugCanvas=/[?&]dbg=1/.test(location.search);
+// `?test=1` is a finite deterministic fixture for the harness. `?telemetry=1`
+// is deliberately separate: it runs the same bot through ordinary rAF frames so
+// survival/economy measurements are continuous real-browser observations.
+const telemetryBot = /[?&]telemetry=1/.test(location.search);
+const telemetrySpeed = Math.max(1, Math.min(60, Number((location.search.match(/[?&]telemetrySpeed=(\d+)/) || [])[1]) || 1));
+let dragX = null, testBot = /[?&]test=1/.test(location.search) || telemetryBot, debugCanvas=/[?&]dbg=1/.test(location.search);
 function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / scale; }
 function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.top)/scale; }
 function down(e) {
@@ -524,7 +529,7 @@ function startRun(mode='campaign') {
   G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
-  G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.reviveUsed=false;
+  G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.firstShopCredits=null;G.reviveUsed=false;
   G.paused=false; rollers.length=0; G.rollT=5; loadEnv(G.level);
   seed = 1000 + G.level * 777;
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
@@ -533,6 +538,7 @@ function startRun(mode='campaign') {
 function nextLevel() {
   // every arrival here follows a boss kill (bossKillT counts down to 0 before nextLevel() runs) —
   // so "level cleared" and "boss killed" are the same genuine-high-point moment in this game.
+  if (G.firstShopCredits === null) G.firstShopCredits = G.credits;
   if(G.mode==='endless'){
     G.loop++;
     const sc = endlessScore();
@@ -1047,6 +1053,20 @@ function shopTap(e) {
 // ---------- update ----------
 function balanceMul(key){ const v=Number(EDIT.balance&&EDIT.balance[key]), fallback=key==='startCredits'?0:1; return Number.isFinite(v)?Math.max(0,v):fallback; }
 function shopPrice(it){ return Math.round(it.cost(G.meta[it.k])*balanceMul('shopCostMul')); }
+function telemetryBotAdvanceScreens() {
+  if (!telemetryBot) return;
+  if (G.state === 'perk' && perkChoices[0]) {
+    const p = perkChoices[0];
+    G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1);
+    G.state = G.boss ? 'boss' : 'play';
+  } else if (G.state === 'shop') {
+    // Choose the first affordable combat upgrade, then deploy. This is a
+    // documented deterministic policy, not a proxy for a human purchase choice.
+    const pick = SHOP.find(it => G.meta[it.k] < it.max && G.credits >= shopPrice(it));
+    if (pick) { G.credits -= shopPrice(pick); G.meta[pick.k]++; save(); }
+    levelStart();
+  }
+}
 function processLevelLayout() {
   const layout = levelLayout(G.level - 1), fired = G.layoutFired || (G.layoutFired = {gates:[],hazards:[],spawns:[]});
   const fire = (key, fn) => layout[key].forEach((mark, i) => {
@@ -1079,11 +1099,24 @@ function update(dt) {
   if(G.cueT>0)G.cueT-=dt;
   if((G.shieldT+=dt)>=5){G.shieldT=0;G.shieldHits=0;}
 
-  if (testBot) {                                      // auto-play: chase best gate / dodge
-    let tx = CFG.W / 2;
-    let best = null;
-    for (const g of gates) if (g.live && g.y > 200 && g.y < 800 && (g.kind !== 'add' || g.val > 0)) { best = g; break; }
-    if (best) { const gr = gateRect(best); tx = gr.x + gr.w / 2; }
+  if (testBot) {                                      // auto-play: pick the best safe gate / dodge hazards
+    let tx = CFG.W / 2, best = null, bestScore = -Infinity;
+    const weaponDps = w => { const x = WEAPONS[w] || WEAPONS[0]; return x.dmg * x.rof * x.n; };
+    for (const g of gates) if (g.live && !g.spent && g.y > 0 && g.y < 820) {
+      let score = g.locked ? -100000 : 0;
+      if (g.kind === 'add') score += g.val > 0 ? g.val * 100 : g.val * 1000;
+      else if (g.kind === 'mul') score += Math.max(-1000, (g.val - 1) * Math.max(1, G.squad) * 100);
+      else {
+        const primary = Math.min(WEAPONS.length - 1, G.weapon + 1 + g.val);
+        const alternate = g.weapon2 === null ? primary : g.weapon2;
+        score += Math.max(weaponDps(primary), weaponDps(alternate)) - weaponDps(G.weapon);
+      }
+      if (score > bestScore) { bestScore = score; best = g; }
+    }
+    if (best && bestScore > 0) { const gr = gateRect(best); tx = gr.x + gr.w / 2; }
+    // A roller that is about to reach the squad outranks a distant gate; choose the clear road edge.
+    const threat = rollers.find(r => r.y > CFG.H - 360 && r.y < CFG.H - 120);
+    if (threat) tx = threat.x < CFG.W / 2 ? CFG.W - 58 : 58;
     G.px += Math.sign(tx - G.px) * Math.min(Math.abs(tx - G.px), 320 * dt);
   }
 
@@ -2443,13 +2476,14 @@ function screenText(big, small, col) {
 function frame(ts) {
   const dt = Math.min(0.033, (ts - last) / 1000 || 0.016); last = ts;
   const dbg = window.FORGE_DBG;                       // FORGE transport: pause / ×4 fast-forward
-  if (!testBot && !(dbg && dbg.pause))
-    for (let i = 0, n = dbg ? dbg.speed : 1; i < n; i++) update(dt);
+  telemetryBotAdvanceScreens();
+  if ((!testBot || telemetryBot) && !(dbg && dbg.pause))
+    for (let i = 0, n = telemetryBot ? telemetrySpeed : (dbg ? dbg.speed : 1); i < n; i++) update(dt);
   draw();
   requestAnimationFrame(frame);
 }
 // FORGE media hydration installs a startup gate below so IndexedDB-backed art is ready before draw.
-if (testBot) { G.state = 'title';
+if (testBot && !telemetryBot) { G.state = 'title';
   // Chromium virtual-time may throttle requestAnimationFrame entirely. Finite
   // deterministic checkpoints advance the real game loop without keeping the
   // browser alive, so the exact --virtual-time-budget repro remains reliable.
@@ -3472,7 +3506,8 @@ function applyWork(){ const r=REG[spriteSel], data=safeDataURL(work);
 })();
 // The normal game never draws an unhydrated media frame. Test mode advances its deterministic
 // checkpoints directly and deliberately does not construct the FORGE UI.
-if (!testBot) window.__forgeMediaReady.finally(() => requestAnimationFrame(frame));
+if (telemetryBot) window.__forgeMediaReady.finally(() => { startRun(); requestAnimationFrame(frame); });
+else if (!testBot) window.__forgeMediaReady.finally(() => requestAnimationFrame(frame));
 
 // ---------- debug ----------
 window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: G.weapon,
@@ -3481,7 +3516,7 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0,
-  testBot });
+  testBot, telemetryBot, telemetrySpeed, simTime:G.t, firstShopCredits:G.firstShopCredits });
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is
