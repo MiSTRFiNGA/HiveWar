@@ -144,9 +144,20 @@ const WEAPONS = [
    sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8},
   // Ion Cannon = capital-ship gun: charges a growing ball, then releases ONE big slow-ish beam
   // that PIERCES everything in its column. n:1/spread:0 — it doesn't fan, it punches through.
-  {name:'Ion Cannon',  rof: 1.6, dmg:16.0, n:1, spread:0,    col:'#ff4',
-   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14},
+  // HW.5 (Eric 2026-08-02): slower charge (0.55/s) and locked until level 5+ (see weaponAllowed).
+  {name:'Ion Cannon',  rof: 0.55, dmg:14.0, n:1, spread:0,    col:'#ff4',
+   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5},
 ];
+// HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
+function weaponAllowed(i, lvl) {
+  const w = WEAPONS[i]; if (!w) return false;
+  return (lvl || G.level || 1) >= (w.minLvl || 1);
+}
+function clampWeaponToLevel(i, lvl) {
+  let w = Math.max(0, Math.min(4, i|0));
+  while (w > 0 && !weaponAllowed(w, lvl)) w--;
+  return w;
+}
 // ---- soldier tier x weapon tier power curve (owner spec 2026-07-30, from a competitor
 // teardown — see D:\Dev\_ref\UPGRADES_AND_MONETIZATION.md §2): DPS ~= squadCount x
 // soldierTierMultiplier x weaponTierMultiplier. Squad COUNT already scales DPS via bullet
@@ -279,6 +290,7 @@ function editDefaults() { return {
   // Keep the first two levels focused on gates and the swarm.  Rollers enter
   // once the player has had a shop visit and enough squad growth to react.
   rollers: { interval: 12, pctArmored: 35, hp: 26, hpLvl: 6, speed: 250, size: 46, dmg: 3, minLvl: 3 },
+  earlySquadVal: 6,   // HW.8 — free +N soldiers gate on level 1 within the first ~12 s
   // Escort tanks. spread = px from the squad centre to each tank. The squad formation is 7 wide at
   // 42px spacing, so it reaches ~155px from centre — the old hardcoded 74 put both tanks INSIDE
   // the ranks. 175 clears the widest formation plus the trooper sprite.
@@ -334,14 +346,26 @@ function pickKind(lvl) {                          // weighted spawn pick from ed
 }
 function kindHp(k, lvl) { const row=enemyRow(k); return Math.max(1, row.hpBase + row.hpLvl * lvl); }
 function levelLayout(li, create) {
-  const fallback = { duration:BAL.waveSec[li] || 60, bossAt:BAL.waveSec[li] || 60, gates:[], hazards:[], spawns:[] };
+  const fallback = { duration:BAL.waveSec[li] || 60, bossAt:BAL.waveSec[li] || 60, gates:[], hazards:[], spawns:[], snap:1 };
   if (!Array.isArray(EDIT.levelLayout)) EDIT.levelLayout = [];
   let row = EDIT.levelLayout[li];
-  if (!row || typeof row !== 'object') { if (!create) return fallback; row = EDIT.levelLayout[li] = fallback; }
+  if (!row || typeof row !== 'object') { if (!create) return fallback; row = EDIT.levelLayout[li] = Object.assign({}, fallback); }
   for (const key of ['gates','hazards','spawns']) if (!Array.isArray(row[key])) row[key] = [];
-  row.duration = Math.max(10, Number(row.duration) || fallback.duration);
-  const bossAt = Number(row.bossAt);
-  row.bossAt = Math.max(0, Math.min(row.duration, Number.isFinite(bossAt) ? bossAt : row.duration));
+  // HW.7 — clamp LENGTH to a sane range (corrupted localStorage showed multi-million "seconds").
+  let dur = Number(row.duration);
+  if (!Number.isFinite(dur) || dur < 10 || dur > 900) dur = fallback.duration;
+  row.duration = Math.max(10, Math.min(900, dur));
+  let bossAt = Number(row.bossAt);
+  if (!Number.isFinite(bossAt)) bossAt = row.duration;
+  row.bossAt = Math.max(0, Math.min(row.duration, bossAt));
+  if (!Number.isFinite(Number(row.snap)) || Number(row.snap) <= 0) row.snap = 1;
+  // Sanitize marker times (string concat / NaN → 0 at left edge).
+  for (const key of ['gates','hazards','spawns']) {
+    row[key] = row[key].map(m => {
+      const t = Number(m && m.t);
+      return Object.assign({}, m, { t: Number.isFinite(t) ? Math.max(0, Math.min(row.duration, t)) : 0 });
+    });
+  }
   return row;
 }
 function levelDuration(li) { return levelLayout(li).duration; }
@@ -575,9 +599,11 @@ const BOSS_MAX_SPREAD = 0.55;   // excludes Rail Gun (0.70) only
 function pickRandomWeapon(exclude, level) {
   // On the Queen finale, restrict the pool to accurate weapons.
   const bossLevel = level === CFG.levels;
+  const lvl = level || G.level || 1;
   const pool = [];
   for (let i = 0; i < WEAPONS.length; i++) {
     if (bossLevel && WEAPONS[i].spread > BOSS_MAX_SPREAD) continue;
+    if (!weaponAllowed(i, lvl)) continue;             // HW.5 — Ion locked until minLvl
     pool.push(i);
   }
   if (!pool.length) return 0;                       // never leave the player unarmed
@@ -587,6 +613,20 @@ function pickRandomWeapon(exclude, level) {
 }
 function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = runSeed(G.level); gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
+  // HW.5 — if a prior level left Ion equipped before it's unlocked, step down.
+  G.weapon = clampWeaponToLevel(G.weapon, G.level);
+  // HW.8 — early squad ramp on level 1: a free +N gate arrives inside the first ~12 s
+  // so a one-soldier start can grow before the first random barrier pair.
+  if (G.level === 1) {
+    const earlyVal = Math.max(2, Math.min(12, Number(EDIT.earlySquadVal) || 6));
+    const earlyY = CFG.H * 0.42;   // already on-screen, ~10–15 s of scroll from horizon path
+    const pairId = ++gatePairSeq;
+    gates.push({
+      lane: 'L', y: earlyY, h: 46, kind: 'add', val: earlyVal, wpnId: null, weapon2: null,
+      shot: 0, need: BAL.gates.hpStepPlus(1), live: true, locked: false, pairId, spent: false,
+      earlyGift: true,
+    });
+  }
   // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
   // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
   // (the same accuracy guard pickRandomWeapon always enforced there) since carrying one into that
@@ -668,13 +708,14 @@ function spawnGatePair() {
     // Only one exists at a time — steer around it.
     if (allowLocked && rng() < 0.22) { locked = true; kind = 'add';
       val = -Math.round(rr(GB.minus[li][1] * -2.2, GB.minus[li][1] * -1.4)); need = 1; }
-    // Some weapon walls split into two explicit gun choices. The left/right half the player
-    // crosses selects the corresponding weapon; ordinary weapon walls keep weapon2 null.
-    const weapon2 = kind === 'wpn' && rng() < 0.38
-      ? (() => { const primary = Math.min(4, G.weapon + 1 + val); let alt;
-          do { alt = Math.floor(rng() * WEAPONS.length); } while (alt === primary); return alt; })()
-      : null;
-    return { lane, y, h: 46, kind, val, weapon2, shot: 0, need, live: true, locked, pairId, spent: false };  // x/w derived from perspective via gateRect()
+    // HW.3 — one weapon per wall (never a split dual-pick on a single barrier). Choice is L vs R.
+    let wpnId = null;
+    if (kind === 'wpn') {
+      let cand = Math.min(4, G.weapon + 1 + val);
+      if (!weaponAllowed(cand, G.level)) cand = clampWeaponToLevel(cand, G.level);
+      wpnId = cand;
+    }
+    return { lane, y, h: 46, kind, val, wpnId, weapon2: null, shot: 0, need, live: true, locked, pairId, spent: false };
   };
   // ~40% single gate (dodge-or-take), else a pair (pick a side). Only one lane may be locked.
   if (rng() < 0.40) {
@@ -688,6 +729,13 @@ function spawnGatePair() {
   if (!g1.locked && !g2.locked && g1.kind === g2.kind && g1.val === g2.val) {
     g2 = mk('R', !lockedLive && !g1.locked);
   }
+  // HW.3 — if BOTH walls are weapon gates, force different guns (one weapon per wall, L vs R choice).
+  if (g1.kind === 'wpn' && g2.kind === 'wpn' && g1.wpnId === g2.wpnId) {
+    let alt = (g1.wpnId + 1 + Math.floor(rng() * 3)) % WEAPONS.length;
+    alt = clampWeaponToLevel(alt, G.level);
+    if (alt === g1.wpnId) alt = clampWeaponToLevel((g1.wpnId + 1) % WEAPONS.length, G.level);
+    g2.wpnId = alt;
+  }
   const isNeg = g => g.kind === 'add' && g.val < 0;
   const impassable = g => g.locked;                      // locked = can't shoot it, only lose units
   // GUARANTEE an escape: a pair can never be BOTH impassable.
@@ -695,7 +743,8 @@ function spawnGatePair() {
   // never a plain double-negative (both drain you): flip the right to a positive add
   if (isNeg(g1) && isNeg(g2) && !impassable(g1)) {
     const r = GB.plus[li];
-    g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))), shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false, pairId, spent: false };
+    g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))),
+      wpnId: null, weapon2: null, shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false, pairId, spent: false };
   }
   gates.push(g1, g2);
 }
@@ -719,9 +768,9 @@ function gatePass(g) {
   else if (g.kind === 'mul') { const gain = Math.min(CFG.gateAddMax, Math.round(G.squad * g.val) - G.squad);
     G.squad = g.val < 1 ? Math.max(1, Math.round(G.squad * g.val)) : G.squad + gain; }
   else if (g.kind === 'wpn') {
-    const primary = Math.min(4, G.weapon + 1 + g.val);
-    const gr = gateRect(g);
-    G.weapon = g.weapon2 !== null && G.px >= gr.x + gr.w / 2 ? g.weapon2 : primary;
+    // HW.3 — whole wall = one weapon. Prefer authored wpnId; fall back to ladder from current gun.
+    const pick = g.wpnId != null ? g.wpnId : Math.min(4, G.weapon + 1 + g.val);
+    G.weapon = clampWeaponToLevel(pick, G.level);
   }
   G.squad = Math.min(CFG.squadMax, G.squad);
   { const gr = gateRect(g); fx(gr.x + gr.w / 2, g.y + g.h, g.val >= 0 ? '#4ff' : '#f44'); }
@@ -751,9 +800,9 @@ function fire(dt) {
   if (fireT > 0) return;
   fireT = 1 / rof;
   AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
-  // Squad fire ladder: one bolt through 10 soldiers, two at 20, three at 30+, never more.
-  // Weapon stats and persistent tiers—not an unbounded wall of bullets—are the power axis.
-  const cols = G.squad >= 30 ? 3 : G.squad >= 20 ? 2 : 1;
+  // HW.4 — bolt ladder keyed to LEVEL (not squad size): 1 bolt L1–9, 2 at L10–19, 3 at L20+.
+  // Squad size still multiplies DPS via damage-share below; ladder only controls visible coverage.
+  const cols = G.level >= 20 ? 3 : G.level >= 10 ? 2 : 1;
   // Tier 1 (default/no purchase) = 1.0; higher persistent tiers remain a damage axis.
   const tierDmgMult = soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
   if (w.shape === 'ion') {                // capital-ship beam: ONE fat piercing shot up the middle
@@ -1123,9 +1172,8 @@ function update(dt) {
       if (g.kind === 'add') score += g.val > 0 ? g.val * 100 : g.val * 1000;
       else if (g.kind === 'mul') score += Math.max(-1000, (g.val - 1) * Math.max(1, G.squad) * 100);
       else {
-        const primary = Math.min(WEAPONS.length - 1, G.weapon + 1 + g.val);
-        const alternate = g.weapon2 === null ? primary : g.weapon2;
-        score += Math.max(weaponDps(primary), weaponDps(alternate)) - weaponDps(G.weapon);
+        const primary = g.wpnId != null ? g.wpnId : Math.min(WEAPONS.length - 1, G.weapon + 1 + g.val);
+        score += weaponDps(clampWeaponToLevel(primary, G.level)) - weaponDps(G.weapon);
       }
       if (score > bestScore) { bestScore = score; best = g; }
     }
@@ -1893,10 +1941,25 @@ function drawBossProgressBar(){
 }
 function drawVehicles(){
   // FORGE: the Tank entity drives both its own size and how far out it sits.
+  // HW.2 — rotate each tank to the road-edge angle at its Y so they sit in perspective
+  // (left tank mirrors the right). Slope from roadHalfWidthAtY near vs slightly ahead.
   const tSc=ENT('vehicle.tank').scale, spread=ENT('vehicle.tank').range || ((EDIT.vehicles&&EDIT.vehicles.spread)||175);
-  for(const side of [-1,1]){const x=G.px+side*spread,y=CFG.H-168;cx.save();cx.translate(x,y);   // one tank per side
-    if(IMGS.tank&&IMGS.tank.ok){const th=72*tSc,tw=th*(IMGS.tank.width/IMGS.tank.height);cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th);cx.restore();continue;}
+  for(const side of [-1,1]){
+    const x=G.px+side*spread,y=CFG.H-168;
+    const y0=y, y1=Math.max(HORIZON_Y+8, y-40);
+    const hw0=roadHalfWidthAtY(y0), hw1=roadHalfWidthAtY(y1);
+    // Edge direction along the road side (screen space): as y decreases, half-width shrinks.
+    const edgeDx=side*(hw0-hw1), edgeDy=y0-y1;
+    const roadAngle=Math.atan2(edgeDx, edgeDy);   // 0 = pointing up the road
+    cx.save(); cx.translate(x,y); cx.rotate(roadAngle);
+    if(IMGS.tank&&IMGS.tank.ok){
+      const th=72*tSc,tw=th*(IMGS.tank.width/IMGS.tank.height);
+      // sprite faces "up" in art; roadAngle aligns it with the converging edge.
+      if(side>0){ cx.scale(-1,1); }   // right tank mirrors so both treads sit on their edge
+      cx.drawImage(IMGS.tank,-tw/2,-th/2,tw,th); cx.restore(); continue;
+    }
     cx.scale(tSc,tSc);
+    if(side>0) cx.scale(-1,1);
     cx.fillStyle='#df9c35';cx.shadowColor='#f80';cx.shadowBlur=10;cx.fillRect(-22,-13,44,27);cx.fillStyle='#ffe3a5';cx.fillRect(-5,-24,10,26);cx.fillRect(-3,-44,6,24);cx.strokeStyle='#8ff';cx.beginPath();cx.ellipse(0,16,26,9,0,0,7);cx.stroke();cx.restore();}
 }
 function draw() {
@@ -2000,19 +2063,12 @@ function draw() {
       cx.fillText('0', cxm, cym);
       cx.font = 'bold ' + Math.round(10 + 4 * z) + 'px Segoe UI'; cx.fillText('SPENT', cxm, baseY - 6);
     } else if (g.kind === 'wpn' && IMGS.weaponIcons && IMGS.weaponIcons.ok) {
-      const wi = Math.min(4, G.weapon + 1 + g.val), cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
-      if (g.weapon2 !== null) {
-        const splitX = (xBL + xBR) / 2;
-        cx.save(); face(); cx.clip();
-        cx.strokeStyle = 'rgba(235,255,255,.8)'; cx.lineWidth = 2; cx.beginPath(); cx.moveTo(splitX, baseY); cx.lineTo((xTL + xTR) / 2, topY); cx.stroke();
-        cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s * 0.95, topY + wallH * 0.10, s, s);
-        cx.drawImage(IMGS.weaponIcons, g.weapon2 * cs, 0, cs, cs, cxm - s * 0.05, topY + wallH * 0.10, s, s);
-        cx.restore();
-      } else cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
+      // HW.3 — one icon per wall (split dual-pick render removed).
+      const wi = g.wpnId != null ? g.wpnId : Math.min(4, G.weapon + 1 + g.val);
+      const cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
+      cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
       cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
-      // Paired half-gates meet at the centre seam; keep the split choice label compact enough
-      // that the two lanes remain individually legible instead of overprinting each other.
-      cx.fillText(g.weapon2 !== null ? 'PICK' : 'WEAPON ↑', cxm, baseY - 6);
+      cx.fillText('WEAPON ↑', cxm, baseY - 6);
     } else {
       const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
                   : g.kind === 'mul' ? 'x' + g.val
@@ -2733,23 +2789,31 @@ css.textContent = `
 #forgeTabs button{padding:6px 12px;cursor:pointer;border:1px solid rgba(0,255,255,.25);border-bottom:none;
   border-radius:8px 8px 0 0;color:#8ac;letter-spacing:1px;font-size:11px;font-weight:700}
 #forgeTabs button.on{background:rgba(0,255,255,.12);color:#4ff;text-shadow:0 0 8px #0ff}
-#forgeBody{overflow-y:auto;padding:12px 14px;flex:1}
+#forgeBody{overflow:auto;padding:12px 14px;flex:1}
+/* HW.1 — horizontal scroll always reachable (not only after scrolling to list end). */
+#forge .entityScroll{overflow-x:scroll;overflow-y:visible;max-width:100%;padding-bottom:8px;
+  scrollbar-gutter:stable both-edges}
+#forge .entityScroll::-webkit-scrollbar{height:12px}
+#forge .entityScroll::-webkit-scrollbar-thumb{background:#2a6a8a;border-radius:6px}
 #forge table{width:100%;border-collapse:collapse}
 #forge th{color:#f4f;font-size:10px;text-align:left;letter-spacing:1px;padding:3px 4px;border-bottom:1px solid rgba(255,0,255,.3)}
-#forge td{padding:3px 4px;border-bottom:1px solid rgba(0,255,255,.08)}
+#forge td,#forge .entityTable th[scope=row]{padding:3px 4px;border-bottom:1px solid rgba(0,255,255,.08);
+  vertical-align:middle;height:52px;max-height:52px;box-sizing:border-box}
+#forge .entityTable tbody tr{height:52px}
+#forge .entityTable tbody td,#forge .entityTable tbody th{overflow:hidden}
 #forge input[type=number],#forge input[type=text]{width:58px;background:#060312;border:1px solid #2a6;border-radius:4px;
   color:#6fe;padding:3px 4px;font-family:monospace}
 #forge input[type=number]:focus{border-color:#4ff;outline:none;box-shadow:0 0 6px rgba(0,255,255,.5)}
 #forge .hint{color:#7a90b8;font-size:10px;margin:4px 0 10px}
-#forge .hpprev{color:#ffd75e;font-size:10px;font-family:monospace}
+#forge .hpprev{color:#ffd75e;font-size:10px;font-family:monospace;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
 #forge .pct{color:#4dff86;font-weight:700}
 #forge button{background:linear-gradient(135deg,#0c2030,#103a50);border:1px solid #4ff;color:#8ff;border-radius:6px;
   padding:4px 10px;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:1px;margin:2px}
 #forge button:hover{box-shadow:0 0 10px rgba(0,255,255,.6)}
 #forge button:focus-visible,#forge input:focus-visible,#forge label:has(input:focus-visible){outline:2px solid #ffe23d;outline-offset:2px}
-#forge .entityThumb{width:44px;height:44px;padding:1px;margin:0}
+#forge .entityThumb{width:44px;height:44px;padding:1px;margin:0;flex-shrink:0}
 #forge .entityThumb canvas{width:40px;height:40px;image-rendering:pixelated;pointer-events:none}
-#forge .entityTable{min-width:980px}
+#forge .entityTable{min-width:980px;table-layout:fixed}
 #forge .na{color:#536078;text-align:center;display:inline-block;min-width:24px}
 #forge button.warn{border-color:#f66;color:#f88;background:linear-gradient(135deg,#300c10,#501020)}
 #forge .frames{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0}
@@ -2826,14 +2890,21 @@ tabsEl.addEventListener('keydown', e => { if (!['ArrowLeft','ArrowRight','Home',
   e.preventDefault(); const next = e.key==='Home' ? 0 : e.key==='End' ? TABS.length-1 : (tab + (e.key==='ArrowRight'?1:-1) + TABS.length) % TABS.length;
   tab=next; spriteSel=-1; entityReturnId=null; envSel=null; renderTab(); tabsEl.querySelector('#forgeTab'+next).focus(); });
 
-function hpPreview(k){ let s=''; for(let L=1;L<=10;L++) s+=`L${L}:${Math.round(kindHp(k,L))} `; return s; }
+function hpPreview(k){ // compact one-line preview so ENTITIES rows stay uniform height (HW.1)
+  return [1,5,10].map(L => `L${L}:${Math.round(kindHp(k,L))}`).join(' '); }
 function pctShare(k){ let tot=0; for(let i=0;i<6;i++) tot+=EDIT.kinds[i].weight;
   return tot>0 ? (100*EDIT.kinds[k].weight/tot).toFixed(1)+'%' : '—'; }
 function refreshComputed(){
   body.querySelectorAll('[data-hp]').forEach(el=>el.textContent=hpPreview(+el.dataset.hp));
   body.querySelectorAll('[data-pct]').forEach(el=>el.textContent=pctShare(+el.dataset.pct));
 }
-function num(p,step,w,aria){ return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} ${aria?`aria-label="${forgeEsc(aria)}"`:''} data-p="${p}" value="${getP(p)}">`; }
+function num(p,step,w,aria){
+  let v = getP(p);
+  // Never render non-finite / string-garbage into number inputs (HW.7 LENGTH bug class).
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) v = Number(v);
+  if (!Number.isFinite(v)) v = 0;
+  return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} ${aria?`aria-label="${forgeEsc(aria)}"`:''} data-p="${p}" value="${v}">`;
+}
 function col(p){ return `<input type="color" data-p="${p}" value="${getP(p)}" style="width:34px;height:24px;padding:0;border:none;vertical-align:middle">`; }
 function snd(p,aria){ const cur=getP(p); return `<select data-p="${p}" data-str="1" ${aria?`aria-label="${forgeEsc(aria)}"`:''}>` +
   AUDIO.names().map(n=>`<option value="${n}" ${n===cur?'selected':''}>${n}</option>`).join('') + `</select>`; }
@@ -2847,7 +2918,10 @@ function levelTimelineHTML() { const li = Math.max(0, Math.min(9, levelEditorSel
   const previewEvents = levelPreviewSummary(L, levelPreviewT);
   const mark = (type, i, t, label, color) => `<button class="lvMark" data-lv-kind="${type}" data-lv-i="${i}" title="Drag ${label}" style="position:absolute;left:calc(${pos(t)}% - 8px);top:${type==='boss'?3:type==='gates'?29:type==='hazards'?55:81}px;width:16px;height:16px;padding:0;border-radius:50%;border:2px solid #fff;background:${color};cursor:ew-resize">${label}</button>`;
   const rows = (type, label, color, extra) => L[type].map((m,i) => `<div class="row" style="margin:3px 0;color:${color}">${label} ${num('levelLayout.'+li+'.'+type+'.'+i+'.t',0.5,62)}s ${extra ? extra(i,m) : ''} <button data-lv-del="${type}.${i}">✕</button></div>`).join('');
-  let h = `<div class="hint" style="color:#4ff;margin-top:16px">VISUAL LEVEL EDITOR — drag markers on the side-on track. Snap = ${num('levelLayout.'+li+'.snap',0.5,48)}s; numeric fields remain available for exact values.</div>
+  let h = `<div class="hint" style="color:#4ff;margin-top:16px">VISUAL LEVEL EDITOR — side-on timeline of this level.
+    Drag markers along the track (or type exact times below). <b>LENGTH</b> is how long the wave lasts before the boss (10–900 s).
+    <b>Empty barrier/hazard/spawn lists = automatic spacing</b> (the game keeps its normal rhythm); add a marker to take manual control.
+    New markers land at the <b>scrub</b> playhead. Snap = ${num('levelLayout.'+li+'.snap',0.5,48)}s.</div>
     <div class="row">LEVEL <select id="lvPick">${Array.from({length:10},(_,i)=>`<option value="${i}" ${i===li?'selected':''}>${i+1} — ${(EDIT.env[i]||{}).name||'Untitled'}</option>`).join('')}</select>
     LENGTH ${num('levelLayout.'+li+'.duration',1,62)}s &nbsp; BOSS ${num('levelLayout.'+li+'.bossAt',0.5,62)}s
     <button data-lv-add="gates">＋ BARRIER</button><button data-lv-add="hazards">＋ HAZARD</button><button data-lv-add="spawns">＋ SPAWN GROUP</button></div>
@@ -2876,8 +2950,8 @@ function renderEntities(){
     <fieldset class="row" style="border:1px solid rgba(0,255,255,.22);border-radius:6px;padding:5px 8px;margin:0 0 10px"><legend class="hint" style="padding:0 4px">ENTITY CLASS</legend>`;
   for (const c of classes) h += `<label><input type="radio" name="entityClass" value="${c}" ${entityClassFilter===c?'checked':''}> ${c==='all'?'All':c[0].toUpperCase()+c.slice(1)}</label>`;
   h += `</fieldset><div id="entityStatus" class="hint" aria-live="polite">Showing ${rows.length} ${entityClassFilter==='all'?'entities':entityClassFilter+' entities'}.</div>
-    <div style="overflow-x:auto"><table class="entityTable" aria-describedby="entityHelp entityStatus"><caption class="hint" style="text-align:left">Entity tuning registry</caption><thead><tr>
-      <th scope="col">SPRITE</th><th scope="col">ENTITY</th><th scope="col">CLASS</th><th scope="col">SCALE</th><th scope="col">HP BASE</th><th scope="col">HP/LVL</th><th scope="col">SPEED</th><th scope="col">RADIUS</th><th scope="col">CREDITS</th><th scope="col">WEIGHT</th><th scope="col">MIN LVL</th><th scope="col">RANGE</th><th scope="col">ATTACK SFX</th><th scope="col">DIE SFX</th><th scope="col">HP PREVIEW</th><th scope="col">SPAWN SHARE</th></tr></thead><tbody>`;
+    <div class="entityScroll"><table class="entityTable" aria-describedby="entityHelp entityStatus"><caption class="hint" style="text-align:left">Entity tuning registry — scroll right for SFX / HP preview / spawn share</caption><thead><tr>
+      <th scope="col" style="width:52px">SPRITE</th><th scope="col" style="width:110px">ENTITY</th><th scope="col" style="width:58px">CLASS</th><th scope="col" style="width:64px">SCALE</th><th scope="col" style="width:64px">HP BASE</th><th scope="col" style="width:64px">HP/LVL</th><th scope="col" style="width:64px">SPEED</th><th scope="col" style="width:64px">RADIUS</th><th scope="col" style="width:64px">CREDITS</th><th scope="col" style="width:64px">WEIGHT</th><th scope="col" style="width:64px">MIN LVL</th><th scope="col" style="width:64px">RANGE</th><th scope="col" style="width:90px">ATTACK SFX</th><th scope="col" style="width:90px">DIE SFX</th><th scope="col" style="width:150px">HP PREVIEW</th><th scope="col" style="width:70px">SPAWN %</th></tr></thead><tbody>`;
   for (const entity of rows) {
     const ix = EDIT.entities.indexOf(entity), enemy = ENEMY_ENTITY_IDS.indexOf(entity.id), spriteIx = entitySpriteIndex(entity.id);
     const spriteReg = REG[spriteIx], hasSprite = spriteReg && spriteReg.h;
@@ -2890,6 +2964,7 @@ function renderEntities(){
     const range = entity.id === 'vehicle.tank' ? entityNum('entities.'+ix+'.range',1,'range') : '<span class="na" aria-label="Not applicable">—</span>';
     const attack = enemy >= 0 ? snd('kinds.'+enemy+'.sfxAttack',entity.label+' attack sound') : '<span class="na" aria-hidden="true">—</span>';
     const death = enemy >= 0 ? snd('kinds.'+enemy+'.sfxDie',entity.label+' death sound') : '<span class="na" aria-hidden="true">—</span>';
+    // Compact HP preview (L1/L5/L10 only) so every row stays one line high.
     const preview = enemy >= 0 ? `<span class="hpprev" data-hp="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
     const share = enemy >= 0 ? `<span class="pct" data-pct="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
     h += `<tr><td>${sprite}</td><th scope="row" style="color:#4ff">${forgeEsc(entity.label)}</th><td>${forgeEsc(entity.class)}</td><td>${entityNum('entities.'+ix+'.scale',0.05,'scale')}</td><td>${val('hpBase','base health')}</td><td>${val('hpLvl','health per level',0.1)}</td><td>${val('spd','speed')}</td><td>${val('r','radius')}</td><td>${val('credits','credits')}</td><td>${val('weight','spawn weight',0.5)}</td><td>${val('minLvl','minimum level')}</td><td>${range}</td><td>${attack}</td><td>${death}</td><td>${preview}</td><td>${share}</td></tr>`;
@@ -3000,7 +3075,9 @@ function renderTab(){
     body.querySelector('#fInv').onclick = () => { FORGE_DBG.invincible = !FORGE_DBG.invincible; renderTab(); };
   }
   else if (tab===2){ // WEAPONS
-    let h = `<div class="hint">Per-weapon tuning. The squad fire ladder fixes bolt count at 1 through 10 soldiers, 2 at 20, and 3 at 30+; SPREAD remains the editable total fan angle across those bolts. FIRE SFX picks the shot sample.</div>
+    let h = `<div class="hint">Per-weapon tuning. <b>Bolt ladder is by LEVEL</b> (not squad size): <b>1 bolt L1–9 · 2 bolts L10–19 · 3 bolts L20+</b>.
+      Squad size still multiplies DPS (damage is shared across bolts). SPREAD = total fan angle. FIRE SFX = shot sample.
+      Ion Cannon is locked until level 5+.</div>
       <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>SPREAD</th><th>FIRE SFX</th><th>TEST</th></tr>`;
     EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
@@ -3017,7 +3094,13 @@ function renderTab(){
     });
   }
   else if (tab===3){ // WAVES + BOSS
-    let h = `<div class="hint">SPAWN/s = enemies per second per level. BOSS HP per level. BOSS RANGE = how far down the boss walks (bigger = closer to you).</div><table><tr><th>LVL</th>`;
+    let h = `<div class="hint"><b>How waves work:</b> SPAWN/s is how many enemies appear each second (higher = denser).
+      BOSS HP is that level's guardian. BOSS RANGE is how far down the corridor the boss walks (bigger = closer to you).
+      <b>Gate frequency</b> (seconds between barrier pairs) is under BALANCE / WORLD timing — empty level-timeline rows mean
+      <i>automatic spacing</i>; add markers on the VISUAL LEVEL EDITOR (WORLD tab) to take manual control of when barriers, hazards and spawn bursts fire.
+      Early level-1 squad gift is FORGE-tunable: EARLY SQUAD +N below.</div>
+      <div class="row">EARLY SQUAD GIFT (L1) +${num('earlySquadVal',1,44)} soldiers <span class="hint">(HW.8 — first free +squad wall; default 6)</span></div>
+      <table><tr><th>LVL</th>`;
     for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SPAWN/s</th>';
     for(let i=0;i<10;i++)h+=`<td>${num('spawnRate.'+i,1,34)}</td>`; h+='</tr><tr><th>BOSS HP</th>';
     for(let i=0;i<10;i++)h+=`<td>${num('bossHp.'+i,500,48)}</td>`; h+='</tr><tr><th>BOSS GLOW</th>';
@@ -3190,8 +3273,21 @@ function renderTab(){
       if (cursor) cursor.style.left = (100 * levelPreviewT / L.duration) + '%';
       if (text) text.textContent = levelPreviewT.toFixed(1) + 's — next: ' + levelPreviewSummary(L, levelPreviewT); };
     body.querySelectorAll('[data-lv-add]').forEach(b => b.onclick = () => { const L = levelLayout(levelEditorSel, true), key = b.dataset.lvAdd;
-      const mark = {t:Math.round(L.duration * .5)}; if (key === 'spawns') mark.count = 8; if (key === 'hazards') mark.armored = false;
+      // HW.7 — drop new markers at the scrub playhead (not 0s / not always mid).
+      const t = Math.max(0, Math.min(L.duration, Number(levelPreviewT) || 0));
+      const mark = {t: Math.round(t * 2) / 2}; if (key === 'spawns') mark.count = 8; if (key === 'hazards') mark.armored = false;
       L[key].push(mark); saveEdit(); renderTab(); });
+    // Clamp LENGTH field on change so a corrupted value can't reappear.
+    body.querySelectorAll('input[data-p$=".duration"]').forEach(inp => {
+      inp.min = 10; inp.max = 900;
+      inp.addEventListener('change', () => {
+        let v = parseFloat(inp.value);
+        if (!Number.isFinite(v)) v = 60;
+        v = Math.max(10, Math.min(900, v));
+        inp.value = v;
+        const L = levelLayout(levelEditorSel, true); L.duration = v; L.bossAt = Math.min(L.duration, L.bossAt); saveEdit();
+      });
+    });
     body.querySelectorAll('[data-lv-del]').forEach(b => b.onclick = () => { const [key, i] = b.dataset.lvDel.split('.'); levelLayout(levelEditorSel, true)[key].splice(+i, 1); saveEdit(); renderTab(); });
     body.querySelectorAll('[data-lv-armored]').forEach((box, i) => { box.checked = !!levelLayout(levelEditorSel, true).hazards[i].armored; box.onchange = () => { levelLayout(levelEditorSel, true).hazards[i].armored = box.checked; saveEdit(); }; });
     if (lvTrack) { let drag = null;
