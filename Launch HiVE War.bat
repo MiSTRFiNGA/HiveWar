@@ -8,7 +8,9 @@ echo   ============================
 echo.
 REM Start a tiny local server so sprites/assets load correctly (file:// breaks them).
 set PORT=8791
-REM kill any old instance on this port, then start fresh in the background
+REM Kill any listener already bound to this exact local test port, then start fresh.
+REM netstat can report both IPv4 and IPv6 listeners, so process every matching PID.
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do taskkill /PID %%P /F >nul 2>&1
 start "" /min cmd /c "python -m http.server %PORT% --bind 127.0.0.1"
 REM give the server a moment, then open the game in the default browser
 timeout /t 2 /nobreak >nul
