@@ -52,6 +52,22 @@ jobs:
           npx cap init "$APP_NAME" "$APP_ID" --web-dir=www
           npx cap add android
           npx cap sync android
+          # Launcher icon. Without this the APK ships Capacitor's stock blue-X logo — `cap add`
+          # scaffolds it and nothing replaces it. Must run AFTER cap add/sync, BEFORE gradle.
+          # @capacitor/assets requires a 1024px source and the repo icon is 512, hence the resize.
+          ICON="${{ github.workspace }}/assets/icons/icon-512.png"
+          if [ -f "$ICON" ]; then
+            if command -v magick >/dev/null 2>&1; then IM=magick; else IM=convert; fi
+            mkdir -p assets
+            "$IM" "$ICON" -resize 1024x1024 assets/icon-only.png
+            cp assets/icon-only.png assets/icon-foreground.png
+            cp assets/icon-only.png assets/logo.png
+            npm i -D @capacitor/assets
+            npx @capacitor/assets generate --android \
+              --iconBackgroundColor '#0a0518' --iconBackgroundColorDark '#0a0518'
+          else
+            echo "::warning::no icon at $ICON — APK will ship the default Capacitor logo"
+          fi
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
           cd android
           chmod +x gradlew
