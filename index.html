@@ -1684,8 +1684,7 @@ function drawPerspectiveRoad(){
   // window whose width is the depth-span it covers. Result: panels foreshorten and bunch up
   // toward the vanishing point, and the top edge converges on the horizon.
   // Clip every wall to "anywhere except the road", minus the broad overhead background opening.
-  // The opening's low outer corners and tapered central lip match the supplied composition:
-  // the deep city remains visible above the horizon instead of being covered by side-wall tiles.
+  // The opening's low outer corners and tapered central lip preserve the deep city above it.
   // Columns below are allowed to overshoot inward; the road hole trims them on the exact edge.
   cx.save();
   cx.beginPath();
@@ -1824,6 +1823,9 @@ function drawVehicles(){
 function draw() {
   const s = scale;
   cx.setTransform(s, 0, 0, s, 0, 0);
+  // Every frame starts from a known compositing state. Environment art is drawn first, so a
+  // leaked blend/alpha/filter from a previous effect must never silently erase it.
+  cx.globalAlpha = 1; cx.globalCompositeOperation = 'source-over'; cx.filter = 'none';
   // shake only during live gameplay — never wobble the upgrade / level-clear / title screens
   const shakeOn = (G.state === 'play' || G.state === 'boss') && G.shake > 0;
   const shx = shakeOn ? rr(-G.shake, G.shake) : 0, shy = shakeOn ? rr(-G.shake, G.shake) : 0;
@@ -3479,7 +3481,7 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0,
-  env: (()=>{const e=ENVIMG[G.level]||{};return {path:!!e.path?.ok,bg:!!e.bg?.ok,sideL:!!e.sideL?.ok,sideR:!!e.sideR?.ok};})(), testBot });
+  testBot });
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is

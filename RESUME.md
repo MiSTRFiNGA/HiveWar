@@ -9,6 +9,7 @@ lives outside this repo). Latest commit `08c2044`.
 ```bash
 cd /d/Dev/HiveWar
 python regen_extract.py          # re-extract game JS after editing index.html
+python qa/telemetry.py           # 15 real Playwright test-bot survival/economy runs
 node _headless_harness.js        # full 10-level sim, throws on any error (canvas stubbed + non-finite guards)
 node _chain_test.js              # cyber-mutant chain-explosion stress test
 # per-level env screenshot: headless Brave, URL ?test=1&lvl=N (debug level-jump param), 540x960
