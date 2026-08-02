@@ -2209,6 +2209,7 @@ function drawSquad() {
     if(G.squadFlash>0){cx.globalAlpha=.85;cx.globalCompositeOperation='lighter';}
     if(IMGS.soldierAnim&&IMGS.soldierAnim.ok){                 // animated rear-view trooper (fire loop)
       const cs=IMGS.soldierAnim.height, f=Math.floor((G.t*WEAPONS[G.weapon].rof*1.2+i*0.3))%(IMGS.soldierAnim.frames||4), sz=58*tierScale*ENT('player.soldier').scale;
+      G.lastSoldierDrawSize = sz;  // debug/QA evidence: the exact destination size sent to drawImage
       cx.drawImage(IMGS.soldierAnim, f*cs,0,cs,cs, x-sz/2, y-sz+10+bob, sz, sz);
     } else {
       const tw=48*tierScale, th=63*tierScale;
@@ -3459,7 +3460,7 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   perks: Object.assign({}, G.perks), laserActive: G.laserT > 0,
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
-  boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, testBot });
+  boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0, testBot });
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is

@@ -133,8 +133,24 @@ class ForgeBrowserTests(unittest.TestCase):
         self.open_tab(6)
         self.page.locator('[data-sp]').first.click()
         self.page.wait_for_timeout(250)
+        def saved_signature():
+            return self.page.evaluate("""async () => new Promise((resolve, reject) => {
+              const req=indexedDB.open('hiveswarm_forge_media_v2'); req.onerror=()=>reject(req.error);
+              req.onsuccess=()=>{const all=req.result.transaction('media').objectStore('media').getAll();
+              all.onsuccess=async()=>{const row=all.result.find(x=>x.id.startsWith('sprite:'));
+              const b=new Uint8Array(await row.blob.arrayBuffer()); let h=2166136261;
+              for(const v of b) h=Math.imul(h^v,16777619); resolve([row.id,b.length,h>>>0]);};}; })""")
+        self.page.locator('#spSave').click(); self.page.wait_for_timeout(150)
+        original = saved_signature()
         self.page.locator('#spRot').fill('15')
         self.page.locator('#spRotGo').click()
+        self.page.locator('#spSave').click(); self.page.wait_for_timeout(150)
+        rotated = saved_signature()
+        self.assertEqual(rotated[0], original[0])
+        self.assertNotEqual(rotated[2], original[2])
+        self.page.reload(wait_until='domcontentloaded'); self.page.wait_for_timeout(300)
+        self.assertEqual(saved_signature(), rotated)
+        self.page.locator('#forgeTab6').click(); self.page.locator('[data-sp]').first.click()
         self.page.locator('#spImp').click()
         # A tiny two-frame GIF: ImageDecoder must preserve both frames, not flatten it.
         gif = 'R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAIfkEAAAAAAAsAAAAAAEAAQAAAgJEADs='
@@ -160,6 +176,26 @@ class ForgeBrowserTests(unittest.TestCase):
         self.page.wait_for_timeout(150)
         after = saved_dimensions()
         self.assertEqual(after, [before[0] * 2, before[1] * 2])
+        self.assertFalse(self.errors, self.errors)
+
+    def test_entity_scale_changes_live_canvas_draw(self):
+        def run_with_scale(scale):
+            self.open_tab(0)
+            field = self.page.locator('input[data-p="entities.0.scale"]')
+            field.fill(str(scale)); field.dispatch_event('input')
+            self.page.locator('#forge .x').click()
+            self.page.locator('#game').click(position={'x': 300, 'y': 300})
+            self.page.wait_for_function('window.__dbg().playerDrawSize > 0')
+            return self.page.evaluate('window.__dbg().playerDrawSize')
+        small = run_with_scale(.5)
+        self.context.close()
+        self.errors = []
+        self.context = self.browser.new_context(viewport={'width': 1280, 'height': 900})
+        self.page = self.context.new_page()
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        large = run_with_scale(2)
+        self.assertAlmostEqual(large / small, 4, places=3,
+                               msg='player entity scale must reach the live drawImage destination size')
         self.assertFalse(self.errors, self.errors)
 
     def test_visual_level_editor_persists_authored_marks_and_scrubs(self):
