@@ -1948,10 +1948,10 @@ function draw() {
     const xBL = br.x, xBR = br.x + br.w, z = br.z, c = CFG.W / 2;
     const wallH = 46 + 92 * z;                        // stands taller as it approaches
     const topY = baseY - wallH;
-    // The top edge must sample the road's ACTUAL width at topY, not a fixed 10% shrink — the road
-    // narrows far faster than that over wallH, so a flat shrink left the wall overhanging the path.
-    const tr = gateRect({ lane: g.lane, y: topY });
-    const xTL = tr.x, xTR = tr.x + tr.w;
+    // A barrier is a screen-upright wall, not a road decal.  Its top rail keeps
+    // the same screen X coordinates as its foot; sampling the narrower road at
+    // topY sheared the near-field quad into a flat floor parallelogram.
+    const xTL = xBL, xTR = xBR;
     const face = () => { cx.beginPath(); cx.moveTo(xTL, topY); cx.lineTo(xTR, topY); cx.lineTo(xBR, baseY); cx.lineTo(xBL, baseY); cx.closePath(); };
     // front face (bright at the base, fading up) — reads as a glowing energy wall
     // (spent gates get a flat grey panel instead of the good/bad colour so the rule reads
