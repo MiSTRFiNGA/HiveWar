@@ -1836,7 +1836,9 @@ function draw() {
         cx.restore();
       } else cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
       cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
-      cx.fillText(g.weapon2 !== null ? 'CHOOSE WEAPON' : 'WEAPON ↑', cxm, baseY - 6);
+      // Paired half-gates meet at the centre seam; keep the split choice label compact enough
+      // that the two lanes remain individually legible instead of overprinting each other.
+      cx.fillText(g.weapon2 !== null ? 'PICK' : 'WEAPON ↑', cxm, baseY - 6);
     } else {
       const label = g.kind === 'add' ? (g.val >= 0 ? '+' + g.val : g.val)
                   : g.kind === 'mul' ? 'x' + g.val
