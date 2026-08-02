@@ -240,6 +240,7 @@ function editDefaults() { return {
   forgeEntityVersion: FORGE_ENTITY_VERSION,
   entities: entityDefaults(),
   player: { rofMul: 1, dmgMul: 1, armor: 0 },   // armor = % of squad-loss prevented (0-90)
+  balance: { startCredits: 0, killCreditMul: 1, shopCostMul: 1 },
   // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
   // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears
   kinds: [
@@ -482,8 +483,8 @@ const AUDIO = (() => {
            isSfx: () => !sfxOff, isMusic: () => !musOff };
 })();
 function sfx(name) { AUDIO.play(name); }
-G.meta.sfx = true;                        // always start UNMUTED (a stuck muted save was silencing everything)
-if (G.meta.music === undefined) G.meta.music = true;   // music toggle DOES persist — it's a taste setting, not a bug source
+if (G.meta.sfx === undefined) G.meta.sfx = true;
+if (G.meta.music === undefined) G.meta.music = true;
 AUDIO.setMuted(false);
 AUDIO.setSfx(G.meta.sfx); AUDIO.setMusic(G.meta.music);
 // Debug transport read by the MAIN LOOP (pause / fast-forward / invincible). Declared here, at game
@@ -501,7 +502,7 @@ function startRun(mode='campaign') {
   // "leaking" in from a previous run). They persist only within a run (level → level via the shop).
   // Permanent unlocks/records (codex, endless, bestScore, sfx) are intentionally kept.
   Object.assign(G.meta, {dmg:0, squad:0, perkSlot:0, vehicleDrop:0, credits:0});
-  G.credits = 0; save(); AUDIO.loopTank(false);
+  G.credits = Math.round(balanceMul('startCredits')); save(); AUDIO.loopTank(false);
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
   { const m=location.search.match(/[?&]lvl=(\d+)/); if(m) G.level=Math.min(CFG.levels,Math.max(1,+m[1])); } // debug/screenshot jump
   G.squad = startingSquad(); G.weapon = BAL.start.weapon;
@@ -878,7 +879,7 @@ function damageEnemy(e, dmg, x, y) {
     G.streak++; G.streakT=0.5; G.streakPeak=Math.max(G.streakPeak,G.streak);   // tighter combo window — resets in lulls
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
     const K = enemyRow(e.kind);
-    G.credits += Math.round(K.credits*(G.mode==='endless'?Math.pow(1.12,G.loop):1));
+    G.credits += Math.round(K.credits*balanceMul('killCreditMul')*(G.mode==='endless'?Math.pow(1.12,G.loop):1));
     if (e.kind >= 3) G.hitStop = 0.04;
     // throttled per-enemy death sound (~4/sec max, so a dense swarm doesn't machine-gun the SFX)
     if (G.t - (G.hitSfxT || 0) > 0.22) { G.hitSfxT = G.t;
@@ -1015,13 +1016,15 @@ function shopTap(e) {
   const rowH = shopRowH();
   const i = Math.floor((gy - 300) / rowH);
   if (i >= 0 && i < SHOP.length) {
-    const it = SHOP[i], c = it.cost(G.meta[it.k]);
+    const it = SHOP[i], c = shopPrice(it);
     const maxed = G.meta[it.k] >= it.max;
     if (!maxed && G.credits >= c) { G.credits -= c; G.meta[it.k]++; save(); }
   } else if (gy > 820) levelStart();
 }
 
 // ---------- update ----------
+function balanceMul(key){ const v=Number(EDIT.balance&&EDIT.balance[key]), fallback=key==='startCredits'?0:1; return Number.isFinite(v)?Math.max(0,v):fallback; }
+function shopPrice(it){ return Math.round(it.cost(G.meta[it.k])*balanceMul('shopCostMul')); }
 let gateT = 0, last = 0;
 function update(dt) {
   if (G.state !== 'play' && G.state !== 'boss') return;
@@ -1266,7 +1269,7 @@ function bossAttackUpdate(B, dt) {
 function bossKill() {
   if(!G.boss||G.boss.dead)return;G.boss.dead=true;G.shake=10;G.bossKillT=G.boss.queen?0.6:1.6;G.flashT=.3;  // let the death animation play out
   fx(G.boss.x,G.boss.y,'#ff0');fx(G.boss.x,G.boss.y,'#f4f');gore(G.boss.x,G.boss.y,0);sfx('boss');AUDIO.sample('explosion2');
-  G.credits += BAL.eco.boss(G.level) + BAL.eco.level(G.level) + (G.boss.queen ? BAL.eco.queen : 0);
+  G.credits += Math.round((BAL.eco.boss(G.level) + BAL.eco.level(G.level) + (G.boss.queen ? BAL.eco.queen : 0))*balanceMul('killCreditMul'));
   G.runBosses++;if(G.mode==='campaign'&&G.boss.queen){G.meta.endless=true;save();}
 }
 
@@ -2295,7 +2298,7 @@ function drawShop() {
   if (G.ratingPending) drawRatingBanner(RATING_SHOP_Y, RATING_BANNER_H);
   const rowH = shopRowH(), boxH = Math.round(rowH * 0.8);
   SHOP.forEach((it, i) => {
-    const y = 300 + i * rowH, rank = G.meta[it.k] || 0, c = it.cost(rank),
+    const y = 300 + i * rowH, rank = G.meta[it.k] || 0, c = shopPrice(it),
           maxed = rank >= it.max, can = !maxed && G.credits >= c;
     // solid-ish card fills (was 0.12/0.1 — near-invisible once the scrim went in)
     cx.fillStyle = can ? 'rgba(20,70,66,0.85)' : 'rgba(38,38,44,0.8)';
@@ -2671,7 +2674,7 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
   setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
 
-const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','WORLD','SPRITES','DATA'];
+const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','BALANCE','WORLD','SPRITES','AUDIO','DATA'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false}, appliedRotation=0;
 let entityClassFilter = 'all', entityReturnId = null;
 // Crop mode. While cropBox is set the paint canvas drags the box instead of painting, and drawPaint
@@ -2874,7 +2877,7 @@ function renderTab(){
     body.querySelectorAll('[data-fightboss]').forEach(b=>b.onclick=()=>forgePlay(+b.dataset.fightboss, true));
     body.querySelector('#fightQueen').onclick = ()=>forgePlay(CFG.levels, true);
   }
-  else if (tab===4 && envSel){   // WORLD → single tile editor (owner request 2026-07-30: clicking a
+  else if (tab===5 && envSel){   // WORLD → single tile editor (owner request 2026-07-30: clicking a
     // world tile used to jump straight to a file dialog with no way to look at it first; now it
     // opens a panel like the SPRITES tab does, so you can review it before replacing or clearing.)
     const key = envSel, lvl = +key.match(/^L(\d+)_/)[1], slot = key.split('_')[1];
@@ -2981,7 +2984,11 @@ function renderTab(){
       };
     });
   }
-  else if (tab===4){ // WORLD: barriers + rolling hazards + per-level environment
+  else if (tab===4){ // BALANCE
+    body.innerHTML=`<div class="hint">Live economy knobs. These apply immediately to campaign rewards and shop progression.</div><div class="row">START CREDITS ${num('balance.startCredits',1)} KILL CREDIT × ${num('balance.killCreditMul',0.05)} SHOP COST × ${num('balance.shopCostMul',0.05)}</div>`;
+    body.querySelectorAll('input[data-p^="balance."]').forEach(i=>i.min=0);
+  }
+  else if (tab===5){ // WORLD: barriers + rolling hazards + per-level environment
     let h = `<div class="hint" style="color:#f4f">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>
       <table><tr><th>LVL</th>`;
     for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SEC</th>';
@@ -3027,7 +3034,8 @@ function renderTab(){
     envFile.onchange = () => { const f = envFile.files[0], key = envFile.dataset.key;
       if (f && key) importEnvPng(f, key, renderTab); };
   }
-  else if (tab===5) renderSprites();
+  else if (tab===6) renderSprites();
+  else if (tab===7){ body.innerHTML=`<div class="hint">Audio transport and default sound controls. Per-enemy and per-weapon sound choices remain in their tuning tables.</div><div class="row"><button id="audSfx">${G.meta.sfx?'SFX ON':'SFX OFF'}</button><button id="audMusic">${G.meta.music?'MUSIC ON':'MUSIC OFF'}</button><span class="hint">Current sample library: ${AUDIO.names().join(', ')}</span></div>`;body.querySelector('#audSfx').onclick=()=>{G.meta.sfx=!G.meta.sfx;AUDIO.setSfx(G.meta.sfx);save();renderTab();};body.querySelector('#audMusic').onclick=()=>{G.meta.music=!G.meta.music;AUDIO.setMusic(G.meta.music);save();renderTab();}; }
   else { // DATA / PACKS
     body.innerHTML = `<div class="hint" style="color:#f4f">MOD PACK — save this whole setup (values, sprites, sounds, environment art) to ONE file.
       Anyone running the same game version can load it and play your version of the content.</div>
