@@ -27,14 +27,14 @@ Rebuild: `powershell -File D:\Dev\_mobile/build_apk.ps1 -Game HiveWar -Version 0
 - **Death shatter** — enemies burst into particles tinted from their own sprite (`shatter()`),
   after the FORGE `Die` strip finishes if one is authored, otherwise immediately. Sampling uses
   `getImageData`, which throws on a tainted canvas over `file://` — hence the palette fallback.
-- **BESTIARY tab** (FORGE tab index 9). Add/edit/delete field-guide pages across
+- **BEASTIARY tab** (FORGE tab index 9). Add/edit/delete field-guide pages across
   enemy/boss/weapon/vehicle/item/player/lore, one uploaded image each. Page TEXT lives in
   `EDIT.codexPages` (so it travels in a `.hivepack`); IMAGES live in IndexedDB under `codex:`
   alongside the sprite library, and ride along in the pack as `pack.codex`.
   ⚠️ `saveCodexMedia` must stay INSIDE the FORGE closure — `queueMedia`/`mediaPut`/`dataBlob`
   are scoped there.
 
-## Save slots + unlocking bestiary (2026-08-03, later)
+## Save slots + unlocking beastiary (2026-08-03, later)
 
 **3 save slots.** Keys `hiveswarm_v1_s1..3`, active slot in `hiveswarm_slot`, and the old flat
 `hiveswarm_v1` is migrated into slot 1 once (`migrateLegacySave`) and then left alone so an older
@@ -42,28 +42,28 @@ build still finds its progress. `slotInfo/useSlot/eraseSlot`; **SAVE SLOTS** but
 screen, ERASE per row behind a confirm. `meta.maxLevel` tracks the campaign high-water mark per
 slot — that is what the picker shows, and it matters more once the campaign grows past 10 levels.
 
-**The in-game bestiary now reads the FORGE pages.** It used to render the hardcoded `CODEX` array
+**The in-game beastiary now reads the FORGE pages.** It used to render the hardcoded `CODEX` array
 (6 enemies, unlocked on kill). It now renders `EDIT.codexPages` — all 18 authored pages including
 weapons, bosses, tank and player, with uploaded page art when there is any.
 
 - Each page has a **`link`** = its unlock key: `enemy:0-5`, `weapon:0-7`, `boss:guardian`,
-  `boss:queen`, `vehicle:tank`, or empty for always-visible. Editable on the FORGE BESTIARY tab.
+  `boss:queen`, `vehicle:tank`, or empty for always-visible. Editable on the FORGE BEASTIARY tab.
 - `codexSee(link, count)` reports a sighting. Enemies unlock on **spawn** (you SAW it), not on kill;
   kills only increment the "n terminated" counter. Weapons unlock when equipped, bosses on spawn,
   the tank on its first drop.
 - Unlocks live in `meta.codexSeen`, i.e. **per save slot** — a fresh install or an erased slot
-  starts the bestiary empty, which is the point of it.
+  starts the beastiary empty, which is the point of it.
 - FORGE has **RE-LOCK ALL**, which clears this slot's sightings without touching progress, so the
   unlock flow can be re-tested.
-- First sighting fires a `NEW BESTIARY ENTRY` toast (`drawCodexToast`, drawn after `draw()` so
+- First sighting fires a `NEW BEASTIARY ENTRY` toast (`drawCodexToast`, drawn after `draw()` so
   gameplay never covers it).
 
 ### QA scripts added
 ```bash
 python -m http.server 8791          # serve first — the FORGE is disabled under ?telemetry=1
-python qa/_forge_bestiary_check.py  # bestiary CRUD + image upload + reload persistence
+python qa/_forge_beastiary_check.py  # beastiary CRUD + image upload + reload persistence
 python qa/_shot_hw20.py             # weapon screenshots -> Desktop\Tests\hivewar_hw20
-python qa/_slots_codex_check.py     # 3 slots are independent + bestiary unlock/erase/persistence
+python qa/_slots_codex_check.py     # 3 slots are independent + beastiary unlock/erase/persistence
 ```
 ⚠️ Ports 8791/8792 may already be held by a stale server from another game (8792 was serving
 `D:\Dev\ZombieWaves` on 2026-08-03) — `curl` the port before trusting a test result.
@@ -90,7 +90,7 @@ into `assets/*.png` strips; the game's `ANIM[kind]` + `PRAET` registries cycle f
 
 ## Architecture quick map (index.html)
 - `CFG` (W540×H960, squadMax 300, gateAddMax 999), `EKIND` (enemy stats incl. `r` = size),
-  `BAL` (spawnRate/waveSec/gates/bossHp), `WEAPONS`, `PERKS`, `CODEX` (bestiary).
+  `BAL` (spawnRate/waveSec/gates/bossHp), `WEAPONS`, `PERKS`, `CODEX` (beastiary).
 - Pools: bullets(1800), enemies, splats(1400 particles), pickups, dmgnums.
 - Enemy kinds: 0 Xenoid, 1 Eldritch Sponge, 2 Cyber-Mutant, 3 Xenoptera(winged), 4 Subterra(burrower), 5 Psychoid.
 - Bosses: Praetorian (mini, per level) ANIMATED (idle/attack/death via `PRAET`); Alien Queen (L10, still still-image).
@@ -104,7 +104,7 @@ into `assets/*.png` strips; the game's `ANIM[kind]` + `PRAET` registries cycle f
 - Explosions = fireball + colored ember particles + shockwave (boom()). Gates = upright 3D walls.
 - Difficulty: low early spawn + within-level ramp; +10% dmg; harsher contact; each level starts
   with a scaled squad ~5-20 (Start-Squad shop +8). Gate value grows as fast as you shoot it.
-- 1 bullet per soldier, capped 15 streams. Bestiary (X/ESC close). Death screen "HIVE WON" + frozen clock.
+- 1 bullet per soldier, capped 15 streams. Beastiary (X/ESC close). Death screen "HIVE WON" + frozen clock.
 - Scale reference honored (Eric's `ENEMY_SCALE_REFERENCE.png`): cyber big, sponge/subterra small, etc.
 - Sound wired (pulse-rifle/grenade/explosion/lightning/money(50% orbs)/perk/boss). Coin now audible.
 
@@ -178,7 +178,7 @@ Chitin Fields / Brood Caverns / Queen's Chamber. `?v=9`. Re-crop = edit boxes in
 - **Weapons.png** pickups floating over gates; **Perk Icons.png** in the MUTATION screen.
 - **Ground tile** (`Environment/Tile_*`) along the path; **Ironclad Centurion** tank swap; gate +N/−N art.
 - Tank deploy sound is still a synth blip (`sfx('drone')`) — swap for a real one; consider a "TANK INBOUND" cue.
-- Correct bestiary uses sprite crops, not the `Log - *.png` field-guide pages (could swap).
+- Correct beastiary uses sprite crops, not the `Log - *.png` field-guide pages (could swap).
 
 ## Tunable knobs (for balance requests)
 - `BAL.spawnRate[]` + the `ramp` in `spawnWave` (difficulty). `BAL.gates.interval` (gate frequency).

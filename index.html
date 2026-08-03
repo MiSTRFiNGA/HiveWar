@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.2.5beta';
+const GAME_VERSION = '0.2.6beta';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -247,7 +247,7 @@ const EKIND = [ // r values set from Eric's scale-reference sheet (2026-07-16); 
   {hp:18, r:13, spd:38,  col:'#fb5', credits:6},    // 4 Subterra — small
   {hp:48, r:28, spd:30,  col:'#c6f', credits:14},   // 5 Cephalo-Psychoid command node — still elite
 ];
-// Bestiary / field-guide: unlocked when first killed. tip = a real tactical secret.
+// Beastiary / field-guide: unlocked when first killed. tip = a real tactical secret.
 const CODEX = [
   {name:'Biomorph Swarmer', cls:'Fodder Tier', tip:'Weak alone, lethal in numbers — a solid wall of them will overrun a thin squad. Widen your fire, do not tunnel on one lane.'},
   {name:'Eldritch Sponge',  cls:'Bulwark Tier', tip:'Huge health pool, slow. Acid Rounds shred it over time — tag it early and let the corrosion work while you handle the swarm.'},
@@ -265,6 +265,13 @@ const CODEX = [
 const EDIT_KEY = 'hiveswarm_forge_v1';
 const FORGE_ENTITY_VERSION = 2;
 const ENEMY_ENTITY_IDS = ['enemy.xenoid','enemy.eldritchSponge','enemy.cyberMutant','enemy.xenoptera','enemy.subterra','enemy.psychoid'];
+// Custom enemies added in the FORGE live in EDIT.entities; this re-derives the index bridge from
+// them on load, otherwise a custom enemy would lose its kinds[] mapping on the next refresh.
+function syncEnemyIds(entities) {
+  const ids = (entities || []).filter(e => e && e.class === 'enemy').map(e => e.id);
+  if (!ids.length) return;
+  ENEMY_ENTITY_IDS.length = 0; ids.forEach(id => ENEMY_ENTITY_IDS.push(id));
+}
 function entityDefaults(){ return [
   {id:'player.soldier', class:'player', label:'Soldier', scale:1},
   {id:'enemy.xenoid', class:'enemy', label:'Xenoid', scale:1},
@@ -390,6 +397,10 @@ function migrateForgeValues(saved) {
     // Copying them here would make the compatibility controls appear to save while ENT shadows them.
   });
   if (!hasExplicitEntities && next.vehicles && Number.isFinite(next.vehicles.spread)) entityById(entities, 'vehicle.tank').range = next.vehicles.spread;
+  // Preserve FORGE-authored entities (custom enemies/bosses) that the defaults don't know about.
+  if (Array.isArray(saved.entities))
+    saved.entities.forEach(row => { if (row && row.id && !entityById(entities, row.id)) entities.push(row); });
+  syncEnemyIds(entities);
   next.entities = entities; next.forgeEntityVersion = FORGE_ENTITY_VERSION;
   delete next.scale; // global class scale is fully migrated to individual entity rows
   return next;
@@ -451,9 +462,12 @@ function levelDuration(li) { return levelLayout(li).duration; }
 // below, regardless of declaration order (function declarations hoist; consts don't).
 function metaDefaults() { return {dmg:0,squad:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true,
   soldierTier:1,weaponTier:1,ratingAsked:false,ratingDeclined:false,
-  // maxLevel = furthest campaign level reached in THIS slot; codexSeen = which bestiary pages this
+  // maxLevel = furthest campaign level reached in THIS slot; codexSeen = which beastiary pages this
   // save has unlocked. Both are per-slot progress, so erasing a slot really does start fresh.
-  maxLevel:1, codexSeen:{}}; }   // tier1 = baseline multiplier 1.0; rating flags persist forever
+  maxLevel:1, codexSeen:{},
+  // ARMORY: armor = % squad losses prevented, scavenger = credit-orb value, startWeapon = the gun
+  // every level opens with, weaponsOwned = which starting guns have been bought.
+  armor:0, scavenger:0, startWeapon:0, weaponsOwned:{0:true}}; }   // tier1 = baseline multiplier 1.0; rating flags persist forever
 // ---- SAVE SLOTS (owner request 2026-08-03: "lets give them 3 save slots to save to, and erasing
 // them is an option so the player can delete their own save data and start fresh"). The campaign is
 // 10 levels today and is being scaled up, so a player needs to be able to keep a long campaign
@@ -521,7 +535,7 @@ function down(e) {
   // real DOM buttons in #hud now, handled by the delegated listener beside the HUD markup.)
   if (G.paused) { G.paused = false; return; }          // tap anywhere else while paused = resume
   if (G.state === 'title') {
-    if (gy > CODEX_BTN_Y && gy < CODEX_BTN_Y + 58) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY
+    if (gy > CODEX_BTN_Y && gy < CODEX_BTN_Y + 58) { G.state = 'codex'; G.codexPage = 0; return; }   // BEASTIARY
     if (gy > SLOTS_BTN_Y && gy < SLOTS_BTN_Y + 58) { G.state = 'slots'; return; }                    // SAVE SLOTS
     if (G.meta.endless && gy > 530 && gy < 596) startRun('endless'); else startRun('campaign');
   }
@@ -532,7 +546,7 @@ function down(e) {
       if (gy < y || gy > y + SLOT_ROW_H - 22) continue;
       // ERASE sits in the right-hand third of an occupied row; anywhere else selects the slot.
       if (slotInfo(i) && dragX > CFG.W - 150 && gy < y + 52) {
-        if (confirm('Erase SLOT ' + i + '? Its campaign, credits and bestiary are deleted.')) eraseSlot(i);
+        if (confirm('Erase SLOT ' + i + '? Its campaign, credits and beastiary are deleted.')) eraseSlot(i);
       } else useSlot(i);
       return;
     }
@@ -544,6 +558,11 @@ function down(e) {
                         else G.codexPage = (G.codexPage + 1) % pages.length; }
   }
   else if (G.state === 'perk') pickPerk(px2game(e.touches ? e.touches[0] : e), (e.touches?e.touches[0].clientY:e.clientY));
+  else if (G.state === 'debrief') {
+    // First tap fast-forwards the count-up; the next one opens the armory.
+    if (!G.debriefDone) { G.debriefT = 999; G.debriefDone = true; G.fireT = 0; }
+    else G.state = 'shop';
+  }
   else if (G.state === 'shop') shopTap(e);
   else if (G.state === 'dead'&&gy>610&&gy<720) attemptRevive();
   else if (G.state === 'win' && G.ratingPending) {
@@ -683,8 +702,11 @@ function startRun(mode='campaign') {
   G.credits = Math.round(balanceMul('startCredits')); save(); AUDIO.loopTank(false);
   G.mode=mode;G.loop=0;G.state='play';G.level=mode==='endless'?10:1;G.levelT=0;
   { const m=location.search.match(/[?&]lvl=(\d+)/); if(m) G.level=Math.min(CFG.levels,Math.max(1,+m[1])); } // debug/screenshot jump
-  G.squad = startingSquad(); G.weapon = BAL.start.weapon;
-  G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null;G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
+  // Starting gun = whatever the player bought in the ARMORY (falls back to the balance default),
+  // clamped to what this level is allowed to award so a purchase can't skip a minLvl gate.
+  G.squad = startingSquad();
+  G.weapon = clampWeaponToLevel(weaponOwned(G.meta.startWeapon || 0) ? (G.meta.startWeapon || 0) : BAL.start.weapon, G.level);
+  G.bio = 0; G.bioNeed = 25; G.perks = {}; G.kills = 0; G.boss = null; resetLevelStats();G.streak=G.streakT=G.streakPeak=G.streakAward=G.chipHeal=G.shieldT=G.shieldHits=0;
   G.droneT = G.orbitalT = G.laserT = 0; G.laserSeq = 0;
   G.hitStop = G.flashT = G.squadFlash = G.bossKillT = G.vehicleT = 0; G.vehicleCD = 4;
   G.runStart=performance.now();G.maxSquad=G.squad;G.runBosses=0;G.creditsStart=G.credits;G.firstShopCredits=null;G.lastDeathCause=null;G.reviveUsed=false;
@@ -724,14 +746,16 @@ function nextLevel() {
     G.loop++;
     const sc = endlessScore();
     if (sc > (G.meta.bestScore || 0)) { G.meta.bestScore = sc; maybeQueueRating(); }   // new personal best, reached live (not at death)
-    G.state='shop';save();return;
+    startDebrief();save();return;
   }
   G.level++;
   if (G.level > CFG.levels) { G.state = 'win'; G.endElapsed=(performance.now()-G.runStart)/1000; maybeQueueRating(); save(); return; }
-  G.state = 'shop'; maybeQueueRating(); save();
+  startDebrief(); maybeQueueRating(); save();
 }
 // Every level opens with exactly one soldier. Each permanent Start Squad purchase adds four;
 // there is deliberately no level scaling or randomness hidden in this value.
+// Per-LEVEL scoreboard, reset at the top of every level and read by the debrief screen.
+function resetLevelStats() { G.lvlKills = []; G.lvlOrbs = 0; G.lvlCredits = 0; G.lvlBio = 0; }
 function startingSquad() { return 1 + (G.meta.squad || 0) * 4; }
 // random per-level loadout (owner request 2026-07-30): every level hands the squad a fresh
 // weapon so runs feel varied, never the same weapon twice in a row.
@@ -762,6 +786,7 @@ function pickRandomWeapon(exclude, level) {
   return idx;
 }
 function levelStart() {
+  resetLevelStats();
   // per-slot campaign high-water mark, so the slot picker can show real progress
   if (G.mode === 'campaign' && G.level > (G.meta.maxLevel || 1)) { G.meta.maxLevel = G.level; save(); }
   G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = runSeed(G.level); gates.length = 0; G.squad = startingSquad();
@@ -1107,7 +1132,7 @@ function spawnWave(dt) {
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
     const sc = (enemyRow(e.kind) || {}).scale; e.r = (K && K.r ? K.r : 14) * (Number.isFinite(sc) ? sc : 1);
     e.t = 0; e.acidT = 0; e.buffed = 0; e.kb = 0; e.burnT = 0; e.burnDps = 0;
-    codexSee('enemy:' + e.kind, 0);   // bestiary unlocks when you SEE it, not when you kill it
+    codexSee('enemy:' + e.kind, 0);   // beastiary unlocks when you SEE it, not when you kill it
   }
 }
 function spawnBoss() {
@@ -1150,6 +1175,8 @@ function damageEnemy(e, dmg, x, y) {
   if (dmg > 0) dmgnum(x !== undefined ? x : e.x, (y !== undefined ? y : e.y) - 12, Math.round(dmg));
   if (e.hp <= 0) {
     G.kills++;
+    if (!G.lvlKills) resetLevelStats();
+    G.lvlKills[e.kind] = (G.lvlKills[e.kind] || 0) + 1;
     codexSee('enemy:' + e.kind);                      // page already unlocked on sight; this counts the kill
     G.streak++; G.streakT=0.5; G.streakPeak=Math.max(G.streakPeak,G.streak);   // tighter combo window — resets in lulls
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
@@ -1232,7 +1259,7 @@ function loseUnits(n, x, y, cause='damage') {
   if (G.graceT > 0) { fx(x, y, '#48f'); return; }    // brief grace after a loss — units die in ticks, not floods
   G.graceT = 0.28;                                   // shorter grace: a sustained swarm can actually overwhelm you
   const shield=G.perks['Shield Matrix']||0;if(shield&&G.shieldHits<shield){G.shieldHits++;fx(x,y,'#6ff');return;}
-  n = Math.round(n * (1 - Math.min(90, EDIT.player.armor) / 100));   // FORGE armor: % of losses prevented
+  n = Math.round(n * (1 - Math.min(90, (EDIT.player.armor || 0) + 4 * (G.meta.armor || 0)) / 100));   // FORGE armor + purchased armor ranks
   G.squad -= Math.max(1, n - (shield ? 1 : 0));
   G.squadFlash = 0.22; fx(x, y, '#48f');
   if (G.squad <= 0) die(cause);
@@ -1338,23 +1365,51 @@ function pickPerk(gx, clientY) {
     G.state = G.boss ? 'boss' : 'play';
   }
 }
+// col: which armory column an entry lives in. Cost curves unchanged for the original six so the
+// existing economy tune still holds.
 const SHOP = [
-  // R3 economy: combat growth 1.5, utility 1.6, rank caps (balance.json v3.0)
-  // Modest, useful-not-game-breaking meta upgrades (you should still GROW via gates in-run)
-  {k:'dmg',   name:'Base Damage +10%', max:12, cost: l => Math.round(60  * Math.pow(1.55, l))},
-  // Halved payload needs a lower entry price; this remains a within-run purchase and therefore
-  // does not compete with permanent damage/tier progression at the old +8 price point.
-  {k:'squad', name:'Start Squad +4',   max:8,  cost: l => Math.round(50  * Math.pow(1.45, l))},
-  {k:'perkSlot',name:'Perk Slot +',    max:2,  cost: l => Math.round(600 * Math.pow(1.7, l))},
-  {k:'vehicleDrop',name:'Tank Drop +', max:5,  cost: l => Math.round(320 * Math.pow(1.65, l))},
-  // Quality axis (owner spec 2026-07-30): these two are NOT in startRun's per-run reset list,
-  // so — unlike the five upgrades above — they persist across runs forever, like codex/bestScore.
-  // l starts at 1 (tier 1 = baseline), so the first purchase's exponent is l-1 = 0.
-  {k:'soldierTier',name:'Soldier Tier', max: SOLDIER_TIER_MAX, cost: l => Math.round(500 * Math.pow(1.8, l - 1))},
-  // 3.4 — permanent damage multiplier that survives death (not the gun you start with).
-  {k:'weaponTier',  name:'Weapon Tier — permanent +12% dmg (survives death)', max: WEAPON_TIER_MAX,  cost: l => Math.round(650 * Math.pow(1.8, l - 1))},
+  {col:0, k:'squad', name:'Start Squad +4',   max:8,  cost: l => Math.round(50  * Math.pow(1.45, l))},
+  {col:0, k:'dmg',   name:'Base Damage +10%', max:12, cost: l => Math.round(60  * Math.pow(1.55, l))},
+  {col:0, k:'soldierTier',name:'Soldier Tier +1', max: SOLDIER_TIER_MAX, cost: l => Math.round(500 * Math.pow(1.8, l - 1))},
+  // Armor is a real survivability axis: each rank prevents 4% of squad losses, on top of whatever
+  // the FORGE armor knob is set to, hard-capped at 90% in loseUnits().
+  {col:0, k:'armor', name:'Armor +4%',        max:6,  cost: l => Math.round(180 * Math.pow(1.6, l))},
+  {col:1, k:'weaponTier', name:'Weapon Tier +12% dmg', max: WEAPON_TIER_MAX, cost: l => Math.round(650 * Math.pow(1.8, l - 1))},
+  {col:2, k:'perkSlot', name:'Perk Slot +1',  max:2,  cost: l => Math.round(600 * Math.pow(1.7, l))},
+  {col:2, k:'vehicleDrop', name:'Tank Drop +1', max:5, cost: l => Math.round(320 * Math.pow(1.65, l))},
+  {col:2, k:'scavenger', name:'Scavenger +2₵/orb', max:5, cost: l => Math.round(140 * Math.pow(1.55, l))},
 ];
-function shopRowH() { return SHOP.length > 5 ? Math.floor(500 / SHOP.length) : 100; }   // fit extra rows above the DEPLOY button
+
+// Column 1 also sells the gun you DEPLOY with. Buying one unlocks it permanently and makes it the
+// active choice; tapping an already-owned gun just re-selects it, free.
+function startWeaponPrice(i) { return Math.round((i === 0 ? 0 : 200 + i * 260) * balanceMul('shopCostMul')); }
+function weaponOwned(i) { return i === 0 || !!(G.meta.weaponsOwned && G.meta.weaponsOwned[i]); }
+function buyStartWeapon(i) {
+  if (!weaponOwned(i)) {
+    const c = startWeaponPrice(i);
+    if (G.credits < c) return false;
+    G.credits -= c;
+    if (!G.meta.weaponsOwned) G.meta.weaponsOwned = {0:true};
+    G.meta.weaponsOwned[i] = true;
+  }
+  G.meta.startWeapon = i; save(); return true;
+}
+// ---- ARMORY layout. One source of truth for the geometry so draw and hit-test cannot drift. ----
+const ARMORY_COLS = [
+  { title: 'SQUAD',   tint: '#2fd', hint: 'who you deploy with' },
+  { title: 'WEAPONS', tint: '#fd4', hint: 'what you deploy with' },
+  { title: 'SUPPORT', tint: '#c6f', hint: 'what backs you up' },
+];
+const ARM_TOP = 250, ARM_ROW_H = 62, ARM_GAP = 8;
+function armColX(c) { const w = (CFG.W - 2 * 24 - 2 * ARM_GAP) / 3; return 24 + c * (w + ARM_GAP); }
+function armColW() { return (CFG.W - 2 * 24 - 2 * ARM_GAP) / 3; }
+// Every tappable cell in one column, top to bottom: upgrades first, then (col 1) the gun list.
+function armCells(c) {
+  const cells = SHOP.map((it, i) => ({ it, i })).filter(x => x.it.col === c).map(x => ({ type: 'up', it: x.it }));
+  if (c === 1) for (let i = 0; i <= WEAPON_LAST; i++) cells.push({ type: 'gun', gun: i });
+  return cells;
+}
+function shopRowH() { return ARM_ROW_H; }   // legacy callers
 function shopTap(e) {
   const r = cv.getBoundingClientRect();
   const gy = ((e.touches ? e.touches[0].clientY : e.clientY) - r.top) / scale;
@@ -1363,15 +1418,73 @@ function shopTap(e) {
     if (ratingBannerTap(gx, gy, RATING_SHOP_Y, RATING_BANNER_H)) return;   // tap landed on the banner — consumed
     G.ratingPending = false;   // tapped elsewhere — dismiss quietly, doesn't count as "asked" (non-blocking)
   }
-  const rowH = shopRowH();
-  const i = Math.floor((gy - 300) / rowH);
-  if (i >= 0 && i < SHOP.length) {
-    const it = SHOP[i], c = shopPrice(it);
-    const maxed = G.meta[it.k] >= it.max;
-    if (!maxed && G.credits >= c) { G.credits -= c; G.meta[it.k]++; save(); }
-  } else if (gy > 820) levelStart();
+  if (gy > 880) { levelStart(); return; }                     // DEPLOY
+  const w = armColW();
+  for (let c = 0; c < 3; c++) {
+    const x = armColX(c);
+    if (gx < x || gx > x + w) continue;
+    const cells = armCells(c), idx = Math.floor((gy - ARM_TOP) / ARM_ROW_H);
+    if (idx < 0 || idx >= cells.length) return;
+    const cell = cells[idx];
+    if (cell.type === 'gun') { buyStartWeapon(cell.gun); return; }
+    const it = cell.it, cost = shopPrice(it);
+    if ((G.meta[it.k] || 0) < it.max && G.credits >= cost) { G.credits -= cost; G.meta[it.k] = (G.meta[it.k] || 0) + 1; save(); }
+    return;
+  }
 }
-
+function drawShop() {
+  cx.fillStyle = 'rgba(5,2,15,0.90)'; cx.fillRect(0, 0, CFG.W, CFG.H);
+  cx.textAlign = 'center';
+  cx.fillStyle = '#4ff'; cx.font = 'bold 34px Segoe UI'; cx.fillText('ARMORY', CFG.W / 2, 130);
+  cx.font = '15px Segoe UI'; cx.fillStyle = '#89a';
+  cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR  ·  spend before you deploy', CFG.W / 2, 158);
+  cx.font = 'bold 26px Segoe UI'; cx.fillStyle = '#fd4';
+  cx.fillText('₵ ' + G.credits, CFG.W / 2, 196);
+  if (G.ratingPending) drawRatingBanner(RATING_SHOP_Y, RATING_BANNER_H);
+  const w = armColW();
+  ARMORY_COLS.forEach((col, c) => {
+    const x = armColX(c);
+    cx.textAlign = 'center'; cx.fillStyle = col.tint; cx.font = 'bold 15px Segoe UI';
+    cx.fillText(col.title, x + w / 2, ARM_TOP - 18);
+    armCells(c).forEach((cell, i) => {
+      const y = ARM_TOP + i * ARM_ROW_H, h = ARM_ROW_H - 6;
+      if (cell.type === 'gun') {
+        const g = cell.gun, owned = weaponOwned(g), active = (G.meta.startWeapon || 0) === g;
+        const price = startWeaponPrice(g), can = owned || G.credits >= price;
+        const locked = !weaponAllowed(g, CFG.levels);   // never sell a gun the campaign can't award
+        cx.fillStyle = active ? 'rgba(255,212,68,.24)' : owned ? 'rgba(120,110,60,.20)' : can ? 'rgba(40,40,50,.85)' : 'rgba(30,30,34,.8)';
+        cx.fillRect(x, y, w, h);
+        cx.strokeStyle = active ? '#fd4' : owned ? '#a95' : can ? '#556' : '#444'; cx.strokeRect(x, y, w, h);
+        cx.textAlign = 'left'; cx.fillStyle = active ? '#ffe' : owned ? '#eda' : can ? '#bbc' : '#777';
+        cx.font = 'bold 12px Segoe UI';
+        cx.fillText(WEAPONS[g].name, x + 7, y + 20);
+        cx.font = '11px Segoe UI'; cx.fillStyle = active ? '#fd4' : '#889';
+        cx.fillText(active ? '◄ DEPLOY WITH THIS' : owned ? 'owned — tap to equip' : '₵' + price, x + 7, y + 38);
+        const ml = WEAPONS[g].minLvl || 1;
+        if (ml > 1) { cx.fillStyle = '#678'; cx.font = '10px Segoe UI'; cx.fillText('unlocks L' + ml + '+', x + 7, y + 52); }
+      } else {
+        const it = cell.it, rank = G.meta[it.k] || 0, cost = shopPrice(it),
+              maxed = rank >= it.max, can = !maxed && G.credits >= cost;
+        cx.fillStyle = can ? 'rgba(20,70,66,0.85)' : 'rgba(38,38,44,0.8)';
+        cx.fillRect(x, y, w, h);
+        cx.strokeStyle = can ? ARMORY_COLS[c].tint : '#555'; cx.strokeRect(x, y, w, h);
+        cx.textAlign = 'left'; cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 12px Segoe UI';
+        // wrap the name onto two short lines so a narrow column stays readable
+        const words = it.name.split(' '); let line = '', ly = y + 20;
+        for (const wd of words) { const t = line + wd + ' ';
+          if (cx.measureText(t).width > w - 14) { cx.fillText(line, x + 7, ly); line = wd + ' '; ly += 14; } else line = t; }
+        cx.fillText(line, x + 7, ly);
+        cx.font = '11px Segoe UI'; cx.fillStyle = maxed ? '#6a6' : can ? '#fd4' : '#777';
+        cx.fillText(maxed ? 'MAX ' + rank + '/' + it.max : '₵' + cost + '   ' + rank + '/' + it.max, x + 7, y + h - 8);
+      }
+    });
+  });
+  cx.textAlign = 'center';
+  cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 886, CFG.W - 120, 60);
+  cx.strokeStyle = '#fd4'; cx.strokeRect(60, 886, CFG.W - 120, 60);
+  cx.fillStyle = '#ffd'; cx.font = 'bold 22px Segoe UI';
+  cx.fillText('▶ DEPLOY — LEVEL ' + G.level + '  ·  ' + WEAPONS[G.meta.startWeapon || 0].name, CFG.W / 2, 924);
+}
 // ---------- update ----------
 function balanceMul(key){ const v=Number(EDIT.balance&&EDIT.balance[key]), fallback=key==='startCredits'?0:1; return Number.isFinite(v)?Math.max(0,v):fallback; }
 function shopPrice(it){ return Math.round(it.cost(G.meta[it.k])*balanceMul('shopCostMul')); }
@@ -1381,6 +1494,8 @@ function telemetryBotAdvanceScreens() {
     const p = perkChoices[0];
     G.perks[p] = Math.min(BAL.perks.maxRank, (G.perks[p] || 0) + 1);
     G.state = G.boss ? 'boss' : 'play';
+  } else if (G.state === 'debrief') {
+    G.debriefT = 999; G.debriefDone = true; G.state = 'shop';   // bots skip the celebration
   } else if (G.state === 'shop') {
     // Spend the whole visit on the most immediately useful combat growth, then
     // deploy. This is a documented deterministic policy, not a human proxy.
@@ -1407,6 +1522,7 @@ function processLevelLayout() {
 let gateT = 0, last = 0;
 function update(dt) {
   applyHorizon();   // corridor depth ramps with level progress (world.horizonStart -> horizonEnd)
+  if (G.state === 'debrief') { updateDebrief(dt); return; }   // level scoreboard runs its own clock
   if (G.state !== 'play' && G.state !== 'boss') return;
   if (G.paused) return;                                // HUD pause button froze the run
   if (G.hitStop > 0) { G.hitStop -= dt; return; }
@@ -1421,7 +1537,7 @@ function update(dt) {
   G.maxSquad=Math.max(G.maxSquad,G.squad);
   if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 12);
   if (G.flashT > 0) G.flashT -= dt;
-  if (G.newCodexT > 0) G.newCodexT -= dt;   // 'NEW BESTIARY ENTRY' toast
+  if (G.newCodexT > 0) G.newCodexT -= dt;   // 'NEW BEASTIARY ENTRY' toast
   if (G.squadFlash > 0) G.squadFlash -= dt;
   if(G.streakT>0)G.streakT-=dt;else{G.streak=0;G.streakAward=0;}
   if(G.cueT>0)G.cueT-=dt;
@@ -1649,8 +1765,8 @@ function update(dt) {
     if (d < pullR) { const pull = (0.35 + 0.65 * (1 - d / pullR)) * 620 * dt;   // sucked toward the character
       p.x += dx / d * pull; p.y += dy / d * pull; }
     if (d < collectR) {
-      if (p.kind === 0) { G.bio+=1+.05*(G.perks['Magnet']||0); if (G.bio >= G.bioNeed) { G.bio = 0; G.bioNeed = Math.round(G.bioNeed * 1.5); offerPerks(); } }
-      else {G.credits += 5;AUDIO.sample('money');const m=G.perks['Magnet']||0;if(m&&++G.chipHeal>=[12,12,9,6][m]){G.squad=Math.min(CFG.squadMax,G.squad+1);G.chipHeal=0;}}
+      if (p.kind === 0) { G.bio+=1+.05*(G.perks['Magnet']||0); G.lvlBio = (G.lvlBio||0)+1; if (G.bio >= G.bioNeed) { G.bio = 0; G.bioNeed = Math.round(G.bioNeed * 1.5); offerPerks(); } }
+      else {const cv = 5 + 2 * (G.meta.scavenger || 0); G.credits += cv; G.lvlOrbs = (G.lvlOrbs||0)+1; G.lvlCredits = (G.lvlCredits||0)+cv; AUDIO.sample('money');const m=G.perks['Magnet']||0;if(m&&++G.chipHeal>=[12,12,9,6][m]){G.squad=Math.min(CFG.squadMax,G.squad+1);G.chipHeal=0;}}
       pickups.release(p);
     } else if (p.y > CFG.H + 20) pickups.release(p);
   });
@@ -1948,7 +2064,7 @@ const deathFx = [];                            // one-shot 'Die' strip playbacks
 // _sideL.png / _sideR.png (left + right wall tiles). Missing files are simply ignored — neon
 // default stays. Legacy single _side.png still works: both walls fall back to it.
 const ENVIMG = {};
-// ---- BESTIARY / CODEX pages (owner request 2026-08-03: "add a bestiary tab so I can edit and add
+// ---- BEASTIARY / CODEX pages (owner request 2026-08-03: "add a beastiary tab so I can edit and add
 // pages ... each page relates to an enemy, item, weapon, tank, boss, player, so let me upload images").
 // TEXT lives in EDIT (so it travels inside a .hivepack like every other authored value); IMAGES live
 // in IndexedDB under the `codex:` prefix, because a handful of PNGs as dataURLs would blow
@@ -1958,7 +2074,7 @@ const CODEX_IMG = {};                           // pageId -> dataURL, hydrated f
 function codexDefaults() {
   const pages = [];
   // `link` is the UNLOCK KEY: the page stays hidden in-game until something reports that key as
-  // seen (see codexSee). '' = always visible. Editable per page on the BESTIARY tab.
+  // seen (see codexSee). '' = always visible. Editable per page on the BEASTIARY tab.
   let n = 0; const mk = (cat, title, subtitle, bodyTxt, link) =>
     pages.push({ id: 'cx' + (++n), cat, title, subtitle, body: bodyTxt, link: link || '' });
   CODEX.forEach((t, i) => mk('enemy', t.name, t.cls, t.tip, 'enemy:' + i));
@@ -1971,7 +2087,7 @@ function codexDefaults() {
 }
 // Report that the player has now SEEN something. Unlocks every page whose `link` matches, and
 // counts sightings so a page can show "n terminated". Progress is per-slot (G.meta.codexSeen), so
-// a fresh install or an erased slot starts the bestiary empty again — which is the point of it.
+// a fresh install or an erased slot starts the beastiary empty again — which is the point of it.
 function codexSee(link, count) {
   if (!link) return;
   if (!G.meta.codexSeen) G.meta.codexSeen = {};
@@ -2376,6 +2492,7 @@ function draw() {
   if (G.state === 'slots') { drawSlots(); cx.restore(); return; }
   if (G.state === 'win')   { drawEndScreen(true); cx.restore(); return; }
   if (G.state === 'dead')  { drawEndScreen(false); cx.restore(); return; }
+  if (G.state === 'debrief') { drawDebrief(); cx.restore(); return; }
   if (G.state === 'shop')  { drawShop(); cx.restore(); return; }
 
   drawHorizonBoss();
@@ -2936,36 +3053,88 @@ function drawPerks() {
     cx.fillText(p + (G.perks[p] ? ' ' + '★'.repeat(G.perks[p]) : ''), tx, y + 52);
   });
 }
-function drawShop() {
-  // The between-level shop used to draw straight onto the live backdrop, so the panels and text
-  // fought the road/skyline art behind them (owner request 2026-07-30: "hard to see them on the
-  // bare backdrop"). Dim the whole field first, matching how drawPerks() already handles it.
-  cx.fillStyle = 'rgba(5,2,15,0.86)'; cx.fillRect(0, 0, CFG.W, CFG.H);
-  cx.fillStyle = '#4ff'; cx.font = 'bold 32px Segoe UI'; cx.textAlign = 'center';
-  cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR', CFG.W / 2, 180);
-  cx.font = '20px Segoe UI'; cx.fillStyle = '#9ff';
-  cx.fillText('₵ ' + G.credits, CFG.W / 2, 230);
-  if (G.ratingPending) drawRatingBanner(RATING_SHOP_Y, RATING_BANNER_H);
-  const rowH = shopRowH(), boxH = Math.round(rowH * 0.8);
-  SHOP.forEach((it, i) => {
-    const y = 300 + i * rowH, rank = G.meta[it.k] || 0, c = shopPrice(it),
-          maxed = rank >= it.max, can = !maxed && G.credits >= c;
-    // solid-ish card fills (was 0.12/0.1 — near-invisible once the scrim went in)
-    cx.fillStyle = can ? 'rgba(20,70,66,0.85)' : 'rgba(38,38,44,0.8)';
-    cx.fillRect(60, y, CFG.W - 120, boxH);
-    cx.strokeStyle = can ? '#2fd' : '#555'; cx.strokeRect(60, y, CFG.W - 120, boxH);
-    // 3.1 — clean label: "Start Squad +8 (rank 0/8)  —  ₵N" (never append rank into the name string)
-    const fontPx = rowH < 90 ? (it.name.length > 28 ? 13 : 15) : (it.name.length > 28 ? 15 : 18);
-    cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold ' + fontPx + 'px Segoe UI';
-    const label = maxed
-      ? `${it.name} (rank ${rank}/${it.max})  —  MAX`
-      : `${it.name} (rank ${rank}/${it.max})  —  ₵${c}`;
-    cx.fillText(label, CFG.W / 2, y + boxH / 2 + 7);
+// ---------- LEVEL DEBRIEF ----------
+// Rows reveal one at a time and each number counts UP, so clearing a level lands as an event
+// instead of an instant jump to a shop menu. Timeline is pure elapsed time (G.debriefT) so it
+// cannot desync from the frame rate.
+const DEBRIEF_ROW_DELAY = 0.55, DEBRIEF_COUNT_TIME = 0.45;
+function startDebrief() {
+  G.state = 'debrief'; G.debriefT = 0; G.debriefDone = false; G.fireworks = [];
+  if (!G.lvlKills) resetLevelStats();
+}
+function debriefRows() {
+  const rows = [];
+  (EDIT.kinds || []).forEach((k, i) => { const n = (G.lvlKills || [])[i] || 0;
+    if (n > 0) rows.push({ label: k.name, value: n, kind: i }); });
+  rows.sort((a, b) => b.value - a.value);
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  rows.push({ label: 'TOTAL KILLS', value: total, big: true });
+  rows.push({ label: 'BIO ORBS', value: G.lvlBio || 0, col: '#6f9' });
+  rows.push({ label: 'CREDIT ORBS', value: G.lvlOrbs || 0, col: '#fd4' });
+  rows.push({ label: 'CREDITS EARNED', value: G.lvlCredits || 0, col: '#fd4', money: true });
+  return rows;
+}
+function fireworkBurst() {
+  const x = rr(90, CFG.W - 90), y = rr(180, 520);
+  const hue = ['#4ff', '#f4f', '#ff4', '#6f9', '#f86'][(rng() * 5) | 0];
+  for (let i = 0; i < 46; i++) {
+    const a = rng() * 6.283, sp = rr(90, 340);
+    G.fireworks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rr(0.8, 1.8), col: hue, r: rr(2.2, 4.4) });
+  }
+  G.fireworks.push({ x, y, vx: 0, vy: 0, life: 0.22, col: '#fff', r: 26, flash: 1 });   // muzzle flash of the shell
+  AUDIO.sample('explosion');
+}
+function updateDebrief(dt) {
+  G.debriefT += dt;
+  const rows = debriefRows(), full = rows.length * DEBRIEF_ROW_DELAY + 0.4;
+  if (!G.debriefDone && G.debriefT > full) { G.debriefDone = true; G.fireT = 0; }
+  if (G.debriefDone) {                       // celebration: a burst every ~0.45s
+    G.fireT = (G.fireT || 0) - dt;
+    if (G.fireT <= 0) { G.fireT = 0.38; fireworkBurst(); if (rng() < 0.45) fireworkBurst(); }
+  }
+  for (let i = G.fireworks.length - 1; i >= 0; i--) { const f = G.fireworks[i];
+    f.x += f.vx * dt; f.y += f.vy * dt; f.vy += 210 * dt; f.life -= dt;
+    if (f.life <= 0) G.fireworks.splice(i, 1); }
+}
+function drawDebrief() {
+  cx.fillStyle = 'rgba(4,2,12,0.90)'; cx.fillRect(0, 0, CFG.W, CFG.H);
+  cx.textAlign = 'center';
+  cx.fillStyle = '#4ff'; cx.shadowColor = '#f4f'; cx.shadowBlur = 18; cx.font = 'bold 38px Segoe UI';
+  cx.fillText('LEVEL ' + (G.mode === 'endless' ? G.loop : G.level - 1) + ' CLEAR', CFG.W / 2, 130);
+  cx.shadowBlur = 0;
+  const rows = debriefRows();
+  rows.forEach((r, i) => {
+    const shown = G.debriefT - i * DEBRIEF_ROW_DELAY;
+    if (shown <= 0) return;
+    const k = Math.min(1, shown / DEBRIEF_COUNT_TIME);
+    const val = Math.round(r.value * k * k);              // ease-out count-up
+    const y = 200 + i * 46;
+    const pop = shown < 0.16 ? 1.18 : 1;                  // brief scale pop as the row lands
+    cx.save(); cx.translate(CFG.W / 2, y); cx.scale(pop, pop); cx.translate(-CFG.W / 2, -y);
+    if (r.big) { cx.strokeStyle = 'rgba(120,220,255,.5)'; cx.beginPath();
+      cx.moveTo(70, y - 26); cx.lineTo(CFG.W - 70, y - 26); cx.stroke(); }
+    cx.textAlign = 'left'; cx.fillStyle = r.big ? '#dff' : (r.col || '#9cc');
+    cx.font = (r.big ? 'bold 24px' : '19px') + ' Segoe UI';
+    cx.fillText(r.label, 78, y);
+    cx.textAlign = 'right'; cx.fillStyle = r.big ? '#fff' : (r.col || '#dff');
+    cx.font = 'bold ' + (r.big ? 26 : 21) + 'px Segoe UI';
+    cx.fillText((r.money ? '₵ ' : '') + val, CFG.W - 78, y);
+    cx.restore();
   });
-  cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 840, CFG.W - 120, 70);
-  cx.strokeStyle = '#fd4'; cx.strokeRect(60, 840, CFG.W - 120, 70);
-  cx.fillStyle = '#ffd'; cx.font = 'bold 24px Segoe UI';
-  cx.fillText('▶ DEPLOY — LEVEL ' + G.level, CFG.W / 2, 885);
+  for (const f of G.fireworks) {                          // celebration
+    cx.globalAlpha = Math.max(0, Math.min(1, f.life));
+    cx.fillStyle = f.col; cx.shadowColor = f.col; cx.shadowBlur = f.flash ? 40 : 14;
+    cx.beginPath(); cx.arc(f.x, f.y, (f.r || 3) * (f.flash ? Math.max(0.2, f.life / 0.22) : 1), 0, 7); cx.fill();
+  }
+  cx.globalAlpha = 1; cx.shadowBlur = 0;
+  if (G.debriefDone) {
+    cx.textAlign = 'center'; cx.fillStyle = '#ffd';
+    cx.font = 'bold 22px Segoe UI';
+    cx.fillText('TAP TO CONTINUE  ▶  ARMORY', CFG.W / 2, 880);
+  } else {
+    cx.textAlign = 'center'; cx.fillStyle = '#567'; cx.font = '15px Segoe UI';
+    cx.fillText('tap to skip', CFG.W / 2, 880);
+  }
 }
 // Run controls are DOM buttons in #hud now (see the .ctrls row) — nothing to paint on the canvas.
 // Kept as a no-op so the several draw() paths that call it don't each need editing.
@@ -2987,7 +3156,7 @@ function drawCodexToast(){
   cx.fillStyle = 'rgba(60,20,90,.82)'; cx.fillRect(CFG.W/2 - 170, 96, 340, 52);
   cx.strokeStyle = '#c6f'; cx.strokeRect(CFG.W/2 - 170, 96, 340, 52);
   cx.fillStyle = '#e8d8ff'; cx.font = 'bold 15px Segoe UI';
-  cx.fillText('NEW BESTIARY ENTRY', CFG.W/2, 118);
+  cx.fillText('NEW BEASTIARY ENTRY', CFG.W/2, 118);
   cx.fillStyle = '#fff'; cx.font = 'bold 19px Segoe UI';
   cx.fillText(G.newCodexTitle, CFG.W/2, 140);
   cx.restore();
@@ -3005,10 +3174,10 @@ function drawTitle(){
   // SAVE SLOTS button
   cx.fillStyle='rgba(90,200,255,.13)';cx.fillRect(85,SLOTS_BTN_Y,CFG.W-170,58);cx.strokeStyle='#5cf';cx.strokeRect(85,SLOTS_BTN_Y,CFG.W-170,58);
   cx.fillStyle='#dff';cx.font='bold 20px Segoe UI';cx.fillText('💾 SAVE SLOTS',CFG.W/2,SLOTS_BTN_Y+36);
-  // BESTIARY button - counts FORGE-authored pages THIS SLOT has unlocked
+  // BEASTIARY button - counts FORGE-authored pages THIS SLOT has unlocked
   const pages=codexPages(), nUnlocked=codexVisible().length;
   cx.fillStyle='rgba(200,120,255,.14)';cx.fillRect(85,CODEX_BTN_Y,CFG.W-170,58);cx.strokeStyle='#c6f';cx.strokeRect(85,CODEX_BTN_Y,CFG.W-170,58);
-  cx.fillStyle='#e8d8ff';cx.font='bold 20px Segoe UI';cx.fillText('📖 BESTIARY  '+nUnlocked+' / '+pages.length,CFG.W/2,CODEX_BTN_Y+36);
+  cx.fillStyle='#e8d8ff';cx.font='bold 20px Segoe UI';cx.fillText('📖 BEASTIARY  '+nUnlocked+' / '+pages.length,CFG.W/2,CODEX_BTN_Y+36);
 }
 // Title-screen button rows live in one place so the draw and the hit-test can never drift apart.
 const SLOTS_BTN_Y = 672, CODEX_BTN_Y = 740;
@@ -3028,7 +3197,7 @@ function drawSlots(){
     cx.fillText('SLOT '+i+(on?'   ◄ ACTIVE':''),64,y+38);
     cx.font='15px Segoe UI';cx.fillStyle='#8ab';
     if(info){
-      cx.fillText('Level '+info.level+'  ·  '+info.credits+' credits  ·  bestiary '+info.codex,64,y+66);
+      cx.fillText('Level '+info.level+'  ·  '+info.credits+' credits  ·  beastiary '+info.codex,64,y+66);
       if(info.endless) cx.fillText('Endless unlocked  ·  best '+info.best,64,y+90);
       cx.textAlign='right';cx.fillStyle='#f88';cx.font='bold 16px Segoe UI';
       cx.fillText('ERASE',CFG.W-64,y+38);
@@ -3038,15 +3207,15 @@ function drawSlots(){
     cx.textAlign='center';
   }
   cx.textAlign='center';cx.fillStyle='#667';cx.font='13px Segoe UI';
-  cx.fillText('Erasing a slot clears its campaign, credits and bestiary.',CFG.W/2,SLOT_ROW_Y+SAVE_SLOTS*SLOT_ROW_H+30);
+  cx.fillText('Erasing a slot clears its campaign, credits and beastiary.',CFG.W/2,SLOT_ROW_Y+SAVE_SLOTS*SLOT_ROW_H+30);
 }
 function drawCodex(){
   cx.fillStyle='rgba(6,3,16,.94)';cx.fillRect(0,0,CFG.W,CFG.H);
   cx.textAlign='center';cx.fillStyle='#c6f';cx.shadowColor='#a4f';cx.shadowBlur=14;cx.font='bold 30px Segoe UI';
-  cx.fillText('BESTIARY',CFG.W/2,54);cx.shadowBlur=0;
+  cx.fillText('BEASTIARY',CFG.W/2,54);cx.shadowBlur=0;
   cx.fillStyle='rgba(255,120,120,.9)';cx.font='bold 30px Segoe UI';cx.fillText('✕',CFG.W-34,44);   // close (tap here or ESC)
   cx.fillStyle='#89f';cx.font='14px Segoe UI';cx.fillText('◄ tap left / right to flip · tap top to go back ►',CFG.W/2,84);
-  // Pages come from the FORGE bestiary (EDIT.codexPages) and unlock PER SAVE SLOT as you meet them.
+  // Pages come from the FORGE beastiary (EDIT.codexPages) and unlock PER SAVE SLOT as you meet them.
   const pages=codexVisible(), total=codexPages().length;
   if(!pages.length){cx.fillStyle='#889';cx.font='18px Segoe UI';cx.fillText('Nothing catalogued yet.',CFG.W/2,300);
     cx.fillText('Pages unlock the first time you meet',CFG.W/2,330);
@@ -3171,7 +3340,7 @@ async function hydrateMedia(){
   if(localStorage.getItem(ENV_KEY)!==null) localStorage.removeItem(ENV_KEY);
 }
 function saveSpriteMedia(r){ const s=savedSprites[r.key], record=s&&s.data?{key:r.key,data:s.data,frames:s.frames||1,fps:s.fps||8}:null; return queueMedia(async()=>record?mediaPut({id:'sprite:'+record.key,key:record.key,blob:await dataBlob(record.data),frames:record.frames,fps:record.fps}):mediaDel('sprite:'+r.key)); }
-// Bestiary page art. Lives beside saveSpriteMedia/saveEnvMedia because the media helpers it needs
+// Beastiary page art. Lives beside saveSpriteMedia/saveEnvMedia because the media helpers it needs
 // (queueMedia/mediaPut/dataBlob) are all scoped to the FORGE closure.
 function saveCodexMedia(id){ const data=CODEX_IMG[id];
   return queueMedia(async()=>data?mediaPut({id:'codex:'+id,key:id,blob:await dataBlob(data)}):mediaDel('codex:'+id)); }
@@ -3410,7 +3579,7 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
   setP(p, v); saveEdit(); applyEditWeapons(); applyHorizon(); refreshComputed(); });
 
-const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','BALANCE','WORLD','SPRITES','AUDIO','DATA','BESTIARY'];
+const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','BALANCE','WORLD','SPRITES','AUDIO','DATA','BEASTIARY'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false}, appliedRotation=0;
 let entityClassFilter = 'all', entityReturnId = null;
 // Crop mode. While cropBox is set the paint canvas drags the box instead of painting, and drawPaint
@@ -3531,6 +3700,54 @@ const ENTITY_SPRITE_KEY = {
   'hazard.rollerBreakable':'rollerB', 'hazard.rollerArmored':'rollerA', 'vehicle.tank':'tank'
 };
 function entitySpriteIndex(id){ return REG.findIndex(r => r.key === ENTITY_SPRITE_KEY[id]); }
+// ---- FORGE: grow the roster ------------------------------------------------
+function addForgeEnemy() {
+  const n = (EDIT.kinds || []).length;
+  const id = 'enemy.custom' + (n + 1), label = 'Custom Enemy ' + (n + 1);
+  EDIT.kinds.push({ name: label, hpBase: 20, hpLvl: 5, spd: 60, r: 20, credits: 2,
+                    weight: 5, minLvl: 1, mass: 1, sfxAttack: 'xenohit', sfxDie: 'xenohit' });
+  EDIT.entities.push({ id, class: 'enemy', label, scale: 1 });
+  ENEMY_ENTITY_IDS.push(id);          // index bridge: kinds[i] <-> ENEMY_ENTITY_IDS[i]
+  // A new enemy needs a beastiary page and its own unlock key, or it can never be catalogued.
+  codexPages().push({ id: codexNewId(), cat: 'enemy', title: label, subtitle: 'Unclassified',
+                      body: '', link: 'enemy:' + n });
+  saveEdit(); renderEntities();
+}
+function addForgeBoss() {
+  const roster = forgeBosses();
+  const n = roster.length + 1, id = 'boss.custom' + n, label = 'Custom Boss ' + n;
+  EDIT.entities.push({ id, class: 'boss', label, scale: 1, bossLevel: Math.min(CFG.levels, n) });
+  codexPages().push({ id: codexNewId(), cat: 'boss', title: label, subtitle: 'Level Boss',
+                      body: '', link: 'boss:' + id });
+  saveEdit(); renderEntities();
+}
+function forgeBosses() { return (EDIT.entities || []).filter(e => e && e.class === 'boss'); }
+// Boss roster with a per-boss LEVEL selector. bossLevel is which campaign level that boss guards;
+// the shipped Praetorian/Queen keep their hardcoded slots unless a level is chosen for them.
+function renderBossRoster() {
+  const host = body.querySelector('#bossRoster'); if (!host) return;
+  const roster = forgeBosses();
+  host.innerHTML = '<div style="width:100%"><div class="hint" style="color:#f4f">BOSS ROSTER — which level each boss guards</div>' +
+    roster.map((b, i) => {
+      const lv = Number(b.bossLevel) || (b.id === 'boss.alienQueen' ? CFG.levels : (i + 1));
+      const opts = Array.from({length: CFG.levels}, (_, k) =>
+        `<option value="${k + 1}" ${lv === k + 1 ? 'selected' : ''}>LEVEL ${k + 1}</option>`).join('');
+      return `<div class="row" style="gap:8px"><b style="color:#f9f;min-width:150px">${forgeEsc(b.label)}</b>
+        <select data-boss-level="${b.id}">${opts}</select>
+        ${b.id.indexOf('boss.custom') === 0 ? `<button type="button" class="warn" data-boss-del="${b.id}">Delete</button>` : ''}</div>`;
+    }).join('') + '</div>';
+  host.querySelectorAll('[data-boss-level]').forEach(sel => sel.onchange = () => {
+    const row = entityById(EDIT.entities, sel.dataset.bossLevel);
+    if (row) { row.bossLevel = Number(sel.value); saveEdit(); }
+  });
+  host.querySelectorAll('[data-boss-del]').forEach(btn => btn.onclick = () => {
+    const id = btn.dataset.bossDel;
+    if (!confirm('Delete this boss from the roster?')) return;
+    const ix = EDIT.entities.findIndex(e => e && e.id === id);
+    if (ix >= 0) EDIT.entities.splice(ix, 1);
+    saveEdit(); renderEntities();
+  });
+}
 function renderEntities(){
   const classes = ['all','player','enemy','boss','hazard','vehicle','prop'];
   const rows = EDIT.entities.filter(e => entityClassFilter === 'all' || e.class === entityClassFilter);
@@ -3562,7 +3779,17 @@ function renderEntities(){
     const share = enemy >= 0 ? `<span class="pct" data-pct="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
     h += `<tr><td>${sprite}</td><th scope="row" style="color:#4ff">${forgeEsc(entity.label)}</th><td>${forgeEsc(entity.class)}</td><td>${entityNum('entities.'+ix+'.scale',0.05,'scale')}</td><td>${val('hpBase','base health')}</td><td>${val('hpLvl','health per level',0.1)}</td><td>${val('spd','speed')}</td><td>${val('r','radius')}</td><td>${val('credits','credits')}</td><td>${val('weight','spawn weight',0.5)}</td><td>${val('mass','knockback weight',0.1)}</td><td>${val('minLvl','minimum level')}</td><td>${range}</td><td>${yoff}</td><td>${attack}</td><td>${death}</td><td>${preview}</td><td>${share}</td></tr>`;
   }
-  body.innerHTML = h + '</tbody></table></div>';
+  body.innerHTML = h + `</tbody></table></div>
+    <div class="row" style="margin-top:10px">
+      <button type="button" id="entAddEnemy" style="border-color:#4ff;color:#4ff;font-weight:900">+ ADD ENEMY</button>
+      <button type="button" id="entAddBoss" style="border-color:#f4f;color:#f9f;font-weight:900">+ ADD BOSS</button>
+      <span class="hint">A new enemy gets both a registry row and a combat row (HP / speed / spawn weight / first level).
+      A new boss is added to the boss roster — set which campaign LEVEL it guards with the selector on its row.</span>
+    </div>
+    <div class="row" id="bossRoster"></div>`;
+  renderBossRoster();
+  body.querySelector('#entAddEnemy').onclick = () => addForgeEnemy();
+  body.querySelector('#entAddBoss').onclick = () => addForgeBoss();
   refreshComputed();
   const status = body.querySelector('#entityStatus'), statusText = status.textContent;
   status.textContent = ''; requestAnimationFrame(() => { status.textContent = statusText; });
@@ -3632,7 +3859,7 @@ async function applyPack(j) {
   if (j.env) { ENV_OVR = j.env;
     await replaceMedia('env:', ENV_OVR);
     for (const k in ENVIMG) delete ENVIMG[k]; }
-  // Bestiary art rides along with the pack — the page TEXT is already inside j.values.
+  // Beastiary art rides along with the pack — the page TEXT is already inside j.values.
   if (j.codex && typeof j.codex === 'object') {
     for (const k in CODEX_IMG) delete CODEX_IMG[k];
     Object.assign(CODEX_IMG, j.codex);
@@ -3994,7 +4221,7 @@ function renderTab(){
   refreshComputed();
 }
 
-// ---- BESTIARY: author/edit/delete field-guide pages, one image each ----
+// ---- BEASTIARY: author/edit/delete field-guide pages, one image each ----
 let codexSel = 0;
 function renderCodex(){
   const pages = codexPages();
@@ -4047,9 +4274,9 @@ function renderCodex(){
   };
   body.querySelector('#cxRelock').onclick = () => {
     // Wipes THIS SLOT's sightings so the unlock flow can be re-tested without erasing the save.
-    if (!confirm('Re-lock every bestiary page in save slot ' + currentSlot() + '? (progress and credits are kept)')) return;
+    if (!confirm('Re-lock every beastiary page in save slot ' + currentSlot() + '? (progress and credits are kept)')) return;
     G.meta.codexSeen = {}; save(); renderCodex(); };
-  body.querySelector('#cxReset').onclick = () => { if (!confirm('Replace ALL bestiary pages with the shipped defaults? Uploaded images are kept but may be orphaned.')) return;
+  body.querySelector('#cxReset').onclick = () => { if (!confirm('Replace ALL beastiary pages with the shipped defaults? Uploaded images are kept but may be orphaned.')) return;
     EDIT.codexPages = codexDefaults(); codexSel = 0; saveEdit(); renderCodex(); };
   if (!pg) return;
   const bind = (sel, key) => { const el = body.querySelector(sel); if (!el) return;

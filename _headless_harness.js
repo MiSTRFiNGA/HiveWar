@@ -185,6 +185,7 @@ try {
     H.update(0.1);
     const st = H.state;
     if (st === 'perk') { H.pickPerkForce(); H.G.state = H.G.boss ? 'boss' : 'play'; }
+    else if (st === 'debrief') { H.G.state = 'shop'; }   // skip the level-clear celebration
     else if (st === 'shop') { H.levelStart(); }   // auto-deploy next level
     else if (st === 'win' || st === 'dead') { console.log('reached', st, 'at level', H.G.level); break; }
     H.draw();
