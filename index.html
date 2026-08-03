@@ -3376,11 +3376,16 @@ function renderTab(){
 
 // ---- SPRITES: strip browser + per-frame paint editor with add/remove ----
 function cellW(r){ const im=r.h.img; return Math.round((im.naturalWidth||im.width)/Math.max(1,r.h.frames)); }
-// Art-only transform: redraw each animation cell into its original bounds. Runtime collision/range
+// Art-only transform: redraw each animation cell into an expanded bounding-box canvas sized to fit
+// the rotated result, so nothing is clipped (corners stay transparent). Runtime collision/range
 // values never read this canvas, so rotation cannot alter gameplay hitboxes.
 function rotateSpriteArt(degrees){ if(!work) return; pushUndo(); const frames=work._frames||1, cw=work.width/frames, ch=work.height;
-  const out=document.createElement('canvas'); out.width=work.width; out.height=ch; const g=out.getContext('2d'), rad=degrees*Math.PI/180;
-  for(let f=0;f<frames;f++){ g.save(); g.translate(f*cw+cw/2,ch/2); g.rotate(rad); g.drawImage(work,f*cw,0,cw,ch,-cw/2,-ch/2,cw,ch); g.restore(); }
+  const rad=degrees*Math.PI/180, c=Math.abs(Math.cos(rad)), s=Math.abs(Math.sin(rad));
+  // Expand each cell to its rotated bounding box so the sprite is never clipped when it swings
+  // outside the original frame bounds (e.g. a tall sprite rotated 90°).
+  const nw=Math.ceil(cw*c+ch*s), nh=Math.ceil(cw*s+ch*c);
+  const out=document.createElement('canvas'); out.width=nw*frames; out.height=nh; const g=out.getContext('2d');
+  for(let f=0;f<frames;f++){ g.save(); g.translate(f*nw+nw/2,nh/2); g.rotate(rad); g.drawImage(work,f*cw,0,cw,ch,-cw/2,-ch/2,cw,ch); g.restore(); }
   out._frames=frames; work=out; drawFrames(); drawPaint(); }
 function alphaKeySprite(hex,tolerance){ if(!work||canvasTainted(work)){alert('Alpha key needs a clean imported image; use ⇧ IMPORT PNG/GIF first.');return;} const m=/^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex); if(!m)return;
   pushUndo(); const [r,g,b]=[1,2,3].map(i=>parseInt(m[i],16)), c=document.createElement('canvas'); c.width=work.width;c.height=work.height;const x=c.getContext('2d');x.drawImage(work,0,0);const d=x.getImageData(0,0,c.width,c.height);for(let i=0;i<d.data.length;i+=4){const q=Math.hypot(d.data[i]-r,d.data[i+1]-g,d.data[i+2]-b);if(q<=tolerance)d.data[i+3]=0;}x.putImageData(d,0,0);c._frames=work._frames;work=c;drawFrames();drawPaint(); }
