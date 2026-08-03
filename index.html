@@ -565,6 +565,29 @@ function startRun(mode='campaign') {
   seed = runSeed(G.level);
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
   gates.length = 0; blastQueue.length = 0; blastDraining = false;
+  G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]};
+  // HW.8 — campaign L1 enters via startRun, not levelStart (shop deploy). Gift must spawn here too.
+  spawnEarlySquadGift();
+}
+// Free +N squad gate on level 1 inside the first ~10–15 s of scroll (HW.8).
+// Called from startRun (title → L1) and levelStart (FORGE jump / any L1 re-entry).
+function spawnEarlySquadGift() {
+  if (G.level !== 1) return;
+  // Don't double-spawn if both startRun and levelStart fire in one path.
+  if (gates.some(g => g.earlyGift && g.live)) return;
+  const earlyVal = Math.max(2, Math.min(12, Number(EDIT.earlySquadVal) || 6));
+  // Collect when y+h > H-150. Spawn off-screen above so arrival is ~12 s at scrollSpd.
+  const collectY = CFG.H - 150 - 46;
+  const targetSec = 12;
+  const earlyY = collectY - (CFG.scrollSpd || 170) * targetSec;
+  const pairId = ++gatePairSeq;
+  gates.push({
+    lane: 'L', y: earlyY, h: 46, kind: 'add', val: earlyVal, wpnId: null, weapon2: null,
+    shot: 0, need: BAL.gates.hpStepPlus(1), live: true, locked: false, pairId, spent: false,
+    earlyGift: true,
+  });
+  // Hold the procedural barrier timer so the free gift is the first wall the player meets.
+  gateT = Math.max(gateT, targetSec + 4);
 }
 function nextLevel() {
   // every arrival here follows a boss kill (bossKillT counts down to 0 before nextLevel() runs) —
@@ -615,18 +638,8 @@ function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT
   rollers.length = 0; G.rollT = 5;
   // HW.5 — if a prior level left Ion equipped before it's unlocked, step down.
   G.weapon = clampWeaponToLevel(G.weapon, G.level);
-  // HW.8 — early squad ramp on level 1: a free +N gate arrives inside the first ~12 s
-  // so a one-soldier start can grow before the first random barrier pair.
-  if (G.level === 1) {
-    const earlyVal = Math.max(2, Math.min(12, Number(EDIT.earlySquadVal) || 6));
-    const earlyY = CFG.H * 0.42;   // already on-screen, ~10–15 s of scroll from horizon path
-    const pairId = ++gatePairSeq;
-    gates.push({
-      lane: 'L', y: earlyY, h: 46, kind: 'add', val: earlyVal, wpnId: null, weapon2: null,
-      shot: 0, need: BAL.gates.hpStepPlus(1), live: true, locked: false, pairId, spent: false,
-      earlyGift: true,
-    });
-  }
+  // HW.8 — early squad ramp on level 1 (also spawned from startRun for campaign open)
+  spawnEarlySquadGift();
   // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
   // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
   // (the same accuracy guard pickRandomWeapon always enforced there) since carrying one into that
