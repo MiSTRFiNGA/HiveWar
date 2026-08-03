@@ -5,6 +5,44 @@ Eric's request). `GAME_VERSION` in `index.html`, `sw.js` `CACHE_VERSION = 'v14'`
 Signed APK: `Desktop\My Games\_APKs\HiveWar-0.2.5beta.apk` (25.5 MB).
 Rebuild: `powershell -File D:\Dev\_mobile/build_apk.ps1 -Game HiveWar -Version 0.2.5beta`
 
+## HW.20 / HW.21 — 2026-08-03 combat pass
+- **Two new weapons** (ladder is now 8): **Rail Gun** (slot 6, `minLvl 3`) — single piercing slug
+  wrapped in a live electric bolt; **Rocket Launcher** (slot 7, `minLvl 4`) — contact-detonating
+  warheads that reuse the tank-shell blast path. `WEAPON_LAST = 7`.
+  ⚠️ A rocket sets `b.grenade` (detonation) **and** `b.rocketArt` — the renderer's grenade branch
+  is for TANK shells only, so without `rocketArt` a rocket draws as a fireball.
+- **Flamethrower now hurts bosses.** Its damage budget lives in the burn DoT and burn was only ever
+  applied to pooled enemies, so the gun did nothing to a boss. Bosses now ignite and tick.
+- **AoE reaches the boss** — every splash weapon used to miss it because `aoe()` only walked the
+  enemy pool.
+- **Power-stacking fix.** Squad size multiplied damage LINEARLY on top of meta damage, soldier tier,
+  weapon tier, perks and `dmgMul` — five multiplicative stacks. Now:
+  - `squadPower(n)` soft curve (`EDIT.player.squadDmgSoft` 24, `squadDmgExp` 0.72) — 400 troops
+    contribute ~95 instead of 400. Set the exponent to 1 to restore the old behaviour.
+  - `EDIT.bossDefense` — `perHitCapPct` (1.5% of max HP per projectile), **`maxPctPerSec` (8%)**
+    leaky-bucket DPS ceiling, `dr`, `burnMul`. The DPS ceiling is the real anti-melt lever: it puts
+    a **12.5 s floor** on any boss fight no matter what is stacked. Verified: 500 hits of 1e9 damage
+    removed only 12% of the boss's health.
+  - All of it is FORGE-editable, so balance is tunable without a code change.
+- **Death shatter** — enemies burst into particles tinted from their own sprite (`shatter()`),
+  after the FORGE `Die` strip finishes if one is authored, otherwise immediately. Sampling uses
+  `getImageData`, which throws on a tainted canvas over `file://` — hence the palette fallback.
+- **BESTIARY tab** (FORGE tab index 9). Add/edit/delete field-guide pages across
+  enemy/boss/weapon/vehicle/item/player/lore, one uploaded image each. Page TEXT lives in
+  `EDIT.codexPages` (so it travels in a `.hivepack`); IMAGES live in IndexedDB under `codex:`
+  alongside the sprite library, and ride along in the pack as `pack.codex`.
+  ⚠️ `saveCodexMedia` must stay INSIDE the FORGE closure — `queueMedia`/`mediaPut`/`dataBlob`
+  are scoped there.
+
+### QA scripts added
+```bash
+python -m http.server 8791          # serve first — the FORGE is disabled under ?telemetry=1
+python qa/_forge_bestiary_check.py  # bestiary CRUD + image upload + reload persistence
+python qa/_shot_hw20.py             # weapon screenshots -> Desktop\Tests\hivewar_hw20
+```
+⚠️ Ports 8791/8792 may already be held by a stale server from another game (8792 was serving
+`D:\Dev\ZombieWaves` on 2026-08-03) — `curl` the port before trusting a test result.
+
 Single-file web game: `D:\Dev\HiveWar\index.html`. Cyberpunk swarm-shooter (Bone Crush follow-up).
 Launch: **`Launch HiVE War.bat`** (starts a local http server + opens browser — `file://` breaks
 the `?v=` sprite URLs). Desktop shortcut: `Desktop\My Apps\HiVE Swarm.lnk` (not yet renamed —

@@ -155,6 +155,18 @@ const WEAPONS = [
   {name:'Flamethrower',rof:16,   dmg: 0.22, n:3, spread:0.62, col:'#f93',
    sfx:'grenade',     sfxRate:0.55, sfxVol:.16, sfxMinGap:0.10,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
    spd:0.45, life:0.42, burn:2.4},
+  // HW.20 (owner request 2026-08-03) — two new gates at the top of the ladder.
+  // RAIL GUN: a single hyper-velocity slug that PIERCES the whole column. Low rate, high per-hit
+  // damage, no fan. `arc:1` turns on the electric bolt that wraps around the slug as it flies
+  // ("rail gun needs an electric bolt wrapping around it as it shoots").
+  {name:'Rail Gun',    rof: 1.6,  dmg: 6.5, n:1, spread:0,    col:'#9df',
+   sfx:'lightning02', sfxRate:0.75, sfxVol:.30, sfxMinGap:0.05,  shape:'rail',   len:40, wid:5,  minLvl:3, recoil:34,
+   pierce:true, arc:1, spd:1.35},
+  // ROCKET LAUNCHER: slow arcing warheads that detonate on contact for splash. Reuses the tank
+  // shell's detonation path (b.grenade), so it inherits the blast, shake and lane clamp.
+  {name:'Rocket Launcher', rof: 1.1, dmg: 9.0, n:1, spread:0.06, col:'#fc6',
+   sfx:'grenade',     sfxRate:0.80, sfxVol:.30, sfxMinGap:0.08,  shape:'rocket', len:34, wid:5,  minLvl:4, recoil:55,
+   rocket:true, aoe:95, spd:0.72},
 ];
 // HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
 function weaponAllowed(i, lvl) {
@@ -176,8 +188,17 @@ function clampWeaponToLevel(i, lvl) {
 // randomly rerolling, and now also persistently upgrade.
 // Both start at tier 1 = multiplier 1.0 exactly, so baseline balance (incl. the CG KPI tune
 // and Queen kill-time) is unchanged until the player actually buys a tier in the shop.
-const WEAPON_LAST = 5;   // highest WEAPONS index — was hardcoded as 4 all over before the Flamethrower
+const WEAPON_LAST = 7;   // highest WEAPONS index — bump whenever WEAPONS grows (Rail Gun + Rocket Launcher, HW.20)
 const SOLDIER_TIER_MAX = 5, WEAPON_TIER_MAX = 5, TIER_MULT_STEP = 0.12;   // +12%/tier, modest per SHOP economy notes
+// Damage-side squad contribution. Squad COUNT still scales bullets/coverage/survivability
+// linearly — this only softens the DAMAGE stack (see the HW.21 note on EDIT.player).
+function squadPower(n) {
+  n = Math.max(1, Number(n) || 1);
+  const soft = Math.max(1, Number(EDIT && EDIT.player && EDIT.player.squadDmgSoft) || 24);
+  const exp  = Number(EDIT && EDIT.player && EDIT.player.squadDmgExp);
+  const e    = Number.isFinite(exp) && exp > 0 ? exp : 0.72;
+  return n <= soft ? n : soft + Math.pow(n - soft, e);
+}
 function soldierTierMult(t) { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_STEP; }
 function weaponTierMult(t)  { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_STEP; }
 // visual read so a higher-tier soldier is never an invisible stat: ring/insignia colour
@@ -268,7 +289,23 @@ function editDefaults() { return {
   // Owner request 2026-08-02: on a phone the thumb covers the bottom of the screen, so this needs to
   // be dialled per-device. The melee/latch lines follow it, so raising the squad does not change the
   // distance at which enemies bite — only where the fight happens on screen.
-  player: { rofMul: 1, dmgMul: 1, armor: 0, bottomOffset: 192 },   // 192 = 0.80 down the 960 playfield (owner default 2026-08-03)
+  // HW.21 (owner bug report 2026-08-03: "even at 30000 health, level 6, after all powerups he was
+  // dead in seconds"). Squad size used to multiply bullet damage LINEARLY, on top of meta damage
+  // (+8%/level), soldier tier (+12%/tier), weapon tier (+12%/tier), perks and the FORGE dmgMul —
+  // five multiplicative stacks against a boss with a flat HP number, so a late-run squad deleted
+  // every guardian on contact. Squad now contributes on a soft curve:
+  //   contribution = squadDmgSoft + (squad - squadDmgSoft) ^ squadDmgExp
+  // i.e. the first ~24 troops pay full price and everything above them has diminishing returns.
+  // Set squadDmgExp back to 1 in the FORGE to restore the old linear behaviour.
+  player: { rofMul: 1, dmgMul: 1, armor: 0, bottomOffset: 192, squadDmgSoft: 24, squadDmgExp: 0.72 },   // 192 = 0.80 down the 960 playfield (owner default 2026-08-03)
+  // Boss mitigation. perHitCapPct caps how much of a boss's MAX hp any single projectile can take,
+  // which is what stops one charged Ion round or a rocket from erasing a phase; dr scales all boss
+  // damage; burnMul scales flamethrower damage-over-time against bosses specifically.
+  // maxPctPerSec is the real anti-melt lever: a boss can never lose more than this % of its max HP
+  // per second no matter how much DPS is stacked against it, so the FIGHT has a floor length
+  // (8%/s => 12.5s minimum) instead of evaporating the instant a maxed squad opens up. Overflow
+  // damage is discarded, which is why the damage numbers shrink while you are over the ceiling.
+  bossDefense: { perHitCapPct: 1.5, maxPctPerSec: 8, dr: 1, burnMul: 1 },
   // ---- WORLD / perspective (owner request 2026-08-02: "extend the path further back into the
   // distance so the spawn point is further back — they appear too fast") ----
   //   horizonPct   fraction of screen height where the vanishing point sits. LOWER = horizon higher
@@ -864,8 +901,8 @@ function fire(dt) {
     b.vis = true; b.pierce = true; b._hit = new Set();   // fresh per shot; cleared on release
     // The Ion Cannon remains one focused beam, but carries the full squad volley's damage.
     // The 1/2/3 ladder limits visible projectiles, never the soldiers contributing to DPS.
-    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * G.squad * EDIT.player.dmgMul * tierDmgMult;
-    b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false;
+    b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * squadPower(G.squad) * EDIT.player.dmgMul * tierDmgMult;
+    b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false; b.laneKeep = false; b.arc = 0; b.rocketArt = false;
     return;
   }
   // HW.18 — LANES and PELLETS are separate axes again. The old code set `pellets = cols`, which
@@ -893,8 +930,12 @@ function fire(dt) {
       b.vis = true;
       // Each visual bolt represents an equal share of the squad, so adding lanes/pellets spreads
       // coverage without inflating total DPS.
-      b.dmg = w.dmg * G.squad / total * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
-      b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
+      b.dmg = w.dmg * squadPower(G.squad) / total * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
+      b.r = 3 + w.dmg; b.purple = false;
+      // Pooled bullets MUST have every flag rewritten, never just the ones this weapon uses.
+      b.aoe = w.aoe || 0; b.grenade = !!w.rocket; b.laneKeep = !!w.rocket; b.rocketArt = !!w.rocket;
+      b.pierce = !!w.pierce; if (b.pierce) b._hit = new Set(); else b._hit = null;
+      b.arc = w.arc || 0;
       // life > 0 = a RANGE-LIMITED projectile (flamethrower). Pooled objects must always be reset:
       // leaving a stale life on a recycled bullet would make normal bolts vanish mid-flight.
       b.life = w.life || 0; b.burn = w.burn || 0;
@@ -912,7 +953,7 @@ function perkWeapons(dt) {
         const a = G.t * 2.6 + i * 6.283 / drones;              // EXACT same orbit as the drawn drones
         b.x = G.px + Math.cos(a) * 82; b.y = CFG.H - 55 + Math.sin(a) * 34;
         b.vx = Math.sin(a) * 45; b.vy = -720; b.dmg = 2.2 + 1.2 * (G.perks['Drone Escort'] || 0);
-        b.r = 4; b.tier = Math.min(WEAPON_LAST, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true;
+        b.r = 4; b.tier = Math.min(WEAPON_LAST, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true; b.rocketArt = false;
         b.pierce = false;                                      // pooled — never inherit a beam's pierce flag
         b.purple = true;                                       // drone shots are PURPLE plasma
       }
@@ -961,7 +1002,7 @@ function vehicleUpdate(dt) {
       const targetX = CFG.W / 2 + lane * Math.max(0, roadHalfWidthAtY(cutoff) - b.r);
       const travel = Math.max(0.1, (b.y - cutoff) / -b.vy);
       b.vx = (targetX - b.x) / travel;
-      b.dmg = 30 + rank*16; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false;
+      b.dmg = 30 + rank*16; b.tier = 4; b.aoe = 90 + rank*12; b.grenade = true; b.purple = false; b.pierce = false; b.rocketArt = false;
       b.laneKeep = true; } }
 }
 function grenadeBlast(b) {                 // heavy shell detonation: big fiery explosion + AOE + shake
@@ -1018,7 +1059,7 @@ function spawnBoss() {
   if (EDIT.bossMusic[G.level - 1]) AUDIO.music(EDIT.bossMusic[G.level - 1]);   // boss track takes over if one is set
   G.boss = { x: CFG.W/2, y: -140,
              hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? EDIT.queen.p1 + EDIT.queen.p2 + EDIT.queen.p3 : EDIT.bossHp[G.level - 1]),
-             maxhp: 0, phase: 0, t: 0, queen, eggT: 0, landed: false, fall: 0 };
+             maxhp: 0, phase: 0, t: 0, queen, eggT: 0, landed: false, fall: 0, burnT: 0, burnDps: 0, dmgBucket: NaN };
   G.boss.maxhp = G.boss.hp;
 }
 // ---- KNOCKBACK (owner request 2026-08-02) ----
@@ -1064,15 +1105,44 @@ function damageEnemy(e, dmg, x, y) {
     gore(e.x, e.y, e.kind);
     const dieA = XANIM[e.kind+':Die'];                // FORGE-authored death anim (optional)
     if (dieA && dieA.img.ok && deathFx.length < 40) deathFx.push({ x:e.x, y:e.y, kind:e.kind, r:e.r, t:0 });
+    // Shatter: with a Die strip it fires when that strip FINISHES (see drawDeathFx), otherwise now.
+    else shatter(e.x, e.y, e.kind, e.r);
     if (e.kind === 2) queueBlast(e.x, e.y, 55, 6);    // cyber-mutant explodes (queued: chains iterate, never recurse)
     if (rng() < 0.20) { const p = pickups.alloc(); if (p) { p.x = e.x; p.y = e.y; p.kind = rng() < 0.5 ? 0 : 1; } }  // 50% money orbs (coin sfx audible)
     enemies.release(e);
   }
 }
+// Single funnel for every point of damage a boss takes, so mitigation can't be bypassed by
+// whichever code path happens to be shooting (bullets, blasts, burn, perks).
+function bossHit(dmg, x, y) {
+  const B = G.boss; if (!B || B.dead) return;
+  const D = (EDIT && EDIT.bossDefense) || {};
+  const dr = Number.isFinite(D.dr) && D.dr > 0 ? D.dr : 1;
+  let d = Math.max(0, dmg) * dr;
+  // Per-hit ceiling as a % of the boss's own max HP: burst spikes get clipped, sustained DPS
+  // doesn't. This is what turns a boss from a 3-second delete into a fight.
+  const capPct = Number.isFinite(D.perHitCapPct) ? D.perHitCapPct : 1.5;
+  if (capPct > 0 && B.maxhp > 0) d = Math.min(d, B.maxhp * capPct / 100);
+  // leaky-bucket DPS ceiling (refilled in bossUpdate)
+  const pps = Number.isFinite(D.maxPctPerSec) ? D.maxPctPerSec : 8;
+  if (pps > 0 && B.maxhp > 0) {
+    if (!Number.isFinite(B.dmgBucket)) B.dmgBucket = B.maxhp * pps / 100 * 1.5;
+    d = Math.min(d, B.dmgBucket);
+    B.dmgBucket -= d;
+  }
+  if (d <= 0) return;
+  B.hp -= d;
+  if (x !== undefined) dmgnum(x, y, Math.round(d));
+  if (B.hp <= 0) bossKill();
+}
 function aoe(x, y, r, dmg) {
   boom(x, y, Math.min(1.2, 0.5 + r / 90));   // colored ember burst scaled to blast radius
   AUDIO.sample('explosion');
   enemies.each(e => { const dx = e.x - x, dy = e.y - y; if (dx*dx + dy*dy < r*r) damageEnemy(e, dmg, e.x, e.y); });
+  // Splash weapons (rockets, tank shells, cyber-mutant chains) now bite the boss as well — it used
+  // to be immune to every AoE in the game because this only ever iterated the enemy pool.
+  if (G.boss && !G.boss.dead) { const bx = G.boss.x - x, by = G.boss.y - y;
+    if (bx*bx + by*by < (r + 90) * (r + 90)) bossHit(dmg * 0.55, G.boss.x, G.boss.y - 20); }
 }
 // Chain explosions (clustered cyber-mutants) are drained in a flat loop so a dense
 // cluster can never blow the call stack — the level-2 freeze was unbounded recursion here.
@@ -1120,6 +1190,52 @@ function gore(x, y, kind) {
   }
   // NOTE: no per-kill screen shake — with a dense swarm that pinned the screen shaking
   // constantly. Shake is reserved for big beats only (nuke, boss hits, boss kill).
+}
+// ---- SHATTER (owner request 2026-08-03: "can the enemies explode into particles? the sprites be
+// blown into tiny particles after their death animation") ----
+// The chunks are tinted from the enemy's OWN sprite, so a xenoid sprays xenoid colours and a
+// cyber-mutant sprays its metal — it reads as the sprite coming apart rather than a generic puff.
+// Sampling needs getImageData, which THROWS on a tainted canvas (see the file:// trap in
+// reference_hivewar_dev_traps) — hence the try/catch and the flat-colour fallback.
+const SHATTER_COLS = {};                       // kind -> sampled palette, built once per enemy kind
+function shatterPalette(kind) {
+  if (SHATTER_COLS[kind]) return SHATTER_COLS[kind];
+  const fallback = kind === 0 ? ['#4f5','#7fa','#2c3'] : ['#9ab','#cde','#68a','#456'];
+  let pal = fallback;
+  const w = XANIM[kind+':Walk'], a = (w && w.img.ok) ? w : ANIM[kind];
+  if (a && a.img && a.img.ok) {
+    try {
+      const cs = a.img.height, c = document.createElement('canvas');
+      c.width = c.height = 24;
+      const g = c.getContext('2d', {willReadFrequently:true});
+      g.drawImage(a.img, 0, 0, cs, cs, 0, 0, 24, 24);
+      const d = g.getImageData(0, 0, 24, 24).data, out = [];
+      for (let i = 0; i < d.length && out.length < 12; i += 4 * 7) {
+        if (d[i+3] < 140) continue;              // skip transparent padding
+        out.push('rgb(' + d[i] + ',' + d[i+1] + ',' + d[i+2] + ')');
+      }
+      if (out.length >= 3) pal = out;
+    } catch (e) { /* tainted canvas (file://) — keep the fallback palette */ }
+  }
+  SHATTER_COLS[kind] = pal;
+  return pal;
+}
+function shatter(x, y, kind, r) {
+  const pal = shatterPalette(kind), n = Math.min(26, 12 + Math.round((r || 16) * 0.5));
+  for (let i = 0; i < n; i++) {
+    const s = splats.alloc(); if (!s) return;
+    const ang = rng() * 6.283, spd = rr(40, 210);
+    s.x = x + rr(-r * .4, r * .4); s.y = y + rr(-r * .4, r * .4);
+    s.vx = Math.cos(ang) * spd; s.vy = Math.sin(ang) * spd - 40;   // slight upward bias — it BLOWS apart
+    s.r = rr(0.9, 2.6); s.a = 1; s.red = false; s.spark = false;
+    s._col = pal[(rng() * pal.length) | 0]; s.fade = rr(0.9, 1.8);
+  }
+  // a couple of bright embers on top so the burst has a spark of energy in it
+  for (let i = 0; i < 3; i++) {
+    const s = splats.alloc(); if (!s) return;
+    s.x = x; s.y = y; s.vx = rr(-70, 70); s.vy = rr(-90, 10); s.r = rr(1.2, 2.2);
+    s.a = 1; s.red = false; s.spark = true; s._col = '#ffd88a'; s.fade = 2.2;
+  }
 }
 function fx(x, y, col) { for (let i = 0; i < 10; i++) { const s = splats.alloc(); if (!s) return;
   s.x = x; s.y = y; s.vx = rr(-160,160); s.vy = rr(-160,160); s.r = rr(1.5,3.5); s.a = 1; s.red = false; s.spark = false; s.fade = 1.4; s._col = col; } }
@@ -1337,8 +1453,14 @@ function update(dt) {
       gateHit(g, b.dmg); bullets.release(b); return;
     } }
     if (G.boss && !G.boss.dead && b.y < G.boss.y + 90 && Math.abs(b.x - G.boss.x) < 110) {
-      G.boss.hp -= b.dmg; dmgnum(b.x, b.y, Math.round(b.dmg)); bullets.release(b);
-      if (G.boss.hp <= 0) bossKill();
+      // Rockets detonate on the boss so the splash reads (and so they can't be a free direct hit
+      // that skips their own blast). Flame puffs IGNITE the boss instead of tickling it — before
+      // HW.21 the Flamethrower's whole damage budget lived in its burn DoT, and burn was only ever
+      // applied to regular enemies, so the gun did literally nothing to a boss (owner bug report).
+      if (b.burn > 0) { G.boss.burnT = Math.max(G.boss.burnT || 0, 2.2); G.boss.burnDps = b.burn; }
+      bossHit(b.dmg, b.x, b.y);
+      if (b.grenade) { grenadeBlast(b); }
+      bullets.release(b);
       return;
     }
   });
@@ -1487,6 +1609,22 @@ function bossUpdate(dt) {
   const B = G.boss; if (!B) return;
   if (B.dead) return;
   B.t += dt;
+  {   // refill the boss damage bucket (see bossHit)
+    const D = (EDIT && EDIT.bossDefense) || {}, pps = Number.isFinite(D.maxPctPerSec) ? D.maxPctPerSec : 8;
+    if (pps > 0 && B.maxhp > 0) {
+      const cps = B.maxhp * pps / 100;
+      B.dmgBucket = Math.min((Number.isFinite(B.dmgBucket) ? B.dmgBucket : cps * 1.5) + cps * dt, cps * 1.5);
+    }
+  }
+  // Flamethrower burn on a boss. Scaled by squadPower like the enemy DoT, then run through the
+  // same mitigation funnel; embers are drawn so you can see he's actually alight.
+  if (B.burnT > 0) {
+    B.burnT -= dt;
+    const mul = Number.isFinite(EDIT.bossDefense && EDIT.bossDefense.burnMul) ? EDIT.bossDefense.burnMul : 1;
+    bossHit(dt * (B.burnDps || 2.4) * squadPower(G.squad) * 0.06 * mul);
+    if (rng() < 0.6) fx(B.x + rr(-70, 70), B.y + rr(-40, 50), rng() < 0.5 ? '#f83' : '#fd5');
+    if (B.dead) return;
+  }
   // ENTRANCE (owner request 2026-07-31): he DROPS onto the path rather than gliding down, then
   // slams to a stop — heavy screen shake + hit-stop + impact cue. Landing also freezes the corridor
   // scroll (see G.scrollT) so the arena stops moving for the fight.
@@ -1752,6 +1890,27 @@ const deathFx = [];                            // one-shot 'Die' strip playbacks
 // _sideL.png / _sideR.png (left + right wall tiles). Missing files are simply ignored — neon
 // default stays. Legacy single _side.png still works: both walls fall back to it.
 const ENVIMG = {};
+// ---- BESTIARY / CODEX pages (owner request 2026-08-03: "add a bestiary tab so I can edit and add
+// pages ... each page relates to an enemy, item, weapon, tank, boss, player, so let me upload images").
+// TEXT lives in EDIT (so it travels inside a .hivepack like every other authored value); IMAGES live
+// in IndexedDB under the `codex:` prefix, because a handful of PNGs as dataURLs would blow
+// localStorage's ~5 MB quota the way the sprite library used to.
+const CODEX_CATS = ['enemy','boss','weapon','vehicle','item','player','lore'];
+const CODEX_IMG = {};                           // pageId -> dataURL, hydrated from IndexedDB
+function codexDefaults() {
+  const pages = [];
+  let n = 0; const mk = (cat, title, subtitle, bodyTxt) =>
+    pages.push({ id: 'cx' + (++n), cat, title, subtitle, body: bodyTxt });
+  CODEX.forEach(t => mk('enemy', t.name, t.cls, t.tip));
+  mk('boss', 'Hive Guardian', 'Level Boss', 'A guardian closes out every level. Splash damage and sustained fire both land on it now; burst damage is capped, so a fight cannot be skipped by dumping one huge volley.');
+  mk('boss', 'Alien Queen', 'Final Boss', 'Three phases, each with its own health pool. Kill her to unlock endless mode.');
+  WEAPONS.forEach(w => mk('weapon', w.name, 'Weapon', ''));
+  mk('vehicle', 'Escort Tank', 'Vehicle', 'Flanks the squad and lobs shells that detonate at the front line.');
+  mk('player', 'Squad Trooper', 'Player', 'Squad size drives coverage and survival. Damage from squad size is on a soft curve, so quality upgrades (soldier tier, weapon tier) matter at high counts.');
+  return pages;
+}
+function codexPages() { if (!Array.isArray(EDIT.codexPages)) EDIT.codexPages = codexDefaults(); return EDIT.codexPages; }
+function codexNewId() { let i = 1; const used = new Set(codexPages().map(p => p.id)); while (used.has('cx' + i)) i++; return 'cx' + i; }
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
 let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
 const BG_ZOOM_START = 1.0, BG_ZOOM_MAX = 1.5;   // Eric ruling 2026-08-03: 100% -> 150% across the level (was 200%, too aggressive)
@@ -1909,7 +2068,7 @@ function drawDeathFx(dt){                      // FORGE 'Die' anims: play once, 
     if (!a || !a.img.ok) { deathFx.splice(i, 1); continue; }
     d.t += dt;
     const f = Math.floor(d.t * a.fps);
-    if (f >= a.frames) { deathFx.splice(i, 1); continue; }
+    if (f >= a.frames) { shatter(d.x, d.y, d.kind, d.r); deathFx.splice(i, 1); continue; }
     const cs = a.img.height, size = d.r * 3.0;
     cx.drawImage(a.img, f*cs, 0, cs, cs, d.x - size/2, d.y - size/2, size, size);
   }
@@ -2303,7 +2462,9 @@ function draw() {
   // bullets
   cx.save();cx.globalCompositeOperation='lighter';
   bullets.each(b => {
-    if (b.grenade) {                                  // heavy tank shell: glowing orb + smoke trail
+    // b.grenade means "detonates on impact", which the Rocket Launcher reuses — but a rocket must
+    // still draw as a rocket, so only TANK shells take this fireball branch.
+    if (b.grenade && !b.rocketArt) {                  // heavy tank shell: glowing orb + smoke trail
       cx.fillStyle = '#fb4'; cx.shadowColor = '#f70'; cx.shadowBlur = 16;
       cx.beginPath(); cx.arc(b.x, b.y, b.r, 0, 7); cx.fill();
       cx.fillStyle = 'rgba(255,180,60,.35)'; cx.beginPath(); cx.arc(b.x, b.y + 14, b.r * 1.3, 0, 7); cx.fill();
@@ -2333,6 +2494,56 @@ function draw() {
         cx.globalAlpha = 0.30 + 0.55 * life;
         cx.fillStyle = '#fd6'; cx.beginPath(); cx.arc(b.x, b.y, wid * grow * 0.32, 0, 7); cx.fill();      // hot core
         if (life > 0.7) { cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(b.x, b.y, wid * 0.16, 0, 7); cx.fill(); }
+        cx.restore();
+        break;
+      }
+      case 'rail': {                                    // Rail Gun: hyper-velocity slug wrapped in a live
+        // electric bolt (owner spec 2026-08-03). The arc is a sine ribbon rebuilt every frame around
+        // the slug's own axis, so it visibly crawls//spirals along the shot instead of sitting still.
+        const px = -ny, py = nx;                        // unit normal to the flight direction
+        cx.save();
+        cx.strokeStyle = col; cx.shadowColor = col; cx.shadowBlur = 18; cx.lineWidth = wid;
+        cx.beginPath(); cx.moveTo(b.x, b.y + len * .6); cx.lineTo(b.x + nx * len, b.y + ny * len); cx.stroke();
+        cx.strokeStyle = '#fff'; cx.shadowBlur = 10; cx.lineWidth = wid * .38;
+        cx.beginPath(); cx.moveTo(b.x, b.y + len * .5); cx.lineTo(b.x + nx * len, b.y + ny * len); cx.stroke();
+        if (b.arc) {                                    // the wrapping bolt — two out-of-phase ribbons
+          const segs = 9, amp = wid * 1.9, phase = G.t * 26 + b.y * 0.05;
+          cx.shadowColor = '#cfefff'; cx.shadowBlur = 12; cx.lineWidth = 1.6;
+          for (let k = 0; k < 2; k++) {
+            cx.strokeStyle = k ? 'rgba(180,230,255,.75)' : 'rgba(255,255,255,.9)';
+            cx.beginPath();
+            for (let i = 0; i <= segs; i++) {
+              const t = i / segs, along = len * .7 - t * len * 1.5;
+              const wob = Math.sin(phase + t * 7.5 + k * 3.14) * amp * (0.45 + 0.55 * Math.sin(t * 3.14));
+              const X = b.x + nx * along + px * wob, Y = b.y + ny * along + py * wob + (1 - t) * len * .3;
+              i ? cx.lineTo(X, Y) : cx.moveTo(X, Y);
+            }
+            cx.stroke();
+          }
+        }
+        cx.restore();
+        break;
+      }
+      case 'rocket': {                                  // Rocket Launcher: warhead + exhaust plume
+        cx.save();
+        cx.strokeStyle = 'rgba(220,220,225,.35)';       // smoke trail
+        cx.lineWidth = wid * .9; cx.beginPath();
+        cx.moveTo(b.x, b.y + len * 1.6); cx.lineTo(b.x, b.y + len * .5); cx.stroke();
+        // Body first, exhaust on top of its tail — drawing the plume first (and fat) buried the
+        // missile inside a blob of light and it read as a fireball, not a rocket.
+        const tx = b.x + nx * len * .55, ty = b.y + ny * len * .55;   // nose
+        cx.strokeStyle = col; cx.shadowColor = col; cx.shadowBlur = 5;
+        cx.lineWidth = wid * .85; cx.lineCap = 'round';
+        cx.beginPath(); cx.moveTo(b.x, b.y + len * .5); cx.lineTo(tx, ty); cx.stroke();
+        cx.strokeStyle = 'rgba(90,70,50,.9)'; cx.shadowBlur = 0; cx.lineWidth = 1.6;   // fins
+        cx.beginPath();
+        cx.moveTo(b.x - wid * .8, b.y + len * .58); cx.lineTo(b.x + wid * .8, b.y + len * .58); cx.stroke();
+        cx.fillStyle = '#fff2d8'; cx.shadowColor = col; cx.shadowBlur = 8;             // nose cone
+        cx.beginPath(); cx.arc(tx, ty, wid * .42, 0, 7); cx.fill();
+        cx.globalCompositeOperation = 'lighter';        // tight exhaust flare behind the tail
+        cx.shadowBlur = 0;
+        cx.fillStyle = '#f95'; cx.beginPath(); cx.arc(b.x, b.y + len * .66, wid * .42, 0, 7); cx.fill();
+        cx.fillStyle = '#fe8'; cx.beginPath(); cx.arc(b.x, b.y + len * .60, wid * .22, 0, 7); cx.fill();
         cx.restore();
         break;
       }
@@ -2798,7 +3009,7 @@ async function blobData(blob){ return new Promise((resolve,reject)=>{const r=new
 async function hydrateMedia(){
   const rows=await mediaAll();
   const present=new Set(rows.map(r=>r.id));
-  for(const row of rows){ const data=await blobData(row.blob); if(row.id.startsWith('sprite:')) savedSprites[row.key]={data,frames:row.frames,fps:row.fps}; else if(row.id.startsWith('env:')) ENV_OVR[row.key]=data; }
+  for(const row of rows){ const data=await blobData(row.blob); if(row.id.startsWith('sprite:')) savedSprites[row.key]={data,frames:row.frames,fps:row.fps}; else if(row.id.startsWith('env:')) ENV_OVR[row.key]=data; else if(row.id.startsWith('codex:')) CODEX_IMG[row.key]=data; }
   // Migrate missing legacy records independently. Existing IDB records win, so an interrupted
   // migration is safe to retry without either losing newer art or resurrecting cleared content.
   let legacySprites=Object.assign({},savedSprites), legacyEnv=Object.assign({},ENV_OVR); const spriteWrites=[], envWrites=[];
@@ -2811,6 +3022,10 @@ async function hydrateMedia(){
   if(localStorage.getItem(ENV_KEY)!==null) localStorage.removeItem(ENV_KEY);
 }
 function saveSpriteMedia(r){ const s=savedSprites[r.key], record=s&&s.data?{key:r.key,data:s.data,frames:s.frames||1,fps:s.fps||8}:null; return queueMedia(async()=>record?mediaPut({id:'sprite:'+record.key,key:record.key,blob:await dataBlob(record.data),frames:record.frames,fps:record.fps}):mediaDel('sprite:'+r.key)); }
+// Bestiary page art. Lives beside saveSpriteMedia/saveEnvMedia because the media helpers it needs
+// (queueMedia/mediaPut/dataBlob) are all scoped to the FORGE closure.
+function saveCodexMedia(id){ const data=CODEX_IMG[id];
+  return queueMedia(async()=>data?mediaPut({id:'codex:'+id,key:id,blob:await dataBlob(data)}):mediaDel('codex:'+id)); }
 function saveEnvMedia(key){ const data=ENV_OVR[key]; return queueMedia(async()=>data?mediaPut({id:'env:'+key,key,blob:await dataBlob(data)}):mediaDel('env:'+key)); }
 function replaceMedia(prefix, entries){ return queueMedia(()=>replaceMediaNow(prefix, entries)); }
 async function replaceMediaNow(prefix, entries){
@@ -3046,7 +3261,7 @@ body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) retu
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
   setP(p, v); saveEdit(); applyEditWeapons(); applyHorizon(); refreshComputed(); });
 
-const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','BALANCE','WORLD','SPRITES','AUDIO','DATA'];
+const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','BALANCE','WORLD','SPRITES','AUDIO','DATA','BESTIARY'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false}, appliedRotation=0;
 let entityClassFilter = 'all', entityReturnId = null;
 // Crop mode. While cropBox is set the paint canvas drags the box instead of painting, and drawPaint
@@ -3250,7 +3465,7 @@ const PACK_FORMAT = 1;
 function buildPack(name, author) {
   return { hiveWarPack: PACK_FORMAT, name, author,
            gameVersion: GAME_VERSION, created: new Date().toISOString(),
-           values: EDIT, sprites: savedSprites, env: ENV_OVR };
+           values: EDIT, sprites: savedSprites, env: ENV_OVR, codex: CODEX_IMG };
 }
 async function applyPack(j) {
   if (!j || typeof j !== 'object') throw new Error('not a pack file');
@@ -3258,7 +3473,7 @@ async function applyPack(j) {
   const isPack = j.hiveWarPack !== undefined;
   if (isPack && j.hiveWarPack > PACK_FORMAT)
     throw new Error(`pack needs a newer game build (pack format ${j.hiveWarPack}, this build reads ${PACK_FORMAT})`);
-  if (!j.values && !j.sprites && !j.env) throw new Error('pack contains no content');
+  if (!j.values && !j.sprites && !j.env && !j.codex) throw new Error('pack contains no content');
   if (j.values) { EDIT = mergeEdit(editDefaults(), migrateForgeValues(j.values)); saveEdit(); applyEditWeapons(); applyHorizon(); }
   if (j.sprites) { savedSprites = j.sprites;
     await replaceMedia('sprite:', savedSprites);
@@ -3268,6 +3483,14 @@ async function applyPack(j) {
   if (j.env) { ENV_OVR = j.env;
     await replaceMedia('env:', ENV_OVR);
     for (const k in ENVIMG) delete ENVIMG[k]; }
+  // Bestiary art rides along with the pack — the page TEXT is already inside j.values.
+  if (j.codex && typeof j.codex === 'object') {
+    for (const k in CODEX_IMG) delete CODEX_IMG[k];
+    Object.assign(CODEX_IMG, j.codex);
+    await queueMedia(async () => { await mediaClearNow('codex:');
+      for (const id of Object.keys(CODEX_IMG)) { const data = CODEX_IMG[id]; if (!data) continue;
+        await mediaPut({ id: 'codex:' + id, key: id, blob: await dataBlob(data) }); } });
+  }
   const warn = (j.gameVersion && j.gameVersion !== GAME_VERSION)
     ? `Built for game v${j.gameVersion}; you are on v${GAME_VERSION}. It loaded, but some values may not line up.` : '';
   return { name: j.name || 'Unnamed pack', author: j.author || '', warn };
@@ -3573,7 +3796,7 @@ function renderTab(){
   }
   else if (tab===6) renderSprites();
   else if (tab===7){ body.innerHTML=`<div class="hint">Audio transport and default sound controls. Per-enemy and per-weapon sound choices remain in their tuning tables.</div><div class="row"><button id="audSfx">${G.meta.sfx?'SFX ON':'SFX OFF'}</button><button id="audMusic">${G.meta.music?'MUSIC ON':'MUSIC OFF'}</button><span class="hint">Current sample library: ${AUDIO.names().join(', ')}</span></div>`;body.querySelector('#audSfx').onclick=()=>{G.meta.sfx=!G.meta.sfx;AUDIO.setSfx(G.meta.sfx);save();renderTab();};body.querySelector('#audMusic').onclick=()=>{G.meta.music=!G.meta.music;AUDIO.setMusic(G.meta.music);save();renderTab();}; }
-  else { // DATA / PACKS
+  else if (tab===8){ // DATA / PACKS
     body.innerHTML = `<div class="hint" style="color:#f4f">MOD PACK — save this whole setup (values, sprites, sounds, environment art) to ONE file.
       Anyone running the same game version can load it and play your version of the content.</div>
       <div class="row">NAME <input type="text" id="pkName" style="width:190px" placeholder="My Pack" value="${(EDIT.packName||'').replace(/"/g,'&quot;')}">
@@ -3618,8 +3841,74 @@ function renderTab(){
     body.querySelector('#fRstS').onclick=()=>{ if(confirm('Discard ALL edited sprites? (reload restores originals)')){
       mediaClear('sprite:').then(()=>{savedSprites={}; location.reload();}).catch(()=>alert('Could not clear sprites from IndexedDB.')); } };
   }
+  else { renderCodex(); }
   refreshComputed();
 }
+
+// ---- BESTIARY: author/edit/delete field-guide pages, one image each ----
+let codexSel = 0;
+function renderCodex(){
+  const pages = codexPages();
+  if (codexSel >= pages.length) codexSel = Math.max(0, pages.length - 1);
+  const pg = pages[codexSel];
+  const esc = v => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  const list = pages.map((p, i) =>
+    `<button type="button" data-pick="${i}" class="${i===codexSel?'on':''}"
+       style="display:block;width:100%;text-align:left;margin:2px 0;${i===codexSel?'border-color:#4ff;color:#4ff':''}">
+       ${CODEX_ICON[p.cat] || '•'} ${esc(p.title) || '(untitled)'}</button>`).join('');
+  const img = pg ? CODEX_IMG[pg.id] : null;
+  body.innerHTML = `<div class="hint">Field guide. Every page is one entry — an enemy, boss, weapon, vehicle, item, the player,
+      or a piece of lore. Pages are saved with your values and travel inside a <b>.hivepack</b>; the uploaded
+      images live in IndexedDB alongside the sprite library.</div>
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div style="flex:0 0 210px;max-height:60vh;overflow:auto">
+        ${list || '<div class="hint">No pages yet.</div>'}
+        <button type="button" id="cxAdd" style="width:100%;margin-top:8px;border-color:#4ff;color:#4ff;font-weight:900">+ ADD PAGE</button>
+        <button type="button" class="warn" id="cxReset" style="width:100%;margin-top:4px">RESET TO DEFAULT PAGES</button>
+      </div>
+      <div style="flex:1 1 auto">${pg ? `
+        <div class="row">CATEGORY <select id="cxCat">${CODEX_CATS.map(c=>`<option value="${c}" ${c===pg.cat?'selected':''}>${c.toUpperCase()}</option>`).join('')}</select></div>
+        <div class="row">TITLE <input type="text" id="cxTitle" style="width:240px" value="${esc(pg.title)}"></div>
+        <div class="row">SUBTITLE <input type="text" id="cxSub" style="width:240px" value="${esc(pg.subtitle)}"></div>
+        <div class="row" style="align-items:flex-start">BODY
+          <textarea id="cxBody" style="width:min(560px,60vw);height:120px">${esc(pg.body)}</textarea></div>
+        <div class="row">
+          <button type="button" id="cxPick">🖼 UPLOAD IMAGE</button>
+          <button type="button" class="warn" id="cxClr" ${img?'':'disabled'}>REMOVE IMAGE</button>
+          <input type="file" id="cxFile" accept="image/*" style="display:none">
+          <span class="hint">PNG/JPG/WebP. Stored at full size — keep it under ~1 MB per page.</span></div>
+        <div class="row">${img ? `<img src="${img}" alt="" style="max-width:260px;max-height:200px;border:1px solid #245;background:#021">`
+                              : '<span class="hint">No image on this page yet.</span>'}</div>
+        <div class="row"><button type="button" class="warn" id="cxDel">DELETE THIS PAGE</button></div>`
+      : '<div class="hint">Add a page to start.</div>'}</div>
+    </div>`;
+
+  body.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { codexSel = Number(b.dataset.pick); renderCodex(); });
+  body.querySelector('#cxAdd').onclick = () => {
+    codexPages().push({ id: codexNewId(), cat: 'enemy', title: 'New Entry', subtitle: '', body: '' });
+    codexSel = codexPages().length - 1; saveEdit(); renderCodex();
+  };
+  body.querySelector('#cxReset').onclick = () => { if (!confirm('Replace ALL bestiary pages with the shipped defaults? Uploaded images are kept but may be orphaned.')) return;
+    EDIT.codexPages = codexDefaults(); codexSel = 0; saveEdit(); renderCodex(); };
+  if (!pg) return;
+  const bind = (sel, key) => { const el = body.querySelector(sel); if (!el) return;
+    el.oninput = () => { pg[key] = el.value; saveEdit(); if (key === 'title') {
+      body.querySelectorAll('[data-pick]')[codexSel].textContent = (CODEX_ICON[pg.cat] || '•') + ' ' + (pg.title || '(untitled)'); } }; };
+  bind('#cxTitle','title'); bind('#cxSub','subtitle'); bind('#cxBody','body');
+  body.querySelector('#cxCat').onchange = e => { pg.cat = e.target.value; saveEdit(); renderCodex(); };
+  body.querySelector('#cxPick').onclick = () => body.querySelector('#cxFile').click();
+  body.querySelector('#cxFile').onchange = e => { const f = e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { CODEX_IMG[pg.id] = rd.result;
+      saveCodexMedia(pg.id).then(() => renderCodex()).catch(() => alert('Could not store that image in IndexedDB.')); };
+    rd.readAsDataURL(f); };
+  body.querySelector('#cxClr').onclick = () => { delete CODEX_IMG[pg.id];
+    saveCodexMedia(pg.id).then(() => renderCodex()).catch(() => alert('Could not clear that image.')); };
+  body.querySelector('#cxDel').onclick = () => { if (!confirm('Delete the page "' + (pg.title || 'untitled') + '"?')) return;
+    delete CODEX_IMG[pg.id]; saveCodexMedia(pg.id).catch(() => {});
+    codexPages().splice(codexSel, 1); codexSel = Math.max(0, codexSel - 1); saveEdit(); renderCodex(); };
+}
+const CODEX_ICON = { enemy:'👾', boss:'💀', weapon:'🔫', vehicle:'🛡', item:'📦', player:'🎖', lore:'📖' };
 
 // ---- SPRITES: strip browser + per-frame paint editor with add/remove ----
 function cellW(r){ const im=r.h.img; return Math.round((im.naturalWidth||im.width)/Math.max(1,r.h.frames)); }
