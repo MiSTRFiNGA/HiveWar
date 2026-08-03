@@ -450,14 +450,53 @@ function levelDuration(li) { return levelLayout(li).duration; }
 // metaDefaults() is a function (not a const) so it's safe to call from G's own initializer
 // below, regardless of declaration order (function declarations hoist; consts don't).
 function metaDefaults() { return {dmg:0,squad:0,credits:0,perkSlot:0,vehicleDrop:0,endless:false,bestScore:0,sfx:true,
-  soldierTier:1,weaponTier:1,ratingAsked:false,ratingDeclined:false}; }   // tier1 = baseline multiplier 1.0; rating flags persist forever
+  soldierTier:1,weaponTier:1,ratingAsked:false,ratingDeclined:false,
+  // maxLevel = furthest campaign level reached in THIS slot; codexSeen = which bestiary pages this
+  // save has unlocked. Both are per-slot progress, so erasing a slot really does start fresh.
+  maxLevel:1, codexSeen:{}}; }   // tier1 = baseline multiplier 1.0; rating flags persist forever
+// ---- SAVE SLOTS (owner request 2026-08-03: "lets give them 3 save slots to save to, and erasing
+// them is an option so the player can delete their own save data and start fresh"). The campaign is
+// 10 levels today and is being scaled up, so a player needs to be able to keep a long campaign
+// going in one slot while starting fresh in another.
+// LEGACY_KEY is the single pre-slot save. It is migrated into slot 1 once, then left alone so a
+// downgrade to an older build still finds its progress.
+const SAVE_SLOTS = 3, LEGACY_KEY = 'hiveswarm_v1', SLOT_PICK_KEY = 'hiveswarm_slot';
+function slotKey(n) { return 'hiveswarm_v1_s' + n; }
+function currentSlot() {
+  const n = Number(localStorage.getItem(SLOT_PICK_KEY));
+  return Number.isFinite(n) && n >= 1 && n <= SAVE_SLOTS ? n : 1;
+}
+function migrateLegacySave() {
+  try {
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy && localStorage.getItem(slotKey(1)) === null) localStorage.setItem(slotKey(1), legacy);
+  } catch (e) {}
+}
+// Summary for the slot picker. Returns null for an untouched slot so it can render as EMPTY.
+function slotInfo(n) {
+  let raw = null; try { raw = localStorage.getItem(slotKey(n)); } catch (e) {}
+  if (!raw) return null;
+  try { const m = JSON.parse(raw);
+    return { level: m.maxLevel || 1, credits: m.credits || 0, endless: !!m.endless,
+             codex: m.codexSeen ? Object.keys(m.codexSeen).length : 0, best: m.bestScore || 0 };
+  } catch (e) { return null; }
+}
+function eraseSlot(n) {
+  try { localStorage.removeItem(slotKey(n)); } catch (e) {}
+  if (n === currentSlot()) { G.meta = metaDefaults(); G.credits = G.meta.credits || 0; save(); }
+}
+function useSlot(n) {
+  try { localStorage.setItem(SLOT_PICK_KEY, String(n)); } catch (e) {}
+  G.meta = load(); G.credits = G.meta.credits || 0;
+}
 function load() {
-  try { return Object.assign({}, metaDefaults(), JSON.parse(localStorage.getItem('hiveswarm_v1') || '{}')); }
+  migrateLegacySave();
+  try { return Object.assign({}, metaDefaults(), JSON.parse(localStorage.getItem(slotKey(currentSlot())) || '{}')); }
   catch(e) { return metaDefaults(); }
 }
 function save() {
   G.meta.credits = G.credits;
-  try { localStorage.setItem('hiveswarm_v1', JSON.stringify(G.meta)); } catch(e) {}
+  try { localStorage.setItem(slotKey(currentSlot()), JSON.stringify(G.meta)); } catch(e) {}
 }
 
 // ---------- input ----------
@@ -482,14 +521,27 @@ function down(e) {
   // real DOM buttons in #hud now, handled by the delegated listener beside the HUD markup.)
   if (G.paused) { G.paused = false; return; }          // tap anywhere else while paused = resume
   if (G.state === 'title') {
-    if (gy > 740 && gy < 800) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY button
-    if (G.meta.endless && gy > 610 && gy < 700) startRun('endless'); else startRun('campaign');
+    if (gy > CODEX_BTN_Y && gy < CODEX_BTN_Y + 58) { G.state = 'codex'; G.codexPage = 0; return; }   // BESTIARY
+    if (gy > SLOTS_BTN_Y && gy < SLOTS_BTN_Y + 58) { G.state = 'slots'; return; }                    // SAVE SLOTS
+    if (G.meta.endless && gy > 530 && gy < 596) startRun('endless'); else startRun('campaign');
+  }
+  else if (G.state === 'slots') {
+    if (gy < 70) { G.state = 'title'; return; }                                 // back
+    for (let i = 1; i <= SAVE_SLOTS; i++) {
+      const y = SLOT_ROW_Y + (i - 1) * SLOT_ROW_H;
+      if (gy < y || gy > y + SLOT_ROW_H - 22) continue;
+      // ERASE sits in the right-hand third of an occupied row; anywhere else selects the slot.
+      if (slotInfo(i) && dragX > CFG.W - 150 && gy < y + 52) {
+        if (confirm('Erase SLOT ' + i + '? Its campaign, credits and bestiary are deleted.')) eraseSlot(i);
+      } else useSlot(i);
+      return;
+    }
   }
   else if (G.state === 'codex') {
     if (gy < 70) { G.state = 'title'; return; }                                 // back
-    const unlocked = CODEX.map((c,i)=>i).filter(i => G.meta.codex && G.meta.codex[i]);
-    if (unlocked.length) { if (dragX < CFG.W/2) G.codexPage = (G.codexPage + unlocked.length - 1) % unlocked.length;
-                           else G.codexPage = (G.codexPage + 1) % unlocked.length; }
+    const pages = codexVisible();
+    if (pages.length) { if (dragX < CFG.W/2) G.codexPage = (G.codexPage + pages.length - 1) % pages.length;
+                        else G.codexPage = (G.codexPage + 1) % pages.length; }
   }
   else if (G.state === 'perk') pickPerk(px2game(e.touches ? e.touches[0] : e), (e.touches?e.touches[0].clientY:e.clientY));
   else if (G.state === 'shop') shopTap(e);
@@ -507,7 +559,7 @@ function botOff(e) { if (testBot && e.isTrusted) testBot = false; }
 addEventListener('mousedown', down); addEventListener('mousemove', move); addEventListener('mouseup', up);
 addEventListener('touchstart', down, {passive:true}); addEventListener('touchmove', move, {passive:true});
 addEventListener('touchend', up);
-addEventListener('keydown', e => { if (e.key === 'Escape' && G.state === 'codex') G.state = 'title'; });
+addEventListener('keydown', e => { if (e.key === 'Escape' && (G.state === 'codex' || G.state === 'slots')) G.state = 'title'; });
 
 // ---------- audio (pooled channel stub; real samples land in the audio pass) ----------
 const AUDIO = (() => {
@@ -709,7 +761,10 @@ function pickRandomWeapon(exclude, level) {
   let idx; do { idx = pool[Math.floor(rng() * pool.length)]; } while (idx === exclude);
   return idx;
 }
-function levelStart() { G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = runSeed(G.level); gates.length = 0; G.squad = startingSquad();
+function levelStart() {
+  // per-slot campaign high-water mark, so the slot picker can show real progress
+  if (G.mode === 'campaign' && G.level > (G.meta.maxLevel || 1)) { G.meta.maxLevel = G.level; save(); }
+  G.state = 'play'; G.levelT = 0; G.boss = null; G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]}; seed = runSeed(G.level); gates.length = 0; G.squad = startingSquad();
   rollers.length = 0; G.rollT = 5;
   // HW.5 — if a prior level left Ion equipped before it's unlocked, step down.
   G.weapon = clampWeaponToLevel(G.weapon, G.level);
@@ -880,6 +935,7 @@ function announce(text, col) { G.cueText = text; G.cueCol = col || '#ffd75e'; G.
 let fireT = 0;
 function fire(dt) {
   const w = WEAPONS[G.weapon];
+  if (G.weapon !== G.codexWeapon) { G.codexWeapon = G.weapon; codexSee('weapon:' + G.weapon, 0); }
   const rof = w.rof * (1 + 0.10 * (G.perks['Overclock'] || 0)) * EDIT.player.rofMul;   // FORGE fire-rate knob
   fireT -= dt;
   // Ion Cannon charge meter (owner spec 2026-07-30: "a ball grows as it charges, then a large laser
@@ -983,6 +1039,7 @@ function vehicleUpdate(dt) {
   const rank = Math.min(5, G.meta.vehicleDrop || 0); if (!rank) return;
   if (G.vehicleT <= 0) { G.vehicleCD -= dt; if (G.vehicleCD <= 0) {
     G.vehicleT = 8; G.vehicleCD = Math.max(12, 24-rank*2); G.vehicleFire = 0; sfx('drone'); AUDIO.loopTank(true);
+    codexSee('vehicle:tank', 0);
     announce('⛨ TANK INBOUND', '#fb4'); } return; }
   G.vehicleT -= dt; G.vehicleFire -= dt;
   if (G.vehicleT <= 0) AUDIO.loopTank(false);   // tanks left the field — cut the engine track
@@ -1050,11 +1107,13 @@ function spawnWave(dt) {
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
     const sc = (enemyRow(e.kind) || {}).scale; e.r = (K && K.r ? K.r : 14) * (Number.isFinite(sc) ? sc : 1);
     e.t = 0; e.acidT = 0; e.buffed = 0; e.kb = 0; e.burnT = 0; e.burnDps = 0;
+    codexSee('enemy:' + e.kind, 0);   // bestiary unlocks when you SEE it, not when you kill it
   }
 }
 function spawnBoss() {
   G.state = 'boss';
   const queen = G.level === CFG.levels, Q = BAL.queen;
+  codexSee(queen ? 'boss:queen' : 'boss:guardian', 0);
   AUDIO.sample(queen ? 'queenroar' : 'boss');
   if (EDIT.bossMusic[G.level - 1]) AUDIO.music(EDIT.bossMusic[G.level - 1]);   // boss track takes over if one is set
   G.boss = { x: CFG.W/2, y: -140,
@@ -1091,9 +1150,7 @@ function damageEnemy(e, dmg, x, y) {
   if (dmg > 0) dmgnum(x !== undefined ? x : e.x, (y !== undefined ? y : e.y) - 12, Math.round(dmg));
   if (e.hp <= 0) {
     G.kills++;
-    if (!G.meta.codex) G.meta.codex = {};              // bestiary: unlock this enemy's page on first kill
-    if (!G.meta.codex[e.kind]) { G.meta.codex[e.kind] = 0; G.newCodex = e.kind; G.newCodexT = 3; save(); }
-    G.meta.codex[e.kind]++;
+    codexSee('enemy:' + e.kind);                      // page already unlocked on sight; this counts the kill
     G.streak++; G.streakT=0.5; G.streakPeak=Math.max(G.streakPeak,G.streak);   // tighter combo window — resets in lulls
     const tiers=[10,25,50,100,250,500],bonus=[3,6,12,25,50,80];while(G.streakAward<tiers.length&&G.streak>=tiers[G.streakAward])G.credits+=bonus[G.streakAward++];
     const K = enemyRow(e.kind);
@@ -1364,6 +1421,7 @@ function update(dt) {
   G.maxSquad=Math.max(G.maxSquad,G.squad);
   if (G.shake > 0) G.shake = Math.max(0, G.shake - dt * 12);
   if (G.flashT > 0) G.flashT -= dt;
+  if (G.newCodexT > 0) G.newCodexT -= dt;   // 'NEW BESTIARY ENTRY' toast
   if (G.squadFlash > 0) G.squadFlash -= dt;
   if(G.streakT>0)G.streakT-=dt;else{G.streak=0;G.streakAward=0;}
   if(G.cueT>0)G.cueT-=dt;
@@ -1899,16 +1957,34 @@ const CODEX_CATS = ['enemy','boss','weapon','vehicle','item','player','lore'];
 const CODEX_IMG = {};                           // pageId -> dataURL, hydrated from IndexedDB
 function codexDefaults() {
   const pages = [];
-  let n = 0; const mk = (cat, title, subtitle, bodyTxt) =>
-    pages.push({ id: 'cx' + (++n), cat, title, subtitle, body: bodyTxt });
-  CODEX.forEach(t => mk('enemy', t.name, t.cls, t.tip));
-  mk('boss', 'Hive Guardian', 'Level Boss', 'A guardian closes out every level. Splash damage and sustained fire both land on it now; burst damage is capped, so a fight cannot be skipped by dumping one huge volley.');
-  mk('boss', 'Alien Queen', 'Final Boss', 'Three phases, each with its own health pool. Kill her to unlock endless mode.');
-  WEAPONS.forEach(w => mk('weapon', w.name, 'Weapon', ''));
-  mk('vehicle', 'Escort Tank', 'Vehicle', 'Flanks the squad and lobs shells that detonate at the front line.');
-  mk('player', 'Squad Trooper', 'Player', 'Squad size drives coverage and survival. Damage from squad size is on a soft curve, so quality upgrades (soldier tier, weapon tier) matter at high counts.');
+  // `link` is the UNLOCK KEY: the page stays hidden in-game until something reports that key as
+  // seen (see codexSee). '' = always visible. Editable per page on the BESTIARY tab.
+  let n = 0; const mk = (cat, title, subtitle, bodyTxt, link) =>
+    pages.push({ id: 'cx' + (++n), cat, title, subtitle, body: bodyTxt, link: link || '' });
+  CODEX.forEach((t, i) => mk('enemy', t.name, t.cls, t.tip, 'enemy:' + i));
+  mk('boss', 'Hive Guardian', 'Level Boss', 'A guardian closes out every level. Splash damage and sustained fire both land on it; burst damage is capped, so a fight cannot be skipped by dumping one huge volley.', 'boss:guardian');
+  mk('boss', 'Alien Queen', 'Final Boss', 'Three phases, each with its own health pool. Kill her to unlock endless mode.', 'boss:queen');
+  WEAPONS.forEach((w, i) => mk('weapon', w.name, 'Weapon', '', 'weapon:' + i));
+  mk('vehicle', 'Escort Tank', 'Vehicle', 'Flanks the squad and lobs shells that detonate at the front line.', 'vehicle:tank');
+  mk('player', 'Squad Trooper', 'Player', 'Squad size drives coverage and survival. Damage from squad size is on a soft curve, so quality upgrades (soldier tier, weapon tier) matter at high counts.', '');
   return pages;
 }
+// Report that the player has now SEEN something. Unlocks every page whose `link` matches, and
+// counts sightings so a page can show "n terminated". Progress is per-slot (G.meta.codexSeen), so
+// a fresh install or an erased slot starts the bestiary empty again — which is the point of it.
+function codexSee(link, count) {
+  if (!link) return;
+  if (!G.meta.codexSeen) G.meta.codexSeen = {};
+  const seen = G.meta.codexSeen, had = seen[link] !== undefined;
+  seen[link] = (seen[link] || 0) + (count === undefined ? 1 : count);
+  if (!had) {                                   // first sighting: flash the "NEW ENTRY" toast
+    const page = codexPages().find(p => p.link === link);
+    if (page) { G.newCodexTitle = page.title; G.newCodexT = 3; }
+    save();
+  }
+}
+function codexUnlocked(page) { return !page.link || (G.meta.codexSeen && G.meta.codexSeen[page.link] !== undefined); }
+function codexVisible() { return codexPages().filter(codexUnlocked); }
 function codexPages() { if (!Array.isArray(EDIT.codexPages)) EDIT.codexPages = codexDefaults(); return EDIT.codexPages; }
 function codexNewId() { let i = 1; const used = new Set(codexPages().map(p => p.id)); while (used.has('cx' + i)) i++; return 'cx' + i; }
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
@@ -2297,6 +2373,7 @@ function draw() {
   drawGear();
   if (G.state === 'title') { drawTitle(); cx.restore(); return; }
   if (G.state === 'codex') { drawCodex(); cx.restore(); return; }
+  if (G.state === 'slots') { drawSlots(); cx.restore(); return; }
   if (G.state === 'win')   { drawEndScreen(true); cx.restore(); return; }
   if (G.state === 'dead')  { drawEndScreen(false); cx.restore(); return; }
   if (G.state === 'shop')  { drawShop(); cx.restore(); return; }
@@ -2902,16 +2979,66 @@ function drawPausedOverlay(){                                           // dim +
     cx.shadowBlur=0; cx.font='16px Segoe UI'; cx.fillStyle='#cdf'; cx.fillText('tap anywhere to resume  ·  ⏏ QUIT to leave the run', CFG.W/2, 470);
     // the ▶ button is DOM (#hud .ctrls, z-index above the canvas) — it stays visible through this dim
   }
+// First-sighting toast. codexSee() sets the title + timer; this is the only place it is drawn.
+function drawCodexToast(){
+  if (!(G.newCodexT > 0) || !G.newCodexTitle) return;
+  const a = Math.min(1, G.newCodexT / 0.5);
+  cx.save(); cx.globalAlpha = a; cx.textAlign = 'center';
+  cx.fillStyle = 'rgba(60,20,90,.82)'; cx.fillRect(CFG.W/2 - 170, 96, 340, 52);
+  cx.strokeStyle = '#c6f'; cx.strokeRect(CFG.W/2 - 170, 96, 340, 52);
+  cx.fillStyle = '#e8d8ff'; cx.font = 'bold 15px Segoe UI';
+  cx.fillText('NEW BESTIARY ENTRY', CFG.W/2, 118);
+  cx.fillStyle = '#fff'; cx.font = 'bold 19px Segoe UI';
+  cx.fillText(G.newCodexTitle, CFG.W/2, 140);
+  cx.restore();
+}
 function drawTitle(){
   cx.textAlign='center';cx.fillStyle='#4ff';cx.shadowColor='#f4f';cx.shadowBlur=20;cx.font='bold 58px Segoe UI';cx.fillText('HiVE WAR',CFG.W/2,300);cx.shadowBlur=0;
   cx.fillStyle='rgba(150,200,230,.45)';cx.font='13px Segoe UI';cx.fillText('v'+GAME_VERSION,CFG.W/2,332);   // build version
   cx.fillStyle='rgba(40,255,220,.16)';cx.fillRect(85,430,CFG.W-170,80);cx.strokeStyle='#4ff';cx.strokeRect(85,430,CFG.W-170,80);
-  cx.fillStyle='#dff';cx.font='bold 24px Segoe UI';cx.fillText('CAMPAIGN',CFG.W/2,480);
-  if(G.meta.endless){cx.fillStyle='rgba(255,80,220,.16)';cx.fillRect(85,620,CFG.W-170,80);cx.strokeStyle='#f4f';cx.strokeRect(85,620,CFG.W-170,80);
-    cx.fillStyle='#fdf';cx.fillText('ENDLESS HIVE',CFG.W/2,670);cx.font='16px Segoe UI';cx.fillText('BEST '+(G.meta.bestScore||0),CFG.W/2,730);}
-  const nUnlocked = G.meta.codex ? Object.keys(G.meta.codex).length : 0;   // BESTIARY button
-  cx.fillStyle='rgba(200,120,255,.14)';cx.fillRect(85,740,CFG.W-170,58);cx.strokeStyle='#c6f';cx.strokeRect(85,740,CFG.W-170,58);
-  cx.fillStyle='#e8d8ff';cx.font='bold 20px Segoe UI';cx.fillText('📖 BESTIARY  '+nUnlocked+' / '+CODEX.length,CFG.W/2,776);
+  cx.fillStyle='#dff';cx.font='bold 24px Segoe UI';cx.fillText('CAMPAIGN',CFG.W/2,472);
+  cx.fillStyle='#7ad';cx.font='14px Segoe UI';
+  cx.fillText('SLOT '+currentSlot()+'  ·  LEVEL '+(G.meta.maxLevel||1)+' REACHED',CFG.W/2,496);
+  if(G.meta.endless){cx.fillStyle='rgba(255,80,220,.16)';cx.fillRect(85,530,CFG.W-170,66);cx.strokeStyle='#f4f';cx.strokeRect(85,530,CFG.W-170,66);
+    cx.fillStyle='#fdf';cx.font='bold 24px Segoe UI';cx.fillText('ENDLESS HIVE',CFG.W/2,565);
+    cx.font='14px Segoe UI';cx.fillText('BEST '+(G.meta.bestScore||0),CFG.W/2,586);}
+  // SAVE SLOTS button
+  cx.fillStyle='rgba(90,200,255,.13)';cx.fillRect(85,SLOTS_BTN_Y,CFG.W-170,58);cx.strokeStyle='#5cf';cx.strokeRect(85,SLOTS_BTN_Y,CFG.W-170,58);
+  cx.fillStyle='#dff';cx.font='bold 20px Segoe UI';cx.fillText('💾 SAVE SLOTS',CFG.W/2,SLOTS_BTN_Y+36);
+  // BESTIARY button - counts FORGE-authored pages THIS SLOT has unlocked
+  const pages=codexPages(), nUnlocked=codexVisible().length;
+  cx.fillStyle='rgba(200,120,255,.14)';cx.fillRect(85,CODEX_BTN_Y,CFG.W-170,58);cx.strokeStyle='#c6f';cx.strokeRect(85,CODEX_BTN_Y,CFG.W-170,58);
+  cx.fillStyle='#e8d8ff';cx.font='bold 20px Segoe UI';cx.fillText('📖 BESTIARY  '+nUnlocked+' / '+pages.length,CFG.W/2,CODEX_BTN_Y+36);
+}
+// Title-screen button rows live in one place so the draw and the hit-test can never drift apart.
+const SLOTS_BTN_Y = 672, CODEX_BTN_Y = 740;
+const SLOT_ROW_Y = 140, SLOT_ROW_H = 150;
+function drawSlots(){
+  cx.fillStyle='rgba(3,10,20,.95)';cx.fillRect(0,0,CFG.W,CFG.H);
+  cx.textAlign='center';cx.fillStyle='#5cf';cx.shadowColor='#28f';cx.shadowBlur=14;cx.font='bold 30px Segoe UI';
+  cx.fillText('SAVE SLOTS',CFG.W/2,54);cx.shadowBlur=0;
+  cx.fillStyle='rgba(255,120,120,.9)';cx.font='bold 30px Segoe UI';cx.fillText('✕',CFG.W-34,44);
+  cx.fillStyle='#89f';cx.font='14px Segoe UI';
+  cx.fillText('tap a slot to play it  ·  tap ERASE to wipe that save',CFG.W/2,84);
+  for(let i=1;i<=SAVE_SLOTS;i++){
+    const y=SLOT_ROW_Y+(i-1)*SLOT_ROW_H, info=slotInfo(i), on=i===currentSlot();
+    cx.fillStyle=on?'rgba(90,200,255,.16)':'rgba(200,220,255,.05)';cx.fillRect(40,y,CFG.W-80,SLOT_ROW_H-22);
+    cx.strokeStyle=on?'#5cf':'#345a7a';cx.strokeRect(40,y,CFG.W-80,SLOT_ROW_H-22);
+    cx.textAlign='left';cx.fillStyle=on?'#dff':'#9bd';cx.font='bold 22px Segoe UI';
+    cx.fillText('SLOT '+i+(on?'   ◄ ACTIVE':''),64,y+38);
+    cx.font='15px Segoe UI';cx.fillStyle='#8ab';
+    if(info){
+      cx.fillText('Level '+info.level+'  ·  '+info.credits+' credits  ·  bestiary '+info.codex,64,y+66);
+      if(info.endless) cx.fillText('Endless unlocked  ·  best '+info.best,64,y+90);
+      cx.textAlign='right';cx.fillStyle='#f88';cx.font='bold 16px Segoe UI';
+      cx.fillText('ERASE',CFG.W-64,y+38);
+    } else {
+      cx.fillText('empty — tap to start a fresh campaign here',64,y+66);
+    }
+    cx.textAlign='center';
+  }
+  cx.textAlign='center';cx.fillStyle='#667';cx.font='13px Segoe UI';
+  cx.fillText('Erasing a slot clears its campaign, credits and bestiary.',CFG.W/2,SLOT_ROW_Y+SAVE_SLOTS*SLOT_ROW_H+30);
 }
 function drawCodex(){
   cx.fillStyle='rgba(6,3,16,.94)';cx.fillRect(0,0,CFG.W,CFG.H);
@@ -2919,30 +3046,51 @@ function drawCodex(){
   cx.fillText('BESTIARY',CFG.W/2,54);cx.shadowBlur=0;
   cx.fillStyle='rgba(255,120,120,.9)';cx.font='bold 30px Segoe UI';cx.fillText('✕',CFG.W-34,44);   // close (tap here or ESC)
   cx.fillStyle='#89f';cx.font='14px Segoe UI';cx.fillText('◄ tap left / right to flip · tap top to go back ►',CFG.W/2,84);
-  const unlocked = CODEX.map((c,i)=>i).filter(i => G.meta.codex && G.meta.codex[i]);
-  if(!unlocked.length){cx.fillStyle='#889';cx.font='18px Segoe UI';cx.fillText('No specimens catalogued yet.',CFG.W/2,300);
-    cx.fillText('Kill enemies to unlock their field-guide pages.',CFG.W/2,330);return;}
-  const kind = unlocked[Math.min(G.codexPage||0, unlocked.length-1)], c = CODEX[kind];
-  // page card
+  // Pages come from the FORGE bestiary (EDIT.codexPages) and unlock PER SAVE SLOT as you meet them.
+  const pages=codexVisible(), total=codexPages().length;
+  if(!pages.length){cx.fillStyle='#889';cx.font='18px Segoe UI';cx.fillText('Nothing catalogued yet.',CFG.W/2,300);
+    cx.fillText('Pages unlock the first time you meet',CFG.W/2,330);
+    cx.fillText('each beast, weapon or machine.',CFG.W/2,358);return;}
+  const idx=Math.min(Math.max(0,G.codexPage||0),pages.length-1), c=pages[idx];
   cx.fillStyle='rgba(230,225,240,.06)';cx.fillRect(40,120,CFG.W-80,640);cx.strokeStyle='#5a4a7a';cx.strokeRect(40,120,CFG.W-80,640);
-  // specimen art — animated strip frame 0 if available, else static sprite, else vector
+  // Art: an uploaded FORGE page image wins; otherwise fall back to the enemy's own sprite.
   cx.save();
-  const anim=ANIM[kind];
-  if(anim&&anim.img.ok){const cs=anim.img.height;cx.drawImage(anim.img,0,0,cs,cs,CFG.W/2-100,150,200,200);}
-  else{const pic=enemyImg(kind,0);
-    if(pic&&pic.ok){const ph=180,pw=ph*(pic.width/pic.height);cx.drawImage(pic,CFG.W/2-pw/2,150,pw,ph);}
-    else{const sp=ART.enemies[kind];cx.drawImage(sp,CFG.W/2-90,150,180,180);}}
+  const up=codexArt(c.id);
+  if(up&&up.ok&&up.naturalWidth){const ph=200,pw=Math.min(CFG.W-140,ph*(up.naturalWidth/up.naturalHeight));
+    cx.drawImage(up,CFG.W/2-pw/2,150,pw,ph);}
+  else{
+    const m=/^enemy:(\d+)$/.exec(c.link||''), kind=m?Number(m[1]):-1;
+    if(kind>=0){const anim=ANIM[kind];
+      if(anim&&anim.img.ok){const cs=anim.img.height;cx.drawImage(anim.img,0,0,cs,cs,CFG.W/2-100,150,200,200);}
+      else{const pic=enemyImg(kind,0);
+        if(pic&&pic.ok){const ph=180,pw=ph*(pic.width/pic.height);cx.drawImage(pic,CFG.W/2-pw/2,150,pw,ph);}
+        else if(ART.enemies[kind])cx.drawImage(ART.enemies[kind],CFG.W/2-90,150,180,180);}}
+    else{cx.fillStyle='rgba(200,160,255,.13)';cx.fillRect(CFG.W/2-90,150,180,180);
+      cx.fillStyle='#a89ad0';cx.font='60px Segoe UI';cx.fillText(CODEX_ICON_G[c.cat]||'•',CFG.W/2,250);}
+  }
   cx.restore();
-  cx.textAlign='center';cx.fillStyle='#eaddff';cx.font='bold 26px Segoe UI';cx.fillText(c.name,CFG.W/2,380);
-  cx.fillStyle='#a89ad0';cx.font='italic 16px Segoe UI';cx.fillText(c.cls+'  ·  '+(G.meta.codex[kind]||0)+' terminated',CFG.W/2,410);
-  // secret tip (wrapped)
-  cx.fillStyle='#8f4';cx.font='bold 15px Segoe UI';cx.fillText('◆ FIELD INTEL ◆',CFG.W/2,470);
-  cx.fillStyle='#d8e8ff';cx.font='17px Segoe UI';cx.textAlign='left';
-  const words=c.tip.split(' ');let line='',yy=500;
-  for(const w of words){const t=line+w+' ';if(cx.measureText(t).width>CFG.W-110){cx.fillText(line,66,yy);line=w+' ';yy+=26;}else line=t;}
-  cx.fillText(line,66,yy);
+  cx.textAlign='center';cx.fillStyle='#eaddff';cx.font='bold 26px Segoe UI';cx.fillText(c.title||'',CFG.W/2,380);
+  const seen=(G.meta.codexSeen&&G.meta.codexSeen[c.link])||0;
+  const sub=(c.subtitle||'')+(c.link&&c.link.indexOf('enemy:')===0?'  ·  '+seen+' terminated':'');
+  cx.fillStyle='#a89ad0';cx.font='italic 16px Segoe UI';cx.fillText(sub,CFG.W/2,410);
+  if(c.body){
+    cx.fillStyle='#8f4';cx.font='bold 15px Segoe UI';cx.fillText('◆ FIELD INTEL ◆',CFG.W/2,470);
+    cx.fillStyle='#d8e8ff';cx.font='17px Segoe UI';cx.textAlign='left';
+    const words=String(c.body).split(' ');let line='',yy=500;
+    for(const w of words){const t=line+w+' ';if(cx.measureText(t).width>CFG.W-110){cx.fillText(line,66,yy);line=w+' ';yy+=26;}else line=t;}
+    cx.fillText(line,66,yy);
+  }
   cx.textAlign='center';cx.fillStyle='#666';cx.font='13px Segoe UI';
-  cx.fillText((unlocked.indexOf(kind)+1)+' / '+unlocked.length,CFG.W/2,740);
+  cx.fillText((idx+1)+' / '+pages.length+'   (catalogued '+pages.length+' of '+total+')',CFG.W/2,740);
+}
+const CODEX_ICON_G = { enemy:'👾', boss:'💀', weapon:'🔫', vehicle:'🛡', item:'📦', player:'🎖', lore:'📖' };
+// dataURL -> Image, cached, so page art is not decoded every frame
+const CODEX_ART = {};
+function codexArt(id){
+  const data=CODEX_IMG[id]; if(!data) return null;
+  let im=CODEX_ART[id];
+  if(!im||im._src!==data){ im=new Image(); im._src=data; im.onload=()=>im.ok=true; im.src=data; CODEX_ART[id]=im; }
+  return im;
 }
 function drawEndScreen(win){const elapsed=Math.max(0,G.endElapsed||0),score=endlessScore();   // frozen clock
   cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'HIVE WON',CFG.W/2,280);
@@ -2968,6 +3116,7 @@ function frame(ts) {
   if ((!testBot || telemetryBot) && !(dbg && dbg.pause))
     for (let i = 0, n = telemetryBot ? telemetrySpeed : (dbg ? dbg.speed : 1); i < n; i++) update(dt);
   draw();
+  drawCodexToast();   // screen-space overlay: drawn last so gameplay never covers it
   requestAnimationFrame(frame);
 }
 // FORGE media hydration installs a startup gate below so IndexedDB-backed art is ready before draw.
@@ -3865,11 +4014,19 @@ function renderCodex(){
         ${list || '<div class="hint">No pages yet.</div>'}
         <button type="button" id="cxAdd" style="width:100%;margin-top:8px;border-color:#4ff;color:#4ff;font-weight:900">+ ADD PAGE</button>
         <button type="button" class="warn" id="cxReset" style="width:100%;margin-top:4px">RESET TO DEFAULT PAGES</button>
+        <button type="button" class="warn" id="cxRelock" style="width:100%;margin-top:4px">RE-LOCK ALL (test unlocks)</button>
       </div>
       <div style="flex:1 1 auto">${pg ? `
         <div class="row">CATEGORY <select id="cxCat">${CODEX_CATS.map(c=>`<option value="${c}" ${c===pg.cat?'selected':''}>${c.toUpperCase()}</option>`).join('')}</select></div>
         <div class="row">TITLE <input type="text" id="cxTitle" style="width:240px" value="${esc(pg.title)}"></div>
         <div class="row">SUBTITLE <input type="text" id="cxSub" style="width:240px" value="${esc(pg.subtitle)}"></div>
+        <div class="row">UNLOCK KEY <input type="text" id="cxLink" style="width:180px" value="${esc(pg.link)}" placeholder="enemy:0">
+          <span class="hint">what the player must MEET before this page appears in-game.
+          <b>enemy:0-5</b> · <b>weapon:0-${WEAPON_LAST}</b> · <b>boss:guardian</b> · <b>boss:queen</b> ·
+          <b>vehicle:tank</b>. Leave EMPTY for a page that is always visible.
+          ${pg.link ? (G.meta.codexSeen && G.meta.codexSeen[pg.link] !== undefined
+            ? '<b style="color:#6f6">UNLOCKED</b> in save slot ' + currentSlot()
+            : '<b style="color:#f84">LOCKED</b> in save slot ' + currentSlot()) : '<b style="color:#6f6">ALWAYS VISIBLE</b>'}</span></div>
         <div class="row" style="align-items:flex-start">BODY
           <textarea id="cxBody" style="width:min(560px,60vw);height:120px">${esc(pg.body)}</textarea></div>
         <div class="row">
@@ -3888,13 +4045,17 @@ function renderCodex(){
     codexPages().push({ id: codexNewId(), cat: 'enemy', title: 'New Entry', subtitle: '', body: '' });
     codexSel = codexPages().length - 1; saveEdit(); renderCodex();
   };
+  body.querySelector('#cxRelock').onclick = () => {
+    // Wipes THIS SLOT's sightings so the unlock flow can be re-tested without erasing the save.
+    if (!confirm('Re-lock every bestiary page in save slot ' + currentSlot() + '? (progress and credits are kept)')) return;
+    G.meta.codexSeen = {}; save(); renderCodex(); };
   body.querySelector('#cxReset').onclick = () => { if (!confirm('Replace ALL bestiary pages with the shipped defaults? Uploaded images are kept but may be orphaned.')) return;
     EDIT.codexPages = codexDefaults(); codexSel = 0; saveEdit(); renderCodex(); };
   if (!pg) return;
   const bind = (sel, key) => { const el = body.querySelector(sel); if (!el) return;
     el.oninput = () => { pg[key] = el.value; saveEdit(); if (key === 'title') {
       body.querySelectorAll('[data-pick]')[codexSel].textContent = (CODEX_ICON[pg.cat] || '•') + ' ' + (pg.title || '(untitled)'); } }; };
-  bind('#cxTitle','title'); bind('#cxSub','subtitle'); bind('#cxBody','body');
+  bind('#cxTitle','title'); bind('#cxSub','subtitle'); bind('#cxBody','body'); bind('#cxLink','link');
   body.querySelector('#cxCat').onchange = e => { pg.cat = e.target.value; saveEdit(); renderCodex(); };
   body.querySelector('#cxPick').onclick = () => body.querySelector('#cxFile').click();
   body.querySelector('#cxFile').onchange = e => { const f = e.target.files[0]; if (!f) return;
@@ -4208,6 +4369,7 @@ else if (!testBot) window.__forgeMediaReady.finally(() => requestAnimationFrame(
 
 // ---------- debug ----------
 window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: G.weapon,
+  slot: currentSlot(), codexUnlocked: codexVisible().length, codexTotal: codexPages().length,
   levelT:G.levelT,credits: G.credits, kills: G.kills, enemies: enemies.count(), bullets: bullets.count(),gates:gates.filter(g=>g.live).length,
   perks: Object.assign({}, G.perks), laserActive: G.laserT > 0,
   bossAttack: G.boss ? G.boss.attack||null : null, vehicleActive:G.vehicleT>0,

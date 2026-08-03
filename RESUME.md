@@ -34,11 +34,36 @@ Rebuild: `powershell -File D:\Dev\_mobile/build_apk.ps1 -Game HiveWar -Version 0
   ⚠️ `saveCodexMedia` must stay INSIDE the FORGE closure — `queueMedia`/`mediaPut`/`dataBlob`
   are scoped there.
 
+## Save slots + unlocking bestiary (2026-08-03, later)
+
+**3 save slots.** Keys `hiveswarm_v1_s1..3`, active slot in `hiveswarm_slot`, and the old flat
+`hiveswarm_v1` is migrated into slot 1 once (`migrateLegacySave`) and then left alone so an older
+build still finds its progress. `slotInfo/useSlot/eraseSlot`; **SAVE SLOTS** button on the title
+screen, ERASE per row behind a confirm. `meta.maxLevel` tracks the campaign high-water mark per
+slot — that is what the picker shows, and it matters more once the campaign grows past 10 levels.
+
+**The in-game bestiary now reads the FORGE pages.** It used to render the hardcoded `CODEX` array
+(6 enemies, unlocked on kill). It now renders `EDIT.codexPages` — all 18 authored pages including
+weapons, bosses, tank and player, with uploaded page art when there is any.
+
+- Each page has a **`link`** = its unlock key: `enemy:0-5`, `weapon:0-7`, `boss:guardian`,
+  `boss:queen`, `vehicle:tank`, or empty for always-visible. Editable on the FORGE BESTIARY tab.
+- `codexSee(link, count)` reports a sighting. Enemies unlock on **spawn** (you SAW it), not on kill;
+  kills only increment the "n terminated" counter. Weapons unlock when equipped, bosses on spawn,
+  the tank on its first drop.
+- Unlocks live in `meta.codexSeen`, i.e. **per save slot** — a fresh install or an erased slot
+  starts the bestiary empty, which is the point of it.
+- FORGE has **RE-LOCK ALL**, which clears this slot's sightings without touching progress, so the
+  unlock flow can be re-tested.
+- First sighting fires a `NEW BESTIARY ENTRY` toast (`drawCodexToast`, drawn after `draw()` so
+  gameplay never covers it).
+
 ### QA scripts added
 ```bash
 python -m http.server 8791          # serve first — the FORGE is disabled under ?telemetry=1
 python qa/_forge_bestiary_check.py  # bestiary CRUD + image upload + reload persistence
 python qa/_shot_hw20.py             # weapon screenshots -> Desktop\Tests\hivewar_hw20
+python qa/_slots_codex_check.py     # 3 slots are independent + bestiary unlock/erase/persistence
 ```
 ⚠️ Ports 8791/8792 may already be held by a stale server from another game (8792 was serving
 `D:\Dev\ZombieWaves` on 2026-08-03) — `curl` the port before trusting a test result.
