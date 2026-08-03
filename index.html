@@ -3678,6 +3678,22 @@ window.__dbg = () => ({ state: G.state, level: G.level, squad: G.squad, weapon: 
   mode:G.mode,loop:G.loop,score:endlessScore(),endlessUnlocked:!!G.meta.endless,bestScore:G.meta.bestScore||0,sfx:!!G.meta.sfx,
   boss: G.boss ? { hp: G.boss.hp, queen: G.boss.queen, phase: G.boss.phase } : null, playerDrawSize:G.lastSoldierDrawSize||0,
   testBot, telemetryBot, telemetrySpeed, telemetrySeed, simTime:G.t, firstShopCredits:G.firstShopCredits, lastDeathCause:G.lastDeathCause });
+// Owner/QA capture hooks (HW.16 tanks, contact sheets). Gated — not on portal builds.
+if (/^(localhost|127\.0\.0\.1|\[::1\]|)$/.test(location.hostname) || location.search.includes('forge') || location.search.includes('qa')) {
+  window.__qa = {
+    version: GAME_VERSION,
+    start(mode) { startRun(mode || 'campaign'); },
+    tick(n, dt) { for (let i = 0; i < (n || 1); i++) update(dt == null ? 0.1 : dt); draw(); },
+    forceVehicles(rank) {
+      G.meta.vehicleDrop = Math.max(rank || 3, 1);
+      G.vehicleT = 8; G.vehicleCD = 30; G.vehicleFire = 0;
+      if (G.state !== 'play' && G.state !== 'boss') { G.state = 'play'; }
+      draw();
+      return { vehicleT: G.vehicleT, rank: G.meta.vehicleDrop, px: G.px };
+    },
+    earlyGift() { return gates.filter(g => g.earlyGift).map(g => ({ y: g.y, val: g.val, live: g.live })); },
+  };
+}
 </script>
 
 <!-- PWA offline shell. Guarded so it can never throw/break startup when this file is
