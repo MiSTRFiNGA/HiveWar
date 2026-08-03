@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '2.4';
+const GAME_VERSION = '2.5';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -136,9 +136,9 @@ const WEAPONS = [
   // spread is a FAN ANGLE IN RADIANS across the weapon's n pellets (owner request 2026-07-30:
   // "what happened to the cone style shooting?" — the old 0.06-0.22 values were pixel-jitter
   // leftovers and read as ~3-12 degrees, i.e. no visible cone at all).
-  {name:'Spread Gun',  rof:10,   dmg: 0.62, n:2, spread:0.45, col:'#4cf',
+  {name:'Twin Plasma',  rof:10,   dmg: 0.62, n:2, spread:0.45, col:'#4cf',
    sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3,  recoil:7},
-  {name:'Rail Gun',    rof:12,   dmg: 0.38, n:4, spread:0.70, col:'#c6f',
+  {name:'Scatter Rail',rof:12,   dmg: 0.38, n:4, spread:0.70, col:'#c6f',
    sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2, recoil:4},
   {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.30, col:'#f80',
    sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8,  recoil:26},
@@ -147,6 +147,14 @@ const WEAPONS = [
   // HW.5 (Eric 2026-08-02): slower charge (0.55/s) and locked until level 5+ (see weaponAllowed).
   {name:'Ion Cannon',  rof: 0.55, dmg:14.0, n:1, spread:0,    col:'#ff4',
    sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5, recoil:60},
+  // HW.19 (owner request 2026-08-03): close-range flamethrower. Unlike every other gun this one is
+  // RANGE-LIMITED — `spd` slows the puffs down and `life` kills them after a fixed time, so the
+  // cone reaches ~200px and no further. Low per-puff damage, very high rate, wide fan, and it
+  // sets enemies BURNING (a damage-over-time that keeps ticking after the stream moves off).
+  // Deliberately weak knockback: a gout of flame shouldn't shove like a slug.
+  {name:'Flamethrower',rof:16,   dmg: 0.22, n:3, spread:0.62, col:'#f93',
+   sfx:'grenade',     sfxRate:0.55, sfxVol:.16, sfxMinGap:0.10,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
+   spd:0.45, life:0.42, burn:2.4},
 ];
 // HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
 function weaponAllowed(i, lvl) {
@@ -154,7 +162,7 @@ function weaponAllowed(i, lvl) {
   return (lvl || G.level || 1) >= (w.minLvl || 1);
 }
 function clampWeaponToLevel(i, lvl) {
-  let w = Math.max(0, Math.min(4, i|0));
+  let w = Math.max(0, Math.min(WEAPON_LAST, i|0));
   while (w > 0 && !weaponAllowed(w, lvl)) w--;
   return w;
 }
@@ -168,6 +176,7 @@ function clampWeaponToLevel(i, lvl) {
 // randomly rerolling, and now also persistently upgrade.
 // Both start at tier 1 = multiplier 1.0 exactly, so baseline balance (incl. the CG KPI tune
 // and Queen kill-time) is unchanged until the player actually buys a tier in the shop.
+const WEAPON_LAST = 5;   // highest WEAPONS index — was hardcoded as 4 all over before the Flamethrower
 const SOLDIER_TIER_MAX = 5, WEAPON_TIER_MAX = 5, TIER_MULT_STEP = 0.12;   // +12%/tier, modest per SHOP economy notes
 function soldierTierMult(t) { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_STEP; }
 function weaponTierMult(t)  { return 1 + (Math.max(1, t || 1) - 1) * TIER_MULT_STEP; }
@@ -273,6 +282,9 @@ function editDefaults() { return {
   // horizonStart -> horizonEnd RAMPS across the level (owner request 2026-08-03): the level opens
   // on a long deep corridor and closes up as you approach the boss, so arriving at the boss reads
   // as "the walls came in". horizonPct is kept only so older saved packs still import.
+  // Readability options (owner requests 2026-08-03). hpBars: 0 = elites only once damaged (the
+  // original hardcoded rule), 1 = every enemy once damaged, 2 = every enemy always.
+  ui: { hpBars: 0 },
   world: { horizonStart: 0.15, horizonEnd: 0.43, horizonPct: 0.407, spawnBackPx: 0, approachMul: 1 },
   balance: { startCredits: 0, killCreditMul: 1, shopCostMul: 1 },
   // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
@@ -750,7 +762,7 @@ function spawnGatePair() {
     // HW.3 — one weapon per wall (never a split dual-pick on a single barrier). Choice is L vs R.
     let wpnId = null;
     if (kind === 'wpn') {
-      let cand = Math.min(4, G.weapon + 1 + val);
+      let cand = Math.min(WEAPON_LAST, G.weapon + 1 + val);
       if (!weaponAllowed(cand, G.level)) cand = clampWeaponToLevel(cand, G.level);
       wpnId = cand;
     }
@@ -808,7 +820,7 @@ function gatePass(g) {
     G.squad = g.val < 1 ? Math.max(1, Math.round(G.squad * g.val)) : G.squad + gain; }
   else if (g.kind === 'wpn') {
     // HW.3 — whole wall = one weapon. Prefer authored wpnId; fall back to ladder from current gun.
-    const pick = g.wpnId != null ? g.wpnId : Math.min(4, G.weapon + 1 + g.val);
+    const pick = g.wpnId != null ? g.wpnId : Math.min(WEAPON_LAST, G.weapon + 1 + g.val);
     G.weapon = clampWeaponToLevel(pick, G.level);
   }
   G.squad = Math.min(CFG.squadMax, G.squad);
@@ -870,7 +882,7 @@ function fire(dt) {
     // Centre lane sits slightly AHEAD of its flankers (owner spec) — measured from the sprite's
     // top-centre muzzle so it tracks the squad's screen position instead of a hardcoded row.
     const by = muzzleY() - (c === Math.floor(cols / 2) && cols > 1 ? 10 : 0);
-    const baseVx = (CFG.W / 2 - bx) * 0.55, baseVy = -640;                     // converge toward road center, straight up
+    const baseVx = (CFG.W / 2 - bx) * 0.55, baseVy = -640 * (w.spd || 1);      // converge toward road center, straight up
     const baseAngle = Math.atan2(baseVy, baseVx), speed = Math.hypot(baseVx, baseVy);
     for (let p = 0; p < pellets; p++) {
       const b = bullets.alloc(); if (!b) return;
@@ -883,6 +895,9 @@ function fire(dt) {
       // coverage without inflating total DPS.
       b.dmg = w.dmg * G.squad / total * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
       b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
+      // life > 0 = a RANGE-LIMITED projectile (flamethrower). Pooled objects must always be reset:
+      // leaving a stale life on a recycled bullet would make normal bolts vanish mid-flight.
+      b.life = w.life || 0; b.burn = w.burn || 0;
     }
   }
 }
@@ -897,7 +912,7 @@ function perkWeapons(dt) {
         const a = G.t * 2.6 + i * 6.283 / drones;              // EXACT same orbit as the drawn drones
         b.x = G.px + Math.cos(a) * 82; b.y = CFG.H - 55 + Math.sin(a) * 34;
         b.vx = Math.sin(a) * 45; b.vy = -720; b.dmg = 2.2 + 1.2 * (G.perks['Drone Escort'] || 0);
-        b.r = 4; b.tier = Math.min(4, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true;
+        b.r = 4; b.tier = Math.min(WEAPON_LAST, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true;
         b.pierce = false;                                      // pooled — never inherit a beam's pierce flag
         b.purple = true;                                       // drone shots are PURPLE plasma
       }
@@ -993,7 +1008,7 @@ function spawnWave(dt) {
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
     const sc = (enemyRow(e.kind) || {}).scale; e.r = (K && K.r ? K.r : 14) * (Number.isFinite(sc) ? sc : 1);
-    e.t = 0; e.acidT = 0; e.buffed = 0; e.kb = 0;
+    e.t = 0; e.acidT = 0; e.buffed = 0; e.kb = 0; e.burnT = 0; e.burnDps = 0;
   }
 }
 function spawnBoss() {
@@ -1298,6 +1313,10 @@ function update(dt) {
 
   // bullets
   bullets.each(b => {
+    if (b.life > 0) {                       // flamethrower: the puff dies of old age, capping its reach
+      b.life -= dt;
+      if (b.life <= 0) { fx(b.x, b.y, '#f83'); bullets.release(b); return; }
+    }
     b.x += b.vx * dt; b.y += b.vy * dt;
     // Tank shells (and any other laneKeep projectile): stay inside the perspective road so they
     // never drift over the wall edge into empty space where no enemies exist (task 2.5).
@@ -1330,6 +1349,13 @@ function update(dt) {
   enemies.each(e => {
     e.t += dt;
     if (e.acidT > 0) { e.acidT -= dt; e.hp -= dt * 3 * (G.perks['Acid Rounds'] || 0); if (e.hp <= 0) { damageEnemy(e, 0, e.x, e.y); return; } }
+    // Flamethrower burn: keeps ticking after the stream has moved on, and throws embers so you can
+    // SEE which enemies are alight rather than having to read a health bar.
+    if (e.burnT > 0) {
+      e.burnT -= dt; e.hp -= dt * (e.burnDps || 2.4) * G.squad * 0.06;
+      if (rng() < 0.28) fx(e.x + rr(-e.r*.6, e.r*.6), e.y - rr(0, e.r*.7), rng() < 0.5 ? '#f83' : '#fd5');
+      if (e.hp <= 0) { damageEnemy(e, 0, e.x, e.y); return; }
+    }
     // psychoid coordination aura: nearby non-node enemies surge faster (mark for tint)
     e.buffed = 0;
     if (e.kind !== 5 && psychoids.length) for (const n of psychoids) {
@@ -1411,6 +1437,7 @@ function update(dt) {
         if (b.pierce) { if (b._hit && b._hit.has(e._pi)) return; (b._hit || (b._hit = new Set())).add(e._pi); }
         else bullets.release(b);
         damageEnemy(e, b.dmg, b.x, b.y);
+        if (b.burn > 0) e.burnT = Math.max(e.burnT || 0, 1.6), e.burnDps = b.burn;   // flamethrower ignition
         knockBack(e, WEAPONS[G.weapon] && WEAPONS[G.weapon].recoil);
         if (b.aoe) aoe(e.x, e.y, b.aoe, b.dmg * .55);
         const cl = G.perks['Chain Lightning'] || 0;
@@ -1727,7 +1754,7 @@ const deathFx = [];                            // one-shot 'Die' strip playbacks
 const ENVIMG = {};
 const ENV_KEY = 'hiveswarm_forge_env_v1';       // FORGE-uploaded env art (dataURLs) beats the assets/env files
 let ENV_OVR = {}; try { ENV_OVR = JSON.parse(localStorage.getItem(ENV_KEY) || '{}'); } catch (e) {}
-const BG_ZOOM_START = 1.0, BG_ZOOM_MAX = 2;     // Eric ruling 2026-08-01: retain full backdrop at level start
+const BG_ZOOM_START = 1.0, BG_ZOOM_MAX = 1.5;   // Eric ruling 2026-08-03: 100% -> 150% across the level (was 200%, too aggressive)
 // Eric ruling 2026-08-02: the backdrop occupies the upper band only (his red-box sketch) and is
 // never stretched. 0.55 clears HORIZON_Y (0.407) with headroom; the road/wall layer masks the rest.
 const BG_BAND_FRAC = 0.55;
@@ -2169,7 +2196,7 @@ function draw() {
       cx.font = 'bold ' + Math.round(10 + 4 * z) + 'px Segoe UI'; cx.fillText('SPENT', cxm, baseY - 6);
     } else if (g.kind === 'wpn' && IMGS.weaponIcons && IMGS.weaponIcons.ok) {
       // HW.3 — one icon per wall (split dual-pick render removed).
-      const wi = g.wpnId != null ? g.wpnId : Math.min(4, G.weapon + 1 + g.val);
+      const wi = g.wpnId != null ? g.wpnId : Math.min(WEAPON_LAST, G.weapon + 1 + g.val);
       const cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
       cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
       cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
@@ -2225,7 +2252,11 @@ function draw() {
       cx.save(); cx.globalCompositeOperation = 'lighter'; cx.globalAlpha = Math.min(.6, e.acidT);
       cx.fillStyle = '#6f2'; cx.beginPath(); cx.arc(e.x, e.y + bob, e.r * 1.1, 0, 7); cx.fill(); cx.restore();
     }
-    if (e.kind !== 0 && e.hp < e.maxhp) {           // hp bars: tanks/elites only
+    // HP BAR MODE (owner question 2026-08-03 "why do some have a health bar and some don't"):
+    // the old rule was hardcoded — never on kind 0 (Xenoid fodder), and only once damaged.
+    //   0 = elites only, once damaged (original)   1 = every enemy, once damaged   2 = every enemy, always
+    const hpMode = Math.max(0, Math.min(2, ((EDIT.ui && EDIT.ui.hpBars) | 0)));
+    if ((hpMode > 0 || e.kind !== 0) && (hpMode === 2 || e.hp < e.maxhp)) {
       cx.fillStyle = '#300'; cx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2, 3);
       cx.fillStyle = '#f44'; cx.fillRect(e.x - e.r, e.y - e.r - 8, e.r * 2 * (e.hp / e.maxhp), 3);
     }
@@ -2290,6 +2321,19 @@ function draw() {
         cx.beginPath();cx.moveTo(b.x,b.y+len*.3);cx.lineTo(b.x+nx*len,b.y+ny*len);cx.stroke();
         cx.strokeStyle='rgba(255,255,255,.85)';cx.lineWidth=1.2;
         cx.beginPath();cx.moveTo(b.x,b.y+len*.2);cx.lineTo(b.x+nx*len*.7,b.y+ny*len*.7);cx.stroke();
+        break;
+      }
+      case 'flame': {                                   // Flamethrower: soft additive gout, hottest at the core
+        const life = Math.max(0, Math.min(1, (b.life || 0) / 0.42));   // 1 at the nozzle, 0 at max reach
+        const grow = 1 + (1 - life) * 1.9;                             // the puff widens as it flies out
+        cx.save(); cx.globalCompositeOperation = 'lighter';
+        cx.globalAlpha = 0.16 + 0.34 * life;
+        cx.fillStyle = '#c33'; cx.beginPath(); cx.arc(b.x, b.y, wid * grow * 0.95, 0, 7); cx.fill();      // outer smoke-red
+        cx.fillStyle = '#f83'; cx.beginPath(); cx.arc(b.x, b.y, wid * grow * 0.62, 0, 7); cx.fill();      // body
+        cx.globalAlpha = 0.30 + 0.55 * life;
+        cx.fillStyle = '#fd6'; cx.beginPath(); cx.arc(b.x, b.y, wid * grow * 0.32, 0, 7); cx.fill();      // hot core
+        if (life > 0.7) { cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(b.x, b.y, wid * 0.16, 0, 7); cx.fill(); }
+        cx.restore();
         break;
       }
       case 'pellet': {                                  // Rail Gun: short crackly dart + bright pellet tip
@@ -2364,7 +2408,7 @@ function draw() {
     }
     cx.globalAlpha = 1; });
   cx.restore();
-  dmgnums.each(d => { cx.globalAlpha = Math.max(0, d.a); cx.fillStyle = '#ffd75e';
+  dmgnums.each(d => { cx.globalAlpha = Math.max(0, d.a); cx.fillStyle = '#fff';   // owner 2026-08-03: white, was amber
     cx.font = 'bold 16px Segoe UI'; cx.textAlign = 'center'; cx.fillText(d.val, d.x, d.y); cx.globalAlpha = 1; });
   // Kill-streak sits on the BACKGROUND band (above the road/horizon) so it no longer blocks
   // enemies as they appear mid-corridor (task 5.3 — was CFG.W/2, 430).
@@ -2415,6 +2459,9 @@ function draw() {
       (inRun ? ctl('restart', '⟳', 'RESTART') : '') +
       (inRun ? ctl('pause', G.paused ? '▶' : '⏸', G.paused ? 'PLAY' : 'PAUSE', G.paused ? 'hot' : '') : '') +
       (G.paused ? ctl('quit', '⏏', 'QUIT', 'warn') : '') +   // only while paused — it ends the run
+      // Owner request 2026-08-03: a phone has no F2 key, and the floating ⚒ tab is easy to miss,
+      // so FORGE is reachable straight from the pause controls.
+      (G.paused ? ctl('forge', '⚒', 'FORGE') : '') +
       ctl('music', G.meta.music ? '♪' : '♪̸', 'MUSIC', G.meta.music ? '' : 'off') +
       ctl('sfx',   G.meta.sfx   ? '🔊' : '🔇', 'SFX',   G.meta.sfx   ? '' : 'off') +
     `</div>`;
@@ -2441,6 +2488,7 @@ document.getElementById('hud').addEventListener('pointerdown', e => {
     if (G.paused) AUDIO.stopAll();
     else if (G.vehicleT > 0 && G.meta.sfx) AUDIO.loopTank(true);   // tanks were mid-deploy
   }
+  else if (act === 'forge') { if (typeof toggleForge === 'function') toggleForge(); }   // stays paused behind the editor
   else if (act === 'restart') { G.paused = false; startRun(G.mode); }
   else if (act === 'quit') {          // paused-only: abandon the run and go back to the title screen
     if (!confirm('Quit to main menu? This run will be lost.')) return;
@@ -2638,6 +2686,7 @@ function drawPausedOverlay(){                                           // dim +
     cx.fillStyle='rgba(5,3,15,.55)'; cx.fillRect(0,0,CFG.W,CFG.H);
     cx.textAlign='center'; cx.font='900 54px Segoe UI'; cx.lineWidth=8; cx.strokeStyle='#130524';
     cx.strokeText('PAUSED', CFG.W/2, 430);
+    G.pauseHintDrawn = 1;   // the ⚒ FORGE button lives in the HUD control row while paused
     cx.shadowColor='#ff4'; cx.shadowBlur=24; cx.fillStyle='#ff4'; cx.fillText('PAUSED', CFG.W/2, 430);
     cx.shadowBlur=0; cx.font='16px Segoe UI'; cx.fillStyle='#cdf'; cx.fillText('tap anywhere to resume  ·  ⏏ QUIT to leave the run', CFG.W/2, 470);
     // the ▶ button is DOM (#hud .ctrls, z-index above the canvas) — it stays visible through this dim
@@ -3019,15 +3068,69 @@ function refreshComputed(){
   body.querySelectorAll('[data-hp]').forEach(el=>el.textContent=hpPreview(+el.dataset.hp));
   body.querySelectorAll('[data-pct]').forEach(el=>el.textContent=pctShare(+el.dataset.pct));
 }
+// ---- FORGE field help (owner request 2026-08-03: "if i hover over the title, it tells me what it does") ----
+// Keyed by EDIT path with array indices normalised to '*', so one entry covers all 6 enemies /
+// 10 levels / 6 weapons. Rendered as a native title= tooltip on every input AND on the column
+// headers of the entity and weapon tables.
+const FORGE_HELP = {
+  'player.rofMul':  'Global fire-rate multiplier. Stacks on top of the weapon ROF and any Overclock perk. 1 = unchanged.',
+  'player.dmgMul':  'Global damage multiplier applied to every bullet, on top of weapon damage and tier bonuses. 1 = unchanged.',
+  'player.armor':   'Percent of squad losses cancelled (0-90). At 50, a bite that would cost 8 soldiers costs 4.',
+  'player.bottomOffset': 'How far UP from the bottom edge the squad stands, in pixels. 192 = 80% down the screen. Raise it on a phone so your thumb is not covering the squad. The melee line moves with it, so bite distance never changes.',
+  'ui.hpBars':      'Health bars over enemies. 0 = elites only, and only once damaged (this is why fodder Xenoids never showed one). 1 = every enemy once damaged. 2 = every enemy, always.',
+  'world.horizonStart': 'Where the vanishing point sits at the START of a level, as a fraction of screen height. LOWER = horizon higher up = longer path and more travel time. Clamped 0.15-0.60.',
+  'world.horizonEnd':   'Where the vanishing point has moved to by the time the BOSS arrives. The corridor ramps from START to here as the wave timer runs, so the walls close in as you advance.',
+  'world.spawnBackPx':  'Extra distance above the screen that enemies spawn from. They sit at the vanishing point until they cross the horizon, so this is pure lead-in delay - the cheapest fix if enemies appear too fast, with no change to how the path looks.',
+  'world.approachMul':  'Multiplies every enemy advance speed at once. 0.8 = a 20% slower swarm without editing each enemy SPEED row.',
+  'kinds.*.hpBase': 'Health at level 1. Total health = HP BASE + HP/LVL x current level, so this sets how tough it is early.',
+  'kinds.*.hpLvl':  'Extra health added PER CAMPAIGN LEVEL. This is the scaling knob: 2/lvl stays fodder all game, 10/lvl becomes a wall by level 10.',
+  'kinds.*.spd':    'Movement speed down the corridor in px/sec, before the WORLD approach multiplier and the per-level bonus.',
+  'kinds.*.r':      'Collision and draw radius in pixels. Bigger = easier to hit AND reaches the squad sooner.',
+  'kinds.*.credits':'CREDITS PAID FOR A KILL - the run currency you spend in the shop between levels on soldier and weapon tiers and on perks. Tougher enemies pay more.',
+  'kinds.*.weight': 'SPAWN WEIGHT: relative share of the spawn table, shown live as SPAWN %. Doubling it makes that enemy appear twice as often. Nothing to do with knockback.',
+  'kinds.*.mass':   'KNOCKBACK WEIGHT: how heavy it feels when shot. Pushback = the weapon RECOIL divided by this, so 0.5 flies back twice as far as 1 and 3 barely budges. An enemy that DIES to the shot cannot be seen recoiling.',
+  'kinds.*.minLvl': 'First campaign level this enemy can spawn on. Use it to hold a nasty type back until the player has a squad.',
+  'kinds.*.sfxAttack':'Sample played when this enemy bites the squad.',
+  'kinds.*.sfxDie': 'Sample played when this enemy dies.',
+  'entities.*.scale':'Sprite size multiplier. 1 = the art at its authored size. Does not change the collision radius.',
+  'entities.*.range':'Tank only: how far out from the squad centre each escort tank sits, in pixels.',
+  'entities.*.yOff': 'Tank only: vertical trim. Positive moves both tanks UP the corridor from their default row.',
+  'weapons.*.rof':  'Rounds per second. The whole volley (every lane and pellet) fires on each tick.',
+  'weapons.*.dmg':  'Damage per pellet before squad size, tiers and multipliers. Volley damage is shared across every bolt, so more pellets does not mean more DPS.',
+  'weapons.*.spread':'Total fan angle in RADIANS across this weapon pellets. 0 = one straight line, 0.62 = a wide cone. Needs a pellet count above 1 to be visible.',
+  'weapons.*.recoil':'Knockback punch in pixels at enemy weight 1. Actual pushback = this divided by the enemy WEIGHT. 0 = no bounce.',
+  'weapons.*.sfx':  'Firing sample for this weapon.',
+  'spawnRate.*':    'Enemies spawned per second on this level, before the within-level ramp. This is the main difficulty dial.',
+  'bossHp.*':       'Health of that level guardian. The last slot is the Queen, whose phases are set separately.',
+  'gateInterval.*': 'Seconds between barrier pairs on this level. Lower = more barriers.',
+  'rollers.interval':'Seconds between rolling hazards.',
+  'rollers.pctArmored':'Percent of rollers that are armored. Armored ones cannot be shot and must be dodged.',
+  'rollers.hp':     'Health of a breakable roller at level 1.',
+  'rollers.hpLvl':  'Extra roller health per campaign level.',
+  'rollers.speed':  'How fast rollers tumble down the corridor, px/sec.',
+  'rollers.size':   'Roller draw and collision size in pixels.',
+  'rollers.dmg':    'Soldiers lost when a roller reaches the squad.',
+  'rollers.minLvl': 'First level rolling hazards appear on.',
+  'balance.startCredits':'Credits the player begins a run with.',
+  'balance.killCreditMul':'Multiplies every kill payout. 2 = twice the shop money.',
+  'balance.shopCostMul':'Multiplies every shop price. 0.5 = half-price upgrades.',
+  'bossY':          'How far DOWN the corridor a boss walks before stopping. Bigger = it comes closer to the squad.',
+  'earlySquadVal':  'Size of the free soldier gift handed out about 12 seconds into level 1.',
+};
+function helpFor(path){
+  const key = String(path || '').replace(/\.\d+/g, '.*');
+  return FORGE_HELP[key] || '';
+}
+function hlp(path){ const t = helpFor(path); return t ? ' title="' + forgeEsc(t) + '"' : ''; }
 function num(p,step,w,aria){
   let v = getP(p);
   // Never render non-finite / string-garbage into number inputs (HW.7 LENGTH bug class).
   if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) v = Number(v);
   if (!Number.isFinite(v)) v = 0;
-  return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} ${aria?`aria-label="${forgeEsc(aria)}"`:''} data-p="${p}" value="${v}">`;
+  return `<input type="number" step="${step||1}" ${w?`style="width:${w}px"`:''} ${aria?`aria-label="${forgeEsc(aria)}"`:''}${hlp(p)} data-p="${p}" value="${v}">`;
 }
 function col(p){ return `<input type="color" data-p="${p}" value="${getP(p)}" style="width:34px;height:24px;padding:0;border:none;vertical-align:middle">`; }
-function snd(p,aria){ const cur=getP(p); return `<select data-p="${p}" data-str="1" ${aria?`aria-label="${forgeEsc(aria)}"`:''}>` +
+function snd(p,aria){ const cur=getP(p); return `<select data-p="${p}" data-str="1" ${aria?`aria-label="${forgeEsc(aria)}"`:''}${hlp(p)}>` +
   AUDIO.names().map(n=>`<option value="${n}" ${n===cur?'selected':''}>${n}</option>`).join('') + `</select>`; }
 function txt(p,w,ph){ return `<input type="text" data-p="${p}" data-str="1" placeholder="${ph||''}" value="${getP(p)||''}" style="width:${w||110}px">`; }
 function forgeEsc(s){ return String(s).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
@@ -3075,7 +3178,7 @@ function renderEntities(){
   for (const c of classes) h += `<label><input type="radio" name="entityClass" value="${c}" ${entityClassFilter===c?'checked':''}> ${c==='all'?'All':c[0].toUpperCase()+c.slice(1)}</label>`;
   h += `</fieldset><div id="entityStatus" class="hint" aria-live="polite">Showing ${rows.length} ${entityClassFilter==='all'?'entities':entityClassFilter+' entities'}.</div>
     <div class="entityScroll"><table class="entityTable" aria-describedby="entityHelp entityStatus"><caption class="hint" style="text-align:left">Entity tuning registry — scroll right for SFX / HP preview / spawn share</caption><thead><tr>
-      <th scope="col" style="width:52px">SPRITE</th><th scope="col" style="width:110px">ENTITY</th><th scope="col" style="width:58px">CLASS</th><th scope="col" style="width:64px">SCALE</th><th scope="col" style="width:64px">HP BASE</th><th scope="col" style="width:64px">HP/LVL</th><th scope="col" style="width:64px">SPEED</th><th scope="col" style="width:64px">RADIUS</th><th scope="col" style="width:64px">CREDITS</th><th scope="col" style="width:64px">SPAWN WT</th><th scope="col" style="width:64px">WEIGHT</th><th scope="col" style="width:64px">MIN LVL</th><th scope="col" style="width:64px">RANGE</th><th scope="col" style="width:64px">Y-OFF</th><th scope="col" style="width:90px">ATTACK SFX</th><th scope="col" style="width:90px">DIE SFX</th><th scope="col" style="width:150px">HP PREVIEW</th><th scope="col" style="width:70px">SPAWN %</th></tr></thead><tbody>`;
+      <th scope="col" style="width:52px">SPRITE</th><th scope="col" style="width:110px">ENTITY</th><th scope="col" style="width:58px">CLASS</th><th scope="col" style="width:64px"${hlp('entities.0.scale')}>SCALE</th><th scope="col" style="width:64px"${hlp('kinds.0.hpBase')}>HP BASE</th><th scope="col" style="width:64px"${hlp('kinds.0.hpLvl')}>HP/LVL</th><th scope="col" style="width:64px"${hlp('kinds.0.spd')}>SPEED</th><th scope="col" style="width:64px"${hlp('kinds.0.r')}>RADIUS</th><th scope="col" style="width:64px"${hlp('kinds.0.credits')}>CREDITS</th><th scope="col" style="width:64px"${hlp('kinds.0.weight')}>SPAWN WT</th><th scope="col" style="width:64px"${hlp('kinds.0.mass')}>WEIGHT</th><th scope="col" style="width:64px"${hlp('kinds.0.minLvl')}>MIN LVL</th><th scope="col" style="width:64px"${hlp('entities.0.range')}>RANGE</th><th scope="col" style="width:64px"${hlp('entities.0.yOff')}>Y-OFF</th><th scope="col" style="width:90px">ATTACK SFX</th><th scope="col" style="width:90px">DIE SFX</th><th scope="col" style="width:150px">HP PREVIEW</th><th scope="col" style="width:70px">SPAWN %</th></tr></thead><tbody>`;
   for (const entity of rows) {
     const ix = EDIT.entities.indexOf(entity), enemy = ENEMY_ENTITY_IDS.indexOf(entity.id), spriteIx = entitySpriteIndex(entity.id);
     const spriteReg = REG[spriteIx], hasSprite = spriteReg && spriteReg.h;
@@ -3215,7 +3318,7 @@ function renderTab(){
       under the same gun. 0 = no bounce at all.
       <b>Testing note:</b> an enemy that dies to the shot cannot be seen recoiling — it is removed the same frame.
       Try it on an Eldritch Sponge, or raise the Xenoid's HP BASE on the ENTITIES tab first.</div>
-      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>SPREAD</th><th>RECOIL</th><th>FIRE SFX</th><th>TEST</th></tr>`;
+      <table><tr><th>WEAPON</th><th${hlp('weapons.0.rof')}>ROF</th><th${hlp('weapons.0.dmg')}>DMG</th><th${hlp('weapons.0.spread')}>SPREAD</th><th${hlp('weapons.0.recoil')}>RECOIL</th><th${hlp('weapons.0.sfx')}>FIRE SFX</th><th>TEST</th></tr>`;
     EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
       <td>${num('weapons.'+i+'.spread',0.02)}</td>
@@ -3226,7 +3329,7 @@ function renderTab(){
     // Equip instantly for testing. Stays equipped across levels (levelStart no longer rerolls the
     // weapon), so you can carry it through a whole run to feel it out.
     body.querySelectorAll('[data-give]').forEach(b=>b.onclick=()=>{
-      G.weapon = Math.max(0, Math.min(4, +b.dataset.give));
+      G.weapon = Math.max(0, Math.min(WEAPON_LAST, +b.dataset.give));
       b.textContent = '✓ EQUIPPED';
       setTimeout(()=>{ b.textContent = '▶ GIVE'; }, 900);
     });
@@ -3381,6 +3484,9 @@ function renderTab(){
         <span class="hint">Extra distance above the screen the swarm starts from. They ride the vanishing point
         until they cross the horizon, so this is a pure delay before they "appear" — the cheapest fix for
         enemies showing up too fast, and it does not touch the look of the path at all.</span></div>
+      <div class="row">ENEMY HEALTH BARS ${num('ui.hpBars',1,48)}
+        <span class="hint">0 = elites only once damaged (this is why fodder Xenoids never showed one) &middot;
+        1 = every enemy once damaged &middot; 2 = every enemy, always.</span></div>
       <div class="row">APPROACH SPEED × ${num('world.approachMul',0.05,64)}
         <span class="hint">Scales every enemy's advance. 0.8 = 20% slower swarm without editing each SPEED row.</span></div>
       <div class="hint" style="color:#f4f;margin-top:14px">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>

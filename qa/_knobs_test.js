@@ -172,6 +172,7 @@ let code = fs.readFileSync(__dirname + '/../_game_extract.js', 'utf8');
 code += `
 ;globalThis.__H = { get G(){return G;}, startRun, update, draw, levelStart, CFG, EDIT,
   playerY, tankY, muzzleY, applyHorizon, knockBack, saveEdit, enemies, bullets, fire, enemyRow, WEAPONS,
+  applyEditWeapons, BG_ZOOM_START, BG_ZOOM_MAX,
   get HORIZON_Y(){return HORIZON_Y;} };`;
 (0, eval)(code);
 const H = globalThis.__H;
@@ -270,6 +271,48 @@ const three = fireOrigins(192, 20);
 const centreX = Math.round(H.G.px), centre = three.filter(b => Math.round(b.x) === centreX), flank = three.filter(b => Math.round(b.x) !== centreX);
 ok('centre lane sits ahead of the flankers', centre.length && flank.length && centre[0].y < flank[0].y,
    `centre y=${centre[0] && centre[0].y.toFixed(0)}  flank y=${flank[0] && flank[0].y.toFixed(0)}`);
+
+
+// 10. weapon roster: canonical names + the new Flamethrower
+const names = H.WEAPONS.map(w => w.name);
+ok('weapon names match DESIGN.md ladder', names[1] === 'Twin Plasma' && names[2] === 'Scatter Rail', names.join(' / '));
+const ft = H.WEAPONS[5];
+ok('Flamethrower exists as weapon 6', !!ft && ft.name === 'Flamethrower' && ft.burn > 0 && ft.life > 0,
+   ft ? `rof=${ft.rof} dmg=${ft.dmg} n=${ft.n} spread=${ft.spread} life=${ft.life}s burn=${ft.burn}` : 'MISSING');
+
+// flame puffs must expire (range limit) instead of flying off-screen
+H.startRun('campaign'); H.G.state='play'; H.G.weapon = 5; H.G.squad = 1;
+H.bullets.each(b => H.bullets.release(b));
+H.fire(999);
+const born = H.bullets.count();
+const spawnY = []; H.bullets.each(b => spawnY.push(b.y));
+for (let i=0;i<12;i++) H.update(0.05);   // 0.6s > the 0.42s puff life (auto-fire keeps making new ones)
+let farthest = 0; H.bullets.each(b => { farthest = Math.max(farthest, H.muzzleY() - b.y); });
+ok('flame puffs expire at max reach instead of crossing the screen',
+   born > 0 && farthest < 200, `${born} puffs per volley, farthest live puff ${farthest.toFixed(0)}px from the muzzle (a normal bolt would be off-screen)`);
+const reach = Math.max(...spawnY) - Math.min(...spawnY.concat([H.muzzleY() - 260]));
+ok('flame is short-range vs a bolt', ft.spd < 1, `speed factor ${ft.spd} of a normal bolt, ${(640*ft.spd*ft.life).toFixed(0)}px reach`);
+
+// burn keeps ticking after the stream stops
+H.startRun('campaign');
+const victim = H.enemies.alloc();
+Object.assign(victim, {kind:1, mode:0, y:500, x:H.G.px, hp:5000, maxhp:5000, r:24, vy:0, t:0, lane:0, kb:0, phase:1, crowd:0, burnT:0});
+victim.burnT = 1.6; victim.burnDps = 2.4;
+const hpBefore = victim.hp;
+for (let i=0;i<10;i++) H.update(0.05);
+ok('flamethrower burn ticks damage over time', victim.hp < hpBefore, `hp ${hpBefore} -> ${victim.hp.toFixed(1)} with no further hits`);
+
+// 11. readability + background
+ok('background zoom is 100% -> 150%', H.BG_ZOOM_START === 1.0 && H.BG_ZOOM_MAX === 1.5, `${H.BG_ZOOM_START*100}% -> ${H.BG_ZOOM_MAX*100}%`);
+ok('hp bar mode knob exists', H.EDIT.ui && Number.isFinite(H.EDIT.ui.hpBars), `ui.hpBars=${H.EDIT.ui && H.EDIT.ui.hpBars}`);
+
+// 12. FORGE hover help resolves for indexed paths
+// helpFor lives inside the FORGE closure, so assert against the source text instead
+const src = fs.readFileSync(__dirname + '/../index.html', 'utf8');
+const helpKeys = (src.match(/'(?:kinds|weapons|entities|world|player|ui|rollers|balance)\.[^']*':\s*'/g) || []).length;
+ok('FORGE hover-help map is wired', /const FORGE_HELP = \{/.test(src) && /function hlp\(path\)/.test(src) && helpKeys >= 25,
+   `${helpKeys} help entries, hlp() applied to num()/snd()/table headers`);
+ok('credits + hp-per-level are explained', /CREDITS PAID FOR A KILL/.test(src) && /Extra health added PER CAMPAIGN LEVEL/.test(src));
 
 console.log(fails ? `\n${fails} CHECK(S) FAILED` : '\nALL CHECKS PASSED');
 process.exit(fails ? 1 : 0);
