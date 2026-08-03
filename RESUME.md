@@ -1,5 +1,10 @@
 # HiVE WAR — Resume Brief (compact context)
 
+**Current build: `v0.2.5beta`** (was `2.5`; renumbered 2026-08-03 to a pre-1.0 beta scheme at
+Eric's request). `GAME_VERSION` in `index.html`, `sw.js` `CACHE_VERSION = 'v14'` — bump together.
+Signed APK: `Desktop\My Games\_APKs\HiveWar-0.2.5beta.apk` (25.5 MB).
+Rebuild: `powershell -File D:\Dev\_mobile/build_apk.ps1 -Game HiveWar -Version 0.2.5beta`
+
 Single-file web game: `D:\Dev\HiveWar\index.html`. Cyberpunk swarm-shooter (Bone Crush follow-up).
 Launch: **`Launch HiVE War.bat`** (starts a local http server + opens browser — `file://` breaks
 the `?v=` sprite URLs). Desktop shortcut: `Desktop\My Apps\HiVE Swarm.lnk` (not yet renamed —
