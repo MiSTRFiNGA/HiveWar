@@ -820,7 +820,7 @@ function fire(dt) {
   const tierDmgMult = soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
   if (w.shape === 'ion') {                // capital-ship beam: ONE fat piercing shot up the middle
     const b = bullets.alloc(); if (!b) return;
-    b.x = G.px; b.y = CFG.H - 150; b.tier = G.weapon;
+    b.x = G.px; b.y = CFG.H - 65; b.tier = G.weapon;
     b.vx = 0; b.vy = -520;                // slower than a normal bolt — you watch it travel
     b.vis = true; b.pierce = true; b._hit = new Set();   // fresh per shot; cleared on release
     // The Ion Cannon remains one focused beam, but carries the full squad volley's damage.
@@ -834,7 +834,7 @@ function fire(dt) {
   for (let c = 0; c < cols; c++) {
     const off = (c - (cols - 1) / 2) * 18;              // centre / left / right firing lanes
     const bx = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-    const by = CFG.H - 130 - (c === Math.floor(cols / 2) ? 10 : 0); // centre bolt reads ahead
+    const by = CFG.H - 45 - (c === Math.floor(cols / 2) ? 10 : 0); // centre bolt reads ahead
     const baseVx = (CFG.W / 2 - bx) * 0.55, baseVy = -640;                     // converge toward road center, straight up
     const baseAngle = Math.atan2(baseVy, baseVx), speed = Math.hypot(baseVx, baseVy);
     const b = bullets.alloc(); if (!b) return;
@@ -858,7 +858,7 @@ function perkWeapons(dt) {
       for (let i = 0; i < drones; i++) {
         const b = bullets.alloc(); if (!b) break;
         const a = G.t * 2.6 + i * 6.283 / drones;              // EXACT same orbit as the drawn drones
-        b.x = G.px + Math.cos(a) * 82; b.y = CFG.H - 140 + Math.sin(a) * 34;
+        b.x = G.px + Math.cos(a) * 82; b.y = CFG.H - 55 + Math.sin(a) * 34;
         b.vx = Math.sin(a) * 45; b.vy = -720; b.dmg = 2.2 + 1.2 * (G.perks['Drone Escort'] || 0);
         b.r = 4; b.tier = Math.min(4, G.weapon + 1); b.aoe = 0; b.grenade = false; b.vis = true;
         b.pierce = false;                                      // pooled — never inherit a beam's pierce flag
@@ -1831,7 +1831,7 @@ function drawPerspectiveRoad(){
   //   sides   y~330/883 -> 359 = HORIZON_Y-32   (was 271 — walls reached far too high)
   //   chimney y~410/883 -> 446 = HORIZON_Y+55   (was 399 — too shallow to see down the corridor)
   //   chimney x 204..324/517 -> half-width ~63 = top+20 (was top+35, slightly too wide)
-  const openEdgeY=HORIZON_Y-32, openLipY=HORIZON_Y+55, openLipX=top+20;
+  const openEdgeY=HORIZON_Y-32, openLipY=HORIZON_Y+10, openLipX=top+20;
   // SQUARED OFF, not tapered — owner correction 2026-08-02 (green-line sketch). The previous
   // shape ran two diagonals from the screen edges down to a centre lip, so the wall tops came to
   // a POINT. He wants right angles: flat wall top, straight drop, flat chimney floor, straight
@@ -1911,22 +1911,10 @@ function drawPerspectiveRoad(){
   cx.strokeStyle='rgba(255,255,255,.2)';cx.setLineDash([18,24]);cx.beginPath();cx.moveTo(CFG.W/2,HORIZON_Y);cx.lineTo(CFG.W/2,CFG.H);cx.stroke();cx.setLineDash([]);
 }
 function drawFarHorde(){
-  // organic packed mass: jittered body dots clipped to the road, flowing downward
-  const intent=(BAL.spawnRate[G.level-1]||8)*(G.mode==='endless'?Math.pow(1.07,G.loop):1);
-  const rows=Math.max(10,Math.min(24,Math.round(8+intent*.35)));
+  // Owner request (HW fix set): remove the decorative packed-dot spawn glow band at the
+  // horizon (bright green blobs). Enemy spawning itself lives in spawnWave() and is
+  // untouched — this function now only draws the acid kill line below it.
   cx.save();roadClip();
-  const flow=(G.t*.055)%(1/rows);
-  for(let r=0;r<rows;r++){
-    const z=.02+((r/rows)+flow)%1*.17,y=roadY(z),hw=roadHalfWidthAtY(y)-4;   // tight band right below the horizon (half the old spread)
-    const n=Math.max(6,Math.round(hw/4.2)),size=0.8+z*2.2;   // smaller wave-indicator specks
-    for(let i=0;i<n;i++){
-      const h=hash01(r*131+i*7),h2=hash01(r*57+i*13);
-      const x=CFG.W/2-hw+ (i+h*.9)*(2*hw/n), yy=y+(h2-.5)*7*z;
-      cx.fillStyle=h2<.82?(h<.5?'#2fbf58':'#37d566'):'#9b3fd9';
-      cx.beginPath();cx.arc(x,yy,size*(0.7+h*.6),0,7);cx.fill();
-      if(h>.93){cx.fillStyle='rgba(220,255,230,.5)';cx.beginPath();cx.arc(x-size*.3,yy-size*.3,size*.3,0,7);cx.fill();}
-    }
-  }
   // acid kill line where the mass dies (moved up with the shorter band)
   const ky=roadY(.20),khw=roadHalfWidthAtY(ky);
   cx.globalCompositeOperation='lighter';
@@ -1951,9 +1939,7 @@ function drawBossProgressBar(){
   if (G.state !== 'play' || G.boss) return;
   const dur = levelDuration(G.level - 1);
   const p = Math.max(0, Math.min(1, G.levelT / dur));
-  const bw = CFG.W - 80, bx = 40, by = 104, bh = 10;   // pushed below the DOM weapon-name row (#hud row2), was 52 which drew through it
-  cx.fillStyle = 'rgba(6,3,18,.72)'; cx.fillRect(bx - 2, by - 14, bw + 4, bh + 22);
-  cx.fillStyle = '#1a1228'; cx.fillRect(bx, by, bw, bh);
+  const bw = 327, bx = 96, by = 104, bh = 10;   // spans between the HUD elements (owner restyle: no dark track, fits x=96..423)
   cx.fillStyle = G.level === CFG.levels ? '#b24cff' : '#4fd';
   cx.fillRect(bx, by, bw * p, bh);
   cx.strokeStyle = 'rgba(255,255,255,.45)'; cx.strokeRect(bx, by, bw, bh);
@@ -1971,7 +1957,7 @@ function drawVehicles(){
     const hw0=roadHalfWidthAtY(y0), hw1=roadHalfWidthAtY(y1);
     // Edge direction along the road side (screen space): as y decreases, half-width shrinks.
     const edgeDx=side*(hw0-hw1), edgeDy=y0-y1;
-    const roadAngle=Math.atan2(edgeDx, edgeDy);   // 0 = pointing up the road
+    const roadAngle=-Math.atan2(edgeDx, edgeDy);   // 0 = pointing up the road; negated — owner: tanks leaned the wrong way
     cx.save(); cx.translate(x,y); cx.rotate(roadAngle);
     if(IMGS.tank&&IMGS.tank.ok){
       const th=72*tSc,tw=th*(IMGS.tank.width/IMGS.tank.height);
@@ -2373,7 +2359,7 @@ function drawDebugCanvas(){
 }
 function drawSquad() {
   const n = G.squad <= 5 ? G.squad : Math.min(20, 5 + Math.round((G.squad - 5) / 64));  // 1-5 normal, 20 = huge army
-  const y0 = CFG.H - 110;
+  const y0 = CFG.H - 25;   // owner: pawn near the very bottom of the screen (~97% down)
   // Soldier-tier visual read (owner spec 2026-07-30: a stat is not a progression system unless
   // you can SEE it) — ring/insignia colour + a subtle scale bump climb with soldierTier. Tier 1
   // resolves to the original cyan ring + 1.0 scale, so the baseline look is unchanged.
