@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '2.3';
+const GAME_VERSION = '2.4';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -259,7 +259,7 @@ function editDefaults() { return {
   // Owner request 2026-08-02: on a phone the thumb covers the bottom of the screen, so this needs to
   // be dialled per-device. The melee/latch lines follow it, so raising the squad does not change the
   // distance at which enemies bite — only where the fight happens on screen.
-  player: { rofMul: 1, dmgMul: 1, armor: 0, bottomOffset: 25 },   // armor = % of squad-loss prevented (0-90)
+  player: { rofMul: 1, dmgMul: 1, armor: 0, bottomOffset: 192 },   // 192 = 0.80 down the 960 playfield (owner default 2026-08-03)
   // ---- WORLD / perspective (owner request 2026-08-02: "extend the path further back into the
   // distance so the spawn point is further back — they appear too fast") ----
   //   horizonPct   fraction of screen height where the vanishing point sits. LOWER = horizon higher
@@ -270,7 +270,10 @@ function editDefaults() { return {
   //                "pop" without changing the visible path at all. Cheapest fix for "too fast".
   //   approachMul  multiplies every enemy's downward speed. 0.8 = 20% slower approach across the
   //                board, without editing each enemy's SPEED row.
-  world: { horizonPct: 0.407, spawnBackPx: 0, approachMul: 1 },
+  // horizonStart -> horizonEnd RAMPS across the level (owner request 2026-08-03): the level opens
+  // on a long deep corridor and closes up as you approach the boss, so arriving at the boss reads
+  // as "the walls came in". horizonPct is kept only so older saved packs still import.
+  world: { horizonStart: 0.15, horizonEnd: 0.43, horizonPct: 0.407, spawnBackPx: 0, approachMul: 1 },
   balance: { startCredits: 0, killCreditMul: 1, shopCostMul: 1 },
   // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
   // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears.
@@ -836,14 +839,15 @@ function fire(dt) {
   if (fireT > 0) return;
   fireT = 1 / rof;
   AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
-  // HW.4 — bolt ladder keyed to LEVEL (not squad size): 1 bolt L1–9, 2 at L10–19, 3 at L20+.
-  // Squad size still multiplies DPS via damage-share below; ladder only controls visible coverage.
-  const cols = G.level >= 20 ? 3 : G.level >= 10 ? 2 : 1;
+  // HW.18 (owner correction 2026-08-03): the bolt ladder is keyed to SQUAD SIZE, not level —
+  // 1 bolt under 10 troops, 2 at 10-19, 3 at 20+. Squad size still multiplies DPS via the
+  // damage-share below; the ladder only controls how many firing LANES are visible.
+  const cols = G.squad >= 20 ? 3 : G.squad >= 10 ? 2 : 1;
   // Tier 1 (default/no purchase) = 1.0; higher persistent tiers remain a damage axis.
   const tierDmgMult = soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
   if (w.shape === 'ion') {                // capital-ship beam: ONE fat piercing shot up the middle
     const b = bullets.alloc(); if (!b) return;
-    b.x = G.px; b.y = CFG.H - 65; b.tier = G.weapon;
+    b.x = G.px; b.y = muzzleY(); b.tier = G.weapon;
     b.vx = 0; b.vy = -520;                // slower than a normal bolt — you watch it travel
     b.vis = true; b.pierce = true; b._hit = new Set();   // fresh per shot; cleared on release
     // The Ion Cannon remains one focused beam, but carries the full squad volley's damage.
@@ -852,24 +856,34 @@ function fire(dt) {
     b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false;
     return;
   }
-  // The ladder owns bolt count. Forge-controlled SPREAD remains the fan angle across its bolts.
-  const pellets = cols;
+  // HW.18 — LANES and PELLETS are separate axes again. The old code set `pellets = cols`, which
+  // meant a 1-lane volley had exactly one pellet, so `pellets - 1 === 0` zeroed the fan and NO
+  // weapon could spread until squad 10+ (owner bug report 2026-08-03: "the spread gun does not
+  // spread anymore even with spread amounts").
+  //   cols   = firing LANES from the squad ladder (1 / 2 / 3)
+  //   w.n    = PELLETS per lane, fanned across w.spread radians — the weapon's own character
+  const pellets = Math.max(1, w.n | 0);
+  const total = cols * pellets;
   for (let c = 0; c < cols; c++) {
     const off = (c - (cols - 1) / 2) * 18;              // centre / left / right firing lanes
     const bx = Math.max(36, Math.min(CFG.W - 36, G.px + off));
-    const by = CFG.H - 45 - (c === Math.floor(cols / 2) ? 10 : 0); // centre bolt reads ahead
+    // Centre lane sits slightly AHEAD of its flankers (owner spec) — measured from the sprite's
+    // top-centre muzzle so it tracks the squad's screen position instead of a hardcoded row.
+    const by = muzzleY() - (c === Math.floor(cols / 2) && cols > 1 ? 10 : 0);
     const baseVx = (CFG.W / 2 - bx) * 0.55, baseVy = -640;                     // converge toward road center, straight up
     const baseAngle = Math.atan2(baseVy, baseVx), speed = Math.hypot(baseVx, baseVy);
-    const b = bullets.alloc(); if (!b) return;
-    const fanOff = pellets === 1 ? 0 : -w.spread / 2 + w.spread * c / (pellets - 1);
-    const ang = baseAngle + fanOff;
-    b.x = bx; b.y = by; b.tier = G.weapon;
-    b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
-    b.vis = true;
-    // Each visual bolt represents an equal share of the squad. The ladder controls coverage,
-    // while squad size, weapon stats, and permanent tiers remain the damage progression.
-    b.dmg = w.dmg * G.squad / pellets * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
-    b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
+    for (let p = 0; p < pellets; p++) {
+      const b = bullets.alloc(); if (!b) return;
+      const fanOff = pellets === 1 ? 0 : -w.spread / 2 + w.spread * p / (pellets - 1);
+      const ang = baseAngle + fanOff;
+      b.x = bx; b.y = by; b.tier = G.weapon;
+      b.vx = Math.cos(ang) * speed; b.vy = Math.sin(ang) * speed;
+      b.vis = true;
+      // Each visual bolt represents an equal share of the squad, so adding lanes/pellets spreads
+      // coverage without inflating total DPS.
+      b.dmg = w.dmg * G.squad / total * 1.1 * (1 + 0.08 * G.meta.dmg) * EDIT.player.dmgMul * tierDmgMult;
+      b.r = 3 + w.dmg; b.aoe = 0; b.grenade = false; b.purple = false; b.pierce = false;   // pooled — clear the drone/beam flags
+    }
   }
 }
 function perkWeapons(dt) {
@@ -994,17 +1008,26 @@ function spawnBoss() {
 }
 // ---- KNOCKBACK (owner request 2026-08-02) ----
 // Two independent dials, so "heavier" is a property of the ENEMY and "punchier" is a property of the
-// GUN: pushback px = weapon RECOIL / enemy MASS. A latched enemy (mode 2) is deliberately immune —
-// it is locked to the front line and letting bullets shove it would break the bite loop.
+// GUN: pushback px = weapon RECOIL / enemy MASS.
+// A LATCHED enemy (mode 2) used to be immune. That was the second half of Eric's "I can see no
+// difference" report 2026-08-03: anything close enough to be worth shooting had already latched, so
+// the immunity ate almost every hit the player could actually see. Latched enemies now take
+// KB_LATCHED of the push — they get visibly shoved off the front line and crawl back in, which is
+// exactly the recoil read we want — instead of being pinned.
 // e.kb is a pending push in px, burned off over ~KB_DECAY so the hit reads as a shove, not a teleport.
-const KB_DECAY = 9;          // 1/s — higher = the bounce snaps back faster
-const KB_MAX   = 70;         // px ceiling per hit, so a 5-stream volley can't launch a fodder unit offscreen
+// Owner feedback 2026-08-03: at KB_MAX 70 / decay 9 the shove was invisible in play. The dominant
+// reason is that one-shot fodder DIES on the bullet that would have pushed it — a dead enemy is
+// released the same frame, so it can never be seen recoiling. Raised the ceiling and slowed the
+// decay so a surviving enemy visibly travels; the FORGE hint now says to test on a tanky one.
+const KB_DECAY = 6;          // 1/s — higher = the bounce snaps back faster
+const KB_MAX   = 260;        // px ceiling per hit, so a 5-stream volley can't launch a unit offscreen
+const KB_LATCHED = 0.5;      // a biting enemy has a grip — it still gets shoved, just half as far
 function knockBack(e, recoil) {
-  if (!e || e.mode === 2) return;
+  if (!e || e.mode === 1) return;              // still in its spawn/elite entrance
   const r = Number(recoil); if (!Number.isFinite(r) || r <= 0) return;
   const mass = Number((enemyRow(e.kind) || {}).mass);
   const m = Number.isFinite(mass) && mass > 0 ? mass : 1;
-  e.kb = Math.min(KB_MAX, (e.kb || 0) + r / m);
+  e.kb = Math.min(KB_MAX, (e.kb || 0) + (r / m) * (e.mode === 2 ? KB_LATCHED : 1));
 }
 function damageEnemy(e, dmg, x, y) {
   e.hp -= dmg;
@@ -1195,6 +1218,7 @@ function processLevelLayout() {
 }
 let gateT = 0, last = 0;
 function update(dt) {
+  applyHorizon();   // corridor depth ramps with level progress (world.horizonStart -> horizonEnd)
   if (G.state !== 'play' && G.state !== 'boss') return;
   if (G.paused) return;                                // HUD pause button froze the run
   if (G.hitStop > 0) { G.hitStop -= dt; return; }
@@ -1332,7 +1356,9 @@ function update(dt) {
       const tx = px + e.crowd * 150;                       // crowd around the squad, tracking its moves
       e.x += (tx - e.x) * Math.min(1, 7 * dt);
       const lunge = Math.max(0, Math.sin(e.t * 6 + e.phase)) * 14;   // rhythmic biting lunges
-      e.y += ((playerY() - 120 + lunge) - e.y) * Math.min(1, 8 * dt);
+      // Pending knockback offsets the front-line target, so a shove reads as the enemy being
+      // driven back and then crawling in again rather than snapping straight back.
+      e.y += ((playerY() - 120 + lunge - (e.kb || 0)) - e.y) * Math.min(1, 8 * dt);
       e.atkT -= dt;
       if (e.atkT <= 0) { e.atkT = 0.85;
         const loss = Math.max(1, Math.round(([4,16,8,9,8,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
@@ -1511,10 +1537,23 @@ function bossKill() {
 // this one value, so the road, walls, gates, rollers and backdrop dome all follow in one step.
 let HORIZON_Y = CFG.H * 0.407;                     // 391 on a 960-tall screen
 function worldCfg(){ return (EDIT && EDIT.world) || { horizonPct:0.407, spawnBackPx:0, approachMul:1 }; }
-function applyHorizon(){
-  const pct = Number(worldCfg().horizonPct);
+// 0 at level start, 1 when the boss is due — drives the corridor closing in as you advance.
+function levelProgress(){
+  if (G.state === 'boss') return 1;
+  if (G.state !== 'play') return 0;
+  const d = levelDuration(Math.max(0, (G.level || 1) - 1)) || 60;
+  return Math.max(0, Math.min(1, (G.levelT || 0) / d));
+}
+function clampHorizonPct(v, fallback){
   // Clamp hard: below 0.15 the corridor swallows the backdrop, above 0.60 it stops being a road.
-  HORIZON_Y = CFG.H * (Number.isFinite(pct) ? Math.max(0.15, Math.min(0.60, pct)) : 0.407);
+  return Number.isFinite(v) ? Math.max(0.15, Math.min(0.60, v)) : fallback;
+}
+function applyHorizon(){
+  const w = worldCfg();
+  const legacy = clampHorizonPct(Number(w.horizonPct), 0.407);
+  const a = clampHorizonPct(Number(w.horizonStart), legacy);
+  const b = clampHorizonPct(Number(w.horizonEnd), legacy);
+  HORIZON_Y = CFG.H * (a + (b - a) * levelProgress());
 }
 applyHorizon();
 function roadHalfWidth(z){ const near = CFG.W * 0.08, far = CFG.W / 2; return near + (far - near) * z; }  // 43.2 -> 270
@@ -2419,7 +2458,14 @@ function drawDebugCanvas(){
 // Where the squad's front rank stands, in screen y. FORGE: PLAYER > SCREEN POSITION (owner request
 // 2026-08-02 — a phone thumb covers the bottom band, so this has to be dialled per device).
 function playerY(){ const v = Number(EDIT.player && EDIT.player.bottomOffset);
-  return CFG.H - (Number.isFinite(v) ? Math.max(0, Math.min(CFG.H * 0.55, v)) : 25); }
+  return CFG.H - (Number.isFinite(v) ? Math.max(0, Math.min(CFG.H * 0.55, v)) : 192); }
+// TOP-CENTRE of the drawn trooper sprite = where the muzzle flash and every bolt originate.
+// Must track playerY(): before this, bolts spawned at a hardcoded CFG.H-45 and visibly kept firing
+// from the old spot once the squad was moved (owner bug report 2026-08-03).
+function muzzleY(){
+  const sz = 58 * (1 + ((G.meta && G.meta.soldierTier || 1) - 1) * 0.035) * (ENT('player.soldier').scale || 1);
+  return playerY() - (sz - 10);      // drawSquad draws the sprite at y - sz + 10
+}
 // Tank row. yOff lifts both escorts up the corridor from their default row (owner request 2026-08-02).
 function tankY(){ const v = Number(ENT('vehicle.tank').yOff);
   return (CFG.H - 168) - (Number.isFinite(v) ? Math.max(-160, Math.min(520, v)) : 0); }
@@ -3160,12 +3206,15 @@ function renderTab(){
     body.querySelector('#fInv').onclick = () => { FORGE_DBG.invincible = !FORGE_DBG.invincible; renderTab(); };
   }
   else if (tab===2){ // WEAPONS
-    let h = `<div class="hint">Per-weapon tuning. <b>Bolt ladder is by LEVEL</b> (not squad size): <b>1 bolt L1–9 · 2 bolts L10–19 · 3 bolts L20+</b>.
-      Squad size still multiplies DPS (damage is shared across bolts). SPREAD = total fan angle. FIRE SFX = shot sample.
+    let h = `<div class="hint">Per-weapon tuning. <b>Firing lanes are by SQUAD SIZE</b>: <b>1 lane under 10 troops · 2 at 10-19 · 3 at 20+</b>,
+      centre lane slightly ahead. Each lane fires that weapon's own pellet count, fanned across SPREAD — so the Spread Gun
+      fans even with a single lane. Squad size multiplies DPS (damage is shared across every bolt). FIRE SFX = shot sample.
       Ion Cannon is locked until level 5+.</div>
       <b>RECOIL</b> = how hard a hit shoves the enemy back up the corridor (px at enemy mass 1).
       Actual pushback = RECOIL ÷ that enemy's WEIGHT on the ENTITIES tab, so a heavy xeno barely flinches
-      under the same gun. 0 = no bounce at all.</div>
+      under the same gun. 0 = no bounce at all.
+      <b>Testing note:</b> an enemy that dies to the shot cannot be seen recoiling — it is removed the same frame.
+      Try it on an Eldritch Sponge, or raise the Xenoid's HP BASE on the ENTITIES tab first.</div>
       <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>SPREAD</th><th>RECOIL</th><th>FIRE SFX</th><th>TEST</th></tr>`;
     EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
@@ -3323,10 +3372,11 @@ function renderTab(){
   }
   else if (tab===5){ // WORLD: barriers + rolling hazards + per-level environment
     let h = `<div class="hint" style="color:#4ff">CORRIDOR — how far back the path runs and how fast the swarm closes</div>
-      <div class="row">PATH DEPTH (horizon, % down the screen) ${num('world.horizonPct',0.01,64)}
-        <span class="hint">0.407 = current look. <b>LOWER = the vanishing point sits higher up = a longer path
-        and more travel time.</b> 0.25 is the old deep corridor. Clamped 0.15-0.60; changes the road, walls,
-        barriers and rollers together.</span></div>
+      <div class="row">PATH DEPTH — START ${num('world.horizonStart',0.01,64)} &nbsp; AT BOSS ${num('world.horizonEnd',0.01,64)}
+        <span class="hint"><b>LOWER = vanishing point higher up = longer path.</b> The level now RAMPS from
+        START to AT BOSS as the wave timer runs, so the corridor closes in as you approach the fight
+        (0.15 → 0.43 by default). Set both the same for a fixed depth. Clamped 0.15-0.60; road, walls,
+        barriers and rollers all follow.</span></div>
       <div class="row">SPAWN LEAD-IN ${num('world.spawnBackPx',20,64)} px
         <span class="hint">Extra distance above the screen the swarm starts from. They ride the vanishing point
         until they cross the horizon, so this is a pure delay before they "appear" — the cheapest fix for

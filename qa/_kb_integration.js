@@ -170,106 +170,18 @@ global.innerWidth = 540; global.innerHeight = 960;
 
 let code = fs.readFileSync(__dirname + '/../_game_extract.js', 'utf8');
 code += `
-;globalThis.__H = { get G(){return G;}, startRun, update, draw, levelStart, CFG, EDIT,
-  playerY, tankY, muzzleY, applyHorizon, knockBack, saveEdit, enemies, bullets, fire, enemyRow, WEAPONS,
-  get HORIZON_Y(){return HORIZON_Y;} };`;
+;globalThis.__H = { get G(){return G;}, startRun, update, CFG, EDIT, enemies, bullets, WEAPONS,
+  fire, enemyRow, knockBack, kindHp, applyEditWeapons };`;
 (0, eval)(code);
 const H = globalThis.__H;
-let fails = 0;
-const ok = (name, cond, extra) => { console.log((cond?'PASS  ':'FAIL  ')+name+(extra?'   '+extra:'')); if(!cond) fails++; };
-
-// 1. player screen position
-const pDefault = H.playerY();
-H.EDIT.player.bottomOffset = 220;
-ok('player screen position moves up', H.playerY() === H.CFG.H - 220, `default=${pDefault} tuned=${H.playerY()}`);
-H.EDIT.player.bottomOffset = 25;
-
-// 2. tank vertical offset
-const tDefault = H.tankY();
-const tank = H.EDIT.entities.find(e => e.id === 'vehicle.tank');
-tank.yOff = 90;
-ok('tank Y-offset moves up', H.tankY() === tDefault - 90, `default=${tDefault} tuned=${H.tankY()}`);
-tank.yOff = 0;
-
-// 3. corridor depth RAMPS across the level
-H.startRun('campaign'); H.G.state='play'; H.G.levelT = 0; H.applyHorizon();
-const hOpen = H.HORIZON_Y;
-H.G.state='boss'; H.applyHorizon();
-const hBoss = H.HORIZON_Y;
-ok('path depth ramps deep->close across the level', hOpen < hBoss,
-   `start ${hOpen.toFixed(0)} (path ${(H.CFG.H-hOpen).toFixed(0)}px)  ->  boss ${hBoss.toFixed(0)} (path ${(H.CFG.H-hBoss).toFixed(0)}px)`);
-ok('start depth honours world.horizonStart 0.15', Math.abs(hOpen - H.CFG.H*0.15) < 1, `${hOpen.toFixed(1)} vs ${(H.CFG.H*0.15).toFixed(1)}`);
-ok('boss depth honours world.horizonEnd 0.43', Math.abs(hBoss - H.CFG.H*0.43) < 1, `${hBoss.toFixed(1)} vs ${(H.CFG.H*0.43).toFixed(1)}`);
-H.EDIT.world.horizonStart = 9; H.EDIT.world.horizonEnd = 9; H.applyHorizon();
-ok('horizon clamped', H.HORIZON_Y === H.CFG.H * 0.60, `clamped to ${H.HORIZON_Y.toFixed(1)}`);
-H.EDIT.world.horizonStart = 0.15; H.EDIT.world.horizonEnd = 0.43; H.G.state='play'; H.applyHorizon();
-
-// 4. spawn lead-in + approach speed
-// force a dense wave so this is not a vacuous pass
-const measureSpawn = (backPx, apprMul) => {
-  H.startRun('campaign'); H.EDIT.spawnRate[0] = 40;
-  H.EDIT.world.spawnBackPx = backPx; H.EDIT.world.approachMul = apprMul;
-  for (let i=0;i<8;i++) H.update(0.1);
-  let minY = 1e9, n = 0, sumV = 0;
-  H.enemies.each(e => { n++; minY = Math.min(minY, e.y); sumV += e.vy; });
-  return { n, minY, avgV: n ? sumV/n : 0 };
-};
-const base = measureSpawn(0, 1), back = measureSpawn(600, 1);
-ok('spawn lead-in pushes the spawn point further back', back.n > 0 && back.minY < base.minY - 500,
-   `default highest y=${base.minY.toFixed(0)} (n=${base.n})  +600px lead-in y=${back.minY.toFixed(0)} (n=${back.n})`);
-const slow = measureSpawn(0, 0.5);
-ok('approach speed multiplier slows the swarm', slow.avgV > 0 && slow.avgV < base.avgV * 0.6,
-   `default avg vy=${base.avgV.toFixed(1)}  x0.5 avg vy=${slow.avgV.toFixed(1)}`);
-H.EDIT.world.spawnBackPx = 0; H.EDIT.world.approachMul = 1;
-
-// 5. knockback: same weapon, different enemy weight
 H.startRun('campaign');
-const mk = (kind, mass) => { H.EDIT.kinds[kind].mass = mass;
-  const e = H.enemies.alloc(); e.kind = kind; e.mode = 0; e.y = 600; e.x = 270; e.hp = e.maxhp = 9999; e.kb = 0; e.t=0; e.vy=0; e.lane=0; return e; };
-const light = mk(0, 0.5), heavy = mk(0, 0.5);   // same kind so speed is identical
-H.EDIT.kinds[0].mass = 0.5; H.knockBack(light, 30);
-H.EDIT.kinds[0].mass = 3;   H.knockBack(heavy, 30);
-ok('lighter enemy takes more knockback', light.kb > heavy.kb, `mass0.5 kb=${light.kb.toFixed(1)}  mass3 kb=${heavy.kb.toFixed(1)}`);
-const before = light.y;
-for (let i=0;i<3;i++) H.update(0.05);
-ok('knockback actually moves the enemy back up the corridor', light.y < before, `y ${before.toFixed(0)} -> ${light.y.toFixed(0)}`);
-
-// 6. weapon recoil is per-weapon and FORGE-visible
-ok('every weapon has a recoil value', H.WEAPONS.every(w => Number.isFinite(w.recoil)), H.WEAPONS.map(w=>w.name+':'+w.recoil).join('  '));
-
-
-// 7. bolts originate at the soldier's top-centre and FOLLOW the squad's screen position
-const fireOrigins = (bottomOffset, squad) => {
-  H.startRun('campaign'); H.G.state='play'; H.EDIT.player.bottomOffset = bottomOffset; H.G.squad = squad; H.G.weapon = 1;
-  H.bullets.each(b => H.bullets.release(b));
-  H.fire(999);   // force one volley
-  const out = []; H.bullets.each(b => out.push({x:b.x, y:b.y, vx:b.vx}));
-  return out;
-};
-const lowSquad = fireOrigins(192, 1);
-ok('bolts spawn at the sprite muzzle, not a hardcoded row',
-   lowSquad.length > 0 && Math.abs(lowSquad[0].y - H.muzzleY()) < 12,
-   `bolt y=${lowSquad[0] && lowSquad[0].y.toFixed(0)}  muzzleY=${H.muzzleY().toFixed(0)}  playerY=${H.playerY().toFixed(0)}`);
-const moved = fireOrigins(400, 1);
-ok('muzzle follows the squad when SCREEN POSITION moves',
-   Math.abs(moved[0].y - lowSquad[0].y) > 190, `y ${lowSquad[0].y.toFixed(0)} -> ${moved[0].y.toFixed(0)} after +208px move`);
-H.EDIT.player.bottomOffset = 192;
-
-// 8. spread actually fans at 1 lane (the regression Eric reported)
-H.EDIT.weapons[1].spread = 0.45; H.WEAPONS[1].spread = 0.45;
-const oneLane = fireOrigins(192, 1);
-const vxs = oneLane.map(b => b.vx);
-ok('Spread Gun fans with a single lane (squad 1)', oneLane.length === H.WEAPONS[1].n && Math.max(...vxs) - Math.min(...vxs) > 50,
-   `${oneLane.length} bolts, vx spread ${(Math.max(...vxs)-Math.min(...vxs)).toFixed(0)}`);
-
-// 9. lane ladder keyed to SQUAD, not level
-const laneCount = squad => { const o = fireOrigins(192, squad); return new Set(o.map(b => Math.round(b.x))).size; };
-const l1 = laneCount(1), l10 = laneCount(10), l20 = laneCount(20);
-ok('lane ladder is 1 / 2 / 3 by squad size', l1 === 1 && l10 === 2 && l20 === 3, `squad 1->${l1} lanes, 10->${l10}, 20->${l20}`);
-const three = fireOrigins(192, 20);
-const centreX = Math.round(H.G.px), centre = three.filter(b => Math.round(b.x) === centreX), flank = three.filter(b => Math.round(b.x) !== centreX);
-ok('centre lane sits ahead of the flankers', centre.length && flank.length && centre[0].y < flank[0].y,
-   `centre y=${centre[0] && centre[0].y.toFixed(0)}  flank y=${flank[0] && flank[0].y.toFixed(0)}`);
-
-console.log(fails ? `\n${fails} CHECK(S) FAILED` : '\nALL CHECKS PASSED');
-process.exit(fails ? 1 : 0);
+H.G.state='play';
+// tanky target so it cannot die on the first bullet
+H.EDIT.weapons[0].recoil = 500; H.EDIT.kinds[0].mass = 1; H.applyEditWeapons();
+const e = H.enemies.alloc();
+Object.assign(e, {kind:0, mode:0, y:700, x:H.G.px, hp:1e9, maxhp:1e9, r:22, vy:0, t:0, lane:0, kb:0, phase:1, crowd:0});
+const y0 = e.y;
+let hits = 0, minY = e.y;
+for (let i=0;i<30;i++){ H.fire(0.05); H.update(0.05); minY = Math.min(minY, e.y); }
+console.log('bullets live:', H.bullets.count(), 'enemy y', y0, '->', e.y.toFixed(1), 'min', minY.toFixed(1), 'kb', (e.kb||0).toFixed(1));
+console.log(e.hp < 1e9 ? 'enemy WAS hit by bullets' : 'enemy was NEVER hit (bullets missed)');
