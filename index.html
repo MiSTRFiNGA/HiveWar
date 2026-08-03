@@ -1832,8 +1832,16 @@ function drawPerspectiveRoad(){
   //   chimney y~410/883 -> 446 = HORIZON_Y+55   (was 399 — too shallow to see down the corridor)
   //   chimney x 204..324/517 -> half-width ~63 = top+20 (was top+35, slightly too wide)
   const openEdgeY=HORIZON_Y-32, openLipY=HORIZON_Y+55, openLipX=top+20;
+  // SQUARED OFF, not tapered — owner correction 2026-08-02 (green-line sketch). The previous
+  // shape ran two diagonals from the screen edges down to a centre lip, so the wall tops came to
+  // a POINT. He wants right angles: flat wall top, straight drop, flat chimney floor, straight
+  // rise. The chimney rectangle is part of the opening, so the background shows through it at
+  // the vanishing point (his red circle).
   cx.moveTo(-10,-10); cx.lineTo(CFG.W+10,-10); cx.lineTo(CFG.W+10,openEdgeY);
-  cx.lineTo(CFG.W/2+openLipX,openLipY); cx.lineTo(CFG.W/2-openLipX,openLipY);
+  cx.lineTo(CFG.W/2+openLipX,openEdgeY);   // flat wall top — right
+  cx.lineTo(CFG.W/2+openLipX,openLipY);    // straight drop into the chimney
+  cx.lineTo(CFG.W/2-openLipX,openLipY);    // flat chimney floor
+  cx.lineTo(CFG.W/2-openLipX,openEdgeY);   // straight rise back out
   cx.lineTo(-10,openEdgeY); cx.closePath();
   cx.clip('evenodd');
   for(const s of [-1,1]){
@@ -1943,7 +1951,7 @@ function drawBossProgressBar(){
   if (G.state !== 'play' || G.boss) return;
   const dur = levelDuration(G.level - 1);
   const p = Math.max(0, Math.min(1, G.levelT / dur));
-  const bw = CFG.W - 80, bx = 40, by = 52, bh = 10;
+  const bw = CFG.W - 80, bx = 40, by = 104, bh = 10;   // pushed below the DOM weapon-name row (#hud row2), was 52 which drew through it
   cx.fillStyle = 'rgba(6,3,18,.72)'; cx.fillRect(bx - 2, by - 14, bw + 4, bh + 22);
   cx.fillStyle = '#1a1228'; cx.fillRect(bx, by, bw, bh);
   cx.fillStyle = G.level === CFG.levels ? '#b24cff' : '#4fd';
@@ -2277,13 +2285,15 @@ function draw() {
   // Kill-streak sits on the BACKGROUND band (above the road/horizon) so it no longer blocks
   // enemies as they appear mid-corridor (task 5.3 — was CFG.W/2, 430).
   if (G.streak > 1 && G.streakT > 0) {
-    const streakY = Math.max(96, HORIZON_Y * 0.48);
+    // Larger + lower per owner request, but kept clear of the enemy-spawn band at the horizon
+    // (HORIZON_Y*0.62 ≈ 242, well above the ~330 safety line; was HORIZON_Y*0.48 ≈ 188 @ 48px).
+    const streakY = Math.max(96, HORIZON_Y * 0.62);
     const pop = 1 + Math.min(.18, G.streak * .002);
     cx.save(); cx.translate(CFG.W / 2, streakY); cx.scale(pop, pop); cx.textAlign = 'center';
-    cx.font = '900 48px Segoe UI'; cx.lineWidth = 7; cx.strokeStyle = '#130524';
+    cx.font = '900 60px Segoe UI'; cx.lineWidth = 7; cx.strokeStyle = '#130524';
     cx.strokeText(G.streak, 0, 0); cx.fillStyle = '#fff'; cx.shadowColor = '#8f4'; cx.shadowBlur = 16;
-    cx.fillText(G.streak, 0, 0); cx.font = 'bold 14px Segoe UI'; cx.fillStyle = '#9ff';
-    cx.fillText('KILL STREAK', 0, 22); cx.restore();
+    cx.fillText(G.streak, 0, 0); cx.font = 'bold 16px Segoe UI'; cx.fillStyle = '#9ff';
+    cx.fillText('KILL STREAK', 0, 26); cx.restore();
   }
 
   // deploy cue banner — "TANK INBOUND" / "<PERK> ONLINE": punch in, hold, fade out
