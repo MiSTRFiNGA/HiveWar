@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '2.2';
+const GAME_VERSION = '2.3';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -132,21 +132,21 @@ const G = {
 // original effect) and gets a distinct bullet silhouette so it's identifiable on sight.
 const WEAPONS = [
   {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,    col:'#5ef',   // slow single shots until powerups
-   sfx:'gun',         sfxRate:1.0,  sfxVol:.22, sfxMinGap:0,     shape:'bolt',   len:22, wid:4},
+   sfx:'gun',         sfxRate:1.0,  sfxVol:.22, sfxMinGap:0,     shape:'bolt',   len:22, wid:4,  recoil:18},
   // spread is a FAN ANGLE IN RADIANS across the weapon's n pellets (owner request 2026-07-30:
   // "what happened to the cone style shooting?" — the old 0.06-0.22 values were pixel-jitter
   // leftovers and read as ~3-12 degrees, i.e. no visible cone at all).
   {name:'Spread Gun',  rof:10,   dmg: 0.62, n:2, spread:0.45, col:'#4cf',
-   sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3},
+   sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3,  recoil:7},
   {name:'Rail Gun',    rof:12,   dmg: 0.38, n:4, spread:0.70, col:'#c6f',
-   sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2},
+   sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2, recoil:4},
   {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.30, col:'#f80',
-   sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8},
+   sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8,  recoil:26},
   // Ion Cannon = capital-ship gun: charges a growing ball, then releases ONE big slow-ish beam
   // that PIERCES everything in its column. n:1/spread:0 — it doesn't fan, it punches through.
   // HW.5 (Eric 2026-08-02): slower charge (0.55/s) and locked until level 5+ (see weaponAllowed).
   {name:'Ion Cannon',  rof: 0.55, dmg:14.0, n:1, spread:0,    col:'#ff4',
-   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5},
+   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5, recoil:60},
 ];
 // HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
 function weaponAllowed(i, lvl) {
@@ -247,25 +247,47 @@ function entityDefaults(){ return [
   {id:'boss.alienQueen', class:'boss', label:'Alien Queen', scale:1},
   {id:'hazard.rollerBreakable', class:'hazard', label:'Roller (Breakable)', scale:1},
   {id:'hazard.rollerArmored', class:'hazard', label:'Roller (Armored)', scale:1},
-  {id:'vehicle.tank', class:'vehicle', label:'Tank', scale:1, range:175},
+  // yOff = px UP the screen from the tank's default row (CFG.H-168). Positive = further up
+  // (deeper into the corridor), negative = closer to the bottom edge. Owner request 2026-08-02.
+  {id:'vehicle.tank', class:'vehicle', label:'Tank', scale:1, range:175, yOff:0},
   {id:'prop.barrier', class:'prop', label:'Barrier', scale:1},
 ]; }
 function editDefaults() { return {
   forgeEntityVersion: FORGE_ENTITY_VERSION,
   entities: entityDefaults(),
-  player: { rofMul: 1, dmgMul: 1, armor: 0 },   // armor = % of squad-loss prevented (0-90)
+  // bottomOffset = px the squad's front rank sits UP from the bottom edge (was the hardcoded 25).
+  // Owner request 2026-08-02: on a phone the thumb covers the bottom of the screen, so this needs to
+  // be dialled per-device. The melee/latch lines follow it, so raising the squad does not change the
+  // distance at which enemies bite — only where the fight happens on screen.
+  player: { rofMul: 1, dmgMul: 1, armor: 0, bottomOffset: 25 },   // armor = % of squad-loss prevented (0-90)
+  // ---- WORLD / perspective (owner request 2026-08-02: "extend the path further back into the
+  // distance so the spawn point is further back — they appear too fast") ----
+  //   horizonPct   fraction of screen height where the vanishing point sits. LOWER = horizon higher
+  //                up = LONGER visible path = more travel time. 0.407 is the 2026-07-31 concept-art
+  //                match; 0.25 was the older, longer corridor.
+  //   spawnBackPx  extra px ABOVE the screen top that enemies spawn at. They ride the vanishing
+  //                point until they cross the horizon, so this is pure lead-in time — it delays the
+  //                "pop" without changing the visible path at all. Cheapest fix for "too fast".
+  //   approachMul  multiplies every enemy's downward speed. 0.8 = 20% slower approach across the
+  //                board, without editing each enemy's SPEED row.
+  world: { horizonPct: 0.407, spawnBackPx: 0, approachMul: 1 },
   balance: { startCredits: 0, killCreditMul: 1, shopCostMul: 1 },
   // per-enemy: HP = hpBase + hpLvl × level (per-level scaling), spd/r/credits,
-  // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears
+  // weight = relative spawn share (% shown live in the editor), minLvl = first level it appears.
+  // mass = KNOCKBACK WEIGHT (owner request 2026-08-02) — NOT spawn weight. Pushback distance is
+  // weapon RECOIL ÷ mass, so mass 0.5 flies back twice as far as mass 1, and mass 3 barely budges.
+  // This is what makes a big enemy "feel" heavy under the same gun. Defaults roughly track body size.
   kinds: [
-    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:60,  minLvl:1, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:20,  minLvl:1, sfxAttack:'xenohit',      sfxDie:'eldritchdie' },
-    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:12,  minLvl:2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4, sfxAttack:'xenopterahit', sfxDie:'xenopterahit' },
-    { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6, sfxAttack:'subterrahit',  sfxDie:'subterrahit' },
-    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:60,  minLvl:1, mass:1,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:20,  minLvl:1, mass:3,   sfxAttack:'xenohit',      sfxDie:'eldritchdie' },
+    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:12,  minLvl:2, mass:2.5, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4, mass:0.5, sfxAttack:'xenopterahit', sfxDie:'xenopterahit' },
+    { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6, mass:1.5, sfxAttack:'subterrahit',  sfxDie:'subterrahit' },
+    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3, mass:2,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
   ],
-  weapons: WEAPONS.map(w => ({ name:w.name, rof:w.rof, dmg:w.dmg, n:w.n, spread:w.spread, sfx:w.sfx })),
+  // recoil = KNOCKBACK PUNCH (owner request 2026-08-02). px of pushback applied to a hit enemy at
+  // mass 1; the enemy's own MASS divides it. 0 = no visible bounce, 60 = the Ion Cannon slam.
+  weapons: WEAPONS.map(w => ({ name:w.name, rof:w.rof, dmg:w.dmg, n:w.n, spread:w.spread, sfx:w.sfx, recoil:w.recoil })),
   spawnRate: BAL.spawnRate.slice(),
   bossHp: BAL.bossHp.slice(),
   queen: Object.assign({}, BAL.queen),
@@ -334,6 +356,7 @@ let EDIT = (() => { try { return mergeEdit(editDefaults(), migrateForgeValues(JS
 function saveEdit() { try { localStorage.setItem(EDIT_KEY, JSON.stringify(EDIT)); } catch (e) {} }
 function applyEditWeapons() {                    // WEAPONS is read all over — mutate it in place
   EDIT.weapons.forEach((w, i) => { if (WEAPONS[i]) { WEAPONS[i].rof = w.rof; WEAPONS[i].dmg = w.dmg; WEAPONS[i].n = w.n; WEAPONS[i].spread = w.spread;
+    if (Number.isFinite(w.recoil)) WEAPONS[i].recoil = w.recoil;   // FORGE-tunable knockback punch
     if (w.sfx) WEAPONS[i].sfx = w.sfx; } });   // fire-sound is FORGE-assignable too
 }
 applyEditWeapons();
@@ -894,13 +917,13 @@ function vehicleUpdate(dt) {
   G.vehicleT -= dt; G.vehicleFire -= dt;
   if (G.vehicleT <= 0) AUDIO.loopTank(false);   // tanks left the field — cut the engine track
   // exactly TWO tanks (one per side) each LOB one heavy shell that detonates on impact.
-  // Origin = TOP-CENTRE of the tank sprite (matches drawVehicles: y=CFG.H-168, image -th/2).
+  // Origin = TOP-CENTRE of the tank sprite (matches drawVehicles: y=tankY(), image -th/2).
   // Trajectory aims up its own road lane and is re-clamped every frame (task 2.4 / 2.5).
   if (G.vehicleFire <= 0) { G.vehicleFire = Math.max(.9, 1.5 - rank*.09);
     const spread = ENT('vehicle.tank').range || ((EDIT.vehicles && EDIT.vehicles.spread) || 175);
     const tSc = ENT('vehicle.tank').scale, th = 72 * tSc;
     for (const side of [-1, 1]) { const b = bullets.alloc(); if (!b) break;
-      b.y = (CFG.H - 168) - th / 2; b.r = 13; b.vy = -320 - rank * 18;   // top-centre of tank sprite
+      b.y = tankY() - th / 2; b.r = 13; b.vy = -320 - rank * 18;   // top-centre of tank sprite
       const muzzleX = G.px + side * spread;
       const muzzleHalfWidth = Math.max(0, roadHalfWidthAtY(b.y) - b.r);
       b.x = Math.max(CFG.W / 2 - muzzleHalfWidth, Math.min(CFG.W / 2 + muzzleHalfWidth, muzzleX));
@@ -943,15 +966,20 @@ function spawnWave(dt) {
     if (!Number.isFinite(lane)) lane = 0;
     e.lane = Math.max(-0.92, Math.min(0.92, lane));
     e.lane0 = e.lane;                                  // remembered roaming lane for the spread phase
-    e.y = e.kind === 4 ? CFG.H - 185 : -30; e.baseX = 0; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
+    // spawnBackPx pushes the spawn point further "back up the corridor" — they ride the vanishing
+    // point until they cross the horizon, so this is pure lead-in delay (owner: "they appear too fast").
+    const backOff = Math.max(0, Math.min(4000, Number(worldCfg().spawnBackPx) || 0));
+    e.y = e.kind === 4 ? CFG.H - 185 : -30 - backOff; e.baseX = 0; e.phase = rr(0, 6.283); e.mode = e.kind === 4 ? 1 : 0;
     const hw = roadHalfWidthAtY(e.y);
     e.x = CFG.W / 2 + e.lane * (Number.isFinite(hw) ? hw : CFG.W * 0.08);
     if (!Number.isFinite(e.x)) e.x = CFG.W / 2;
-    e.vx = rr(-18, 18); e.vy = (K && Number.isFinite(K.spd) ? K.spd : 40) + lvl * 7 + CFG.scrollSpd * 0.35;
+    const appr = Number(worldCfg().approachMul);
+    e.vx = rr(-18, 18); e.vy = ((K && Number.isFinite(K.spd) ? K.spd : 40) + lvl * 7 + CFG.scrollSpd * 0.35)
+      * (Number.isFinite(appr) && appr > 0 ? Math.min(4, appr) : 1);
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
     const sc = (enemyRow(e.kind) || {}).scale; e.r = (K && K.r ? K.r : 14) * (Number.isFinite(sc) ? sc : 1);
-    e.t = 0; e.acidT = 0; e.buffed = 0;
+    e.t = 0; e.acidT = 0; e.buffed = 0; e.kb = 0;
   }
 }
 function spawnBoss() {
@@ -963,6 +991,20 @@ function spawnBoss() {
              hp: G.mode==='endless'?32000*Math.pow(1.13,G.loop):(queen ? EDIT.queen.p1 + EDIT.queen.p2 + EDIT.queen.p3 : EDIT.bossHp[G.level - 1]),
              maxhp: 0, phase: 0, t: 0, queen, eggT: 0, landed: false, fall: 0 };
   G.boss.maxhp = G.boss.hp;
+}
+// ---- KNOCKBACK (owner request 2026-08-02) ----
+// Two independent dials, so "heavier" is a property of the ENEMY and "punchier" is a property of the
+// GUN: pushback px = weapon RECOIL / enemy MASS. A latched enemy (mode 2) is deliberately immune —
+// it is locked to the front line and letting bullets shove it would break the bite loop.
+// e.kb is a pending push in px, burned off over ~KB_DECAY so the hit reads as a shove, not a teleport.
+const KB_DECAY = 9;          // 1/s — higher = the bounce snaps back faster
+const KB_MAX   = 70;         // px ceiling per hit, so a 5-stream volley can't launch a fodder unit offscreen
+function knockBack(e, recoil) {
+  if (!e || e.mode === 2) return;
+  const r = Number(recoil); if (!Number.isFinite(r) || r <= 0) return;
+  const mass = Number((enemyRow(e.kind) || {}).mass);
+  const m = Number.isFinite(mass) && mass > 0 ? mass : 1;
+  e.kb = Math.min(KB_MAX, (e.kb || 0) + r / m);
 }
 function damageEnemy(e, dmg, x, y) {
   e.hp -= dmg;
@@ -1270,6 +1312,12 @@ function update(dt) {
       if (Math.abs(e.x - n.x) < 140 && Math.abs(e.y - n.y) < 160) { e.buffed = 1; break; }
     }
     if (e.mode === 1) { if (e.t >= 0.8) { e.mode = 0; e.t = 0; sfx('elite'); } else return; }
+    // Burn off pending knockback: push UP the corridor (toward the horizon), never past it.
+    if (e.kb > 0) {
+      const step = e.kb * Math.min(1, KB_DECAY * dt);
+      e.y = Math.max(HORIZON_Y + 4, e.y - step);
+      e.kb -= step; if (e.kb < 0.2) e.kb = 0;
+    }
     const ez = Math.max(0, Math.min(1, Math.pow(Math.max(0, e.y - HORIZON_Y) / (CFG.H - HORIZON_Y), 1/1.6)));
     const hw = roadHalfWidthAtY(e.y);   // lateral extent must match the DRAWN road, not roadY's curve
     // per-enemy crowd offset so the swarm mobs the squad as a pack, not a single-file line
@@ -1284,7 +1332,7 @@ function update(dt) {
       const tx = px + e.crowd * 150;                       // crowd around the squad, tracking its moves
       e.x += (tx - e.x) * Math.min(1, 7 * dt);
       const lunge = Math.max(0, Math.sin(e.t * 6 + e.phase)) * 14;   // rhythmic biting lunges
-      e.y += ((CFG.H - 145 + lunge) - e.y) * Math.min(1, 8 * dt);
+      e.y += ((playerY() - 120 + lunge) - e.y) * Math.min(1, 8 * dt);
       e.atkT -= dt;
       if (e.atkT <= 0) { e.atkT = 0.85;
         const loss = Math.max(1, Math.round(([4,16,8,9,8,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
@@ -1326,7 +1374,7 @@ function update(dt) {
       { const ehw = Math.max(10, hw - e.r); e.x = Math.max(CFG.W/2 - ehw, Math.min(CFG.W/2 + ehw, e.x)); }  // keep the FULL sprite radius inside the road clip — 0.4r let edge enemies get visibly sliced
       if (e.y > CFG.H + 40) { enemies.release(e); return; }
       // reached the squad's front line → latch on and start attacking (first bite comes fast)
-      if (e.y > CFG.H - 155 && Math.abs(e.x - G.px) < 90) { e.mode = 2; e.atkT = 0.25; sfx('hit'); }
+      if (e.y > playerY() - 130 && Math.abs(e.x - G.px) < 90) { e.mode = 2; e.atkT = 0.25; sfx('hit'); }
     }
     bullets.each(b => {
       const dx = e.x - b.x, dy = e.y - b.y, rr2 = (e.r + b.r) * (e.r + b.r);
@@ -1337,6 +1385,7 @@ function update(dt) {
         if (b.pierce) { if (b._hit && b._hit.has(e._pi)) return; (b._hit || (b._hit = new Set())).add(e._pi); }
         else bullets.release(b);
         damageEnemy(e, b.dmg, b.x, b.y);
+        knockBack(e, WEAPONS[G.weapon] && WEAPONS[G.weapon].recoil);
         if (b.aoe) aoe(e.x, e.y, b.aoe, b.dmg * .55);
         const cl = G.perks['Chain Lightning'] || 0;
         if (cl && rng() < 0.14 * cl) {                 // visible forked lightning to the 3 nearest enemies
@@ -1457,7 +1506,17 @@ function bossKill() {
 // (2026-07-31, owner concept-art match) so the corridor occupies less of the frame and the deep
 // background gets 1.63x more room — the "walking INTO the image" read. Everything perspective
 // derives from this one constant: road, walls, gates, rollers, backdrop dome.
-const HORIZON_Y = CFG.H * 0.407;                   // 391 on a 960-tall screen
+// FORGE-driven since 2026-08-02 (owner: "extend the path further back into the distance").
+// `let`, not const: EDIT.world.horizonPct moves it live, and every perspective helper below reads
+// this one value, so the road, walls, gates, rollers and backdrop dome all follow in one step.
+let HORIZON_Y = CFG.H * 0.407;                     // 391 on a 960-tall screen
+function worldCfg(){ return (EDIT && EDIT.world) || { horizonPct:0.407, spawnBackPx:0, approachMul:1 }; }
+function applyHorizon(){
+  const pct = Number(worldCfg().horizonPct);
+  // Clamp hard: below 0.15 the corridor swallows the backdrop, above 0.60 it stops being a road.
+  HORIZON_Y = CFG.H * (Number.isFinite(pct) ? Math.max(0.15, Math.min(0.60, pct)) : 0.407);
+}
+applyHorizon();
 function roadHalfWidth(z){ const near = CFG.W * 0.08, far = CFG.W / 2; return near + (far - near) * z; }  // 43.2 -> 270
 function roadY(z){return HORIZON_Y+(CFG.H-HORIZON_Y)*Math.pow(z,1.6);}
 // Half-width of the road AT A SCREEN Y, matching the road polygon AS DRAWN.
@@ -1952,7 +2011,7 @@ function drawVehicles(){
   // (left tank mirrors the right). Slope from roadHalfWidthAtY near vs slightly ahead.
   const tSc=ENT('vehicle.tank').scale, spread=ENT('vehicle.tank').range || ((EDIT.vehicles&&EDIT.vehicles.spread)||175);
   for(const side of [-1,1]){
-    const x=G.px+side*spread,y=CFG.H-168;
+    const x=G.px+side*spread,y=tankY();
     const y0=y, y1=Math.max(HORIZON_Y+8, y-40);
     const hw0=roadHalfWidthAtY(y0), hw1=roadHalfWidthAtY(y1);
     // Edge direction along the road side (screen space): as y decreases, half-width shrinks.
@@ -2357,9 +2416,16 @@ function drawDebugCanvas(){
   const lines=[`state ${d.state}  L${d.level}  t ${Number(d.levelT||0).toFixed(1)}`,`enemies ${d.enemies||0}  bullets ${d.bullets||0}`,`gates ${d.gates||0}  kills ${d.kills||0}`,`credits ${d.credits||0}  squad ${d.squad||0}`,`testBot ${!!d.testBot}`];
   lines.forEach((line,i)=>cx.fillText(line,17,78+i*19));cx.restore();
 }
+// Where the squad's front rank stands, in screen y. FORGE: PLAYER > SCREEN POSITION (owner request
+// 2026-08-02 — a phone thumb covers the bottom band, so this has to be dialled per device).
+function playerY(){ const v = Number(EDIT.player && EDIT.player.bottomOffset);
+  return CFG.H - (Number.isFinite(v) ? Math.max(0, Math.min(CFG.H * 0.55, v)) : 25); }
+// Tank row. yOff lifts both escorts up the corridor from their default row (owner request 2026-08-02).
+function tankY(){ const v = Number(ENT('vehicle.tank').yOff);
+  return (CFG.H - 168) - (Number.isFinite(v) ? Math.max(-160, Math.min(520, v)) : 0); }
 function drawSquad() {
   const n = G.squad <= 5 ? G.squad : Math.min(20, 5 + Math.round((G.squad - 5) / 64));  // 1-5 normal, 20 = huge army
-  const y0 = CFG.H - 25;   // owner: pawn near the very bottom of the screen (~97% down)
+  const y0 = playerY();   // owner: pawn near the very bottom by default (~97% down), now tunable
   // Soldier-tier visual read (owner spec 2026-07-30: a stat is not a progression system unless
   // you can SEE it) — ring/insignia colour + a subtle scale bump climb with soldierTier. Tier 1
   // resolves to the original cyan ring + 1.0 scale, so the baseline look is unchanged.
@@ -2883,7 +2949,7 @@ function setP(p,v){ const ks=p.split('.'), last=ks.pop(); ks.reduce((o,k)=>o[k],
 body.addEventListener('input', e => { const p = e.target.dataset.p; if (!p) return;
   if (e.target.type === 'color' || e.target.dataset.str) { setP(p, e.target.value); saveEdit(); return; }   // string fields (bossGlow/bossAttackSfx) skip the numeric parse
   const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return;
-  setP(p, v); saveEdit(); applyEditWeapons(); refreshComputed(); });
+  setP(p, v); saveEdit(); applyEditWeapons(); applyHorizon(); refreshComputed(); });
 
 const TABS = ['ENTITIES','PLAYER','WEAPONS','WAVES + BOSS','BALANCE','WORLD','SPRITES','AUDIO','DATA'];
 let tab = 0, spriteSel = -1, frameSel = 0, work=null, undoStack=[], brush={col:'#ff00ff',size:4,erase:false}, appliedRotation=0;
@@ -2955,12 +3021,15 @@ function entitySpriteIndex(id){ return REG.findIndex(r => r.key === ENTITY_SPRIT
 function renderEntities(){
   const classes = ['all','player','enemy','boss','hazard','vehicle','prop'];
   const rows = EDIT.entities.filter(e => entityClassFilter === 'all' || e.class === entityClassFilter);
-  let h = `<div class="hint" id="entityHelp">One entity registry for squad units, enemies, bosses, hazards, vehicles, and props. Enemy combat fields feed the live spawn model; grey cells are not applicable.</div>
+  let h = `<div class="hint" id="entityHelp">One entity registry for squad units, enemies, bosses, hazards, vehicles, and props. Enemy combat fields feed the live spawn model; grey cells are not applicable.
+    <b>SPAWN WT</b> = how often this enemy appears (drives SPAWN %). <b>WEIGHT</b> = how heavy it feels when shot —
+    knockback is the weapon's RECOIL divided by this, so 0.5 flies back twice as far as 1 and 3 barely budges.
+    <b>Y-OFF</b> (tank only) moves the escorts up the corridor.</div>
     <fieldset class="row" style="border:1px solid rgba(0,255,255,.22);border-radius:6px;padding:5px 8px;margin:0 0 10px"><legend class="hint" style="padding:0 4px">ENTITY CLASS</legend>`;
   for (const c of classes) h += `<label><input type="radio" name="entityClass" value="${c}" ${entityClassFilter===c?'checked':''}> ${c==='all'?'All':c[0].toUpperCase()+c.slice(1)}</label>`;
   h += `</fieldset><div id="entityStatus" class="hint" aria-live="polite">Showing ${rows.length} ${entityClassFilter==='all'?'entities':entityClassFilter+' entities'}.</div>
     <div class="entityScroll"><table class="entityTable" aria-describedby="entityHelp entityStatus"><caption class="hint" style="text-align:left">Entity tuning registry — scroll right for SFX / HP preview / spawn share</caption><thead><tr>
-      <th scope="col" style="width:52px">SPRITE</th><th scope="col" style="width:110px">ENTITY</th><th scope="col" style="width:58px">CLASS</th><th scope="col" style="width:64px">SCALE</th><th scope="col" style="width:64px">HP BASE</th><th scope="col" style="width:64px">HP/LVL</th><th scope="col" style="width:64px">SPEED</th><th scope="col" style="width:64px">RADIUS</th><th scope="col" style="width:64px">CREDITS</th><th scope="col" style="width:64px">WEIGHT</th><th scope="col" style="width:64px">MIN LVL</th><th scope="col" style="width:64px">RANGE</th><th scope="col" style="width:90px">ATTACK SFX</th><th scope="col" style="width:90px">DIE SFX</th><th scope="col" style="width:150px">HP PREVIEW</th><th scope="col" style="width:70px">SPAWN %</th></tr></thead><tbody>`;
+      <th scope="col" style="width:52px">SPRITE</th><th scope="col" style="width:110px">ENTITY</th><th scope="col" style="width:58px">CLASS</th><th scope="col" style="width:64px">SCALE</th><th scope="col" style="width:64px">HP BASE</th><th scope="col" style="width:64px">HP/LVL</th><th scope="col" style="width:64px">SPEED</th><th scope="col" style="width:64px">RADIUS</th><th scope="col" style="width:64px">CREDITS</th><th scope="col" style="width:64px">SPAWN WT</th><th scope="col" style="width:64px">WEIGHT</th><th scope="col" style="width:64px">MIN LVL</th><th scope="col" style="width:64px">RANGE</th><th scope="col" style="width:64px">Y-OFF</th><th scope="col" style="width:90px">ATTACK SFX</th><th scope="col" style="width:90px">DIE SFX</th><th scope="col" style="width:150px">HP PREVIEW</th><th scope="col" style="width:70px">SPAWN %</th></tr></thead><tbody>`;
   for (const entity of rows) {
     const ix = EDIT.entities.indexOf(entity), enemy = ENEMY_ENTITY_IDS.indexOf(entity.id), spriteIx = entitySpriteIndex(entity.id);
     const spriteReg = REG[spriteIx], hasSprite = spriteReg && spriteReg.h;
@@ -2971,12 +3040,14 @@ function renderEntities(){
     const entityNum = (path, step, label) => num(path,step,undefined,entity.label+' '+label);
     const val = (key, label, step=1) => enemy >= 0 ? entityNum('kinds.'+enemy+'.'+key,step,label) : '<span class="na" aria-label="Not applicable">—</span>';
     const range = entity.id === 'vehicle.tank' ? entityNum('entities.'+ix+'.range',1,'range') : '<span class="na" aria-label="Not applicable">—</span>';
+    // Vertical trim for the escort tanks (owner request 2026-08-02): + moves them UP the corridor.
+    const yoff = entity.id === 'vehicle.tank' ? entityNum('entities.'+ix+'.yOff',5,'vertical offset') : '<span class="na" aria-label="Not applicable">—</span>';
     const attack = enemy >= 0 ? snd('kinds.'+enemy+'.sfxAttack',entity.label+' attack sound') : '<span class="na" aria-hidden="true">—</span>';
     const death = enemy >= 0 ? snd('kinds.'+enemy+'.sfxDie',entity.label+' death sound') : '<span class="na" aria-hidden="true">—</span>';
     // Compact HP preview (L1/L5/L10 only) so every row stays one line high.
     const preview = enemy >= 0 ? `<span class="hpprev" data-hp="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
     const share = enemy >= 0 ? `<span class="pct" data-pct="${enemy}"></span>` : '<span class="na" aria-hidden="true">—</span>';
-    h += `<tr><td>${sprite}</td><th scope="row" style="color:#4ff">${forgeEsc(entity.label)}</th><td>${forgeEsc(entity.class)}</td><td>${entityNum('entities.'+ix+'.scale',0.05,'scale')}</td><td>${val('hpBase','base health')}</td><td>${val('hpLvl','health per level',0.1)}</td><td>${val('spd','speed')}</td><td>${val('r','radius')}</td><td>${val('credits','credits')}</td><td>${val('weight','spawn weight',0.5)}</td><td>${val('minLvl','minimum level')}</td><td>${range}</td><td>${attack}</td><td>${death}</td><td>${preview}</td><td>${share}</td></tr>`;
+    h += `<tr><td>${sprite}</td><th scope="row" style="color:#4ff">${forgeEsc(entity.label)}</th><td>${forgeEsc(entity.class)}</td><td>${entityNum('entities.'+ix+'.scale',0.05,'scale')}</td><td>${val('hpBase','base health')}</td><td>${val('hpLvl','health per level',0.1)}</td><td>${val('spd','speed')}</td><td>${val('r','radius')}</td><td>${val('credits','credits')}</td><td>${val('weight','spawn weight',0.5)}</td><td>${val('mass','knockback weight',0.1)}</td><td>${val('minLvl','minimum level')}</td><td>${range}</td><td>${yoff}</td><td>${attack}</td><td>${death}</td><td>${preview}</td><td>${share}</td></tr>`;
   }
   body.innerHTML = h + '</tbody></table></div>';
   refreshComputed();
@@ -3039,7 +3110,7 @@ async function applyPack(j) {
   if (isPack && j.hiveWarPack > PACK_FORMAT)
     throw new Error(`pack needs a newer game build (pack format ${j.hiveWarPack}, this build reads ${PACK_FORMAT})`);
   if (!j.values && !j.sprites && !j.env) throw new Error('pack contains no content');
-  if (j.values) { EDIT = mergeEdit(editDefaults(), migrateForgeValues(j.values)); saveEdit(); applyEditWeapons(); }
+  if (j.values) { EDIT = mergeEdit(editDefaults(), migrateForgeValues(j.values)); saveEdit(); applyEditWeapons(); applyHorizon(); }
   if (j.sprites) { savedSprites = j.sprites;
     await replaceMedia('sprite:', savedSprites);
     for (const r of REG) { const s = savedSprites[r.key];
@@ -3077,6 +3148,11 @@ function renderTab(){
       <div class="row">FIRE RATE × ${num('player.rofMul',0.05)}</div>
       <div class="row">DAMAGE × ${num('player.dmgMul',0.05)}</div>
       <div class="row">ARMOR (% squad-loss prevented, 0-90) ${num('player.armor',5)}</div>
+      <div class="hint" style="color:#4ff;margin-top:14px">SCREEN POSITION — where the squad stands, for phone fit</div>
+      <div class="row">HEIGHT UP FROM BOTTOM ${num('player.bottomOffset',5,64)} px
+        <span class="hint">25 = the old hardcoded spot (right at the bottom edge). Raise it on a phone so your
+        thumb is not sitting on top of the squad; 150-220 is a typical handheld value. The melee line moves with
+        the squad, so bite distance does not change — only where on the screen the fight happens.</span></div>
       <div class="hint" style="color:#f4f;margin-top:14px">PLAYTEST</div>
       <div class="row"><button id="fInv" style="border-color:${inv?'#6f6':'#345'};color:${inv?'#6f6':'#9cf'};font-weight:900">
         ${inv?'🛡 INVINCIBLE — ON':'🛡 INVINCIBLE — OFF'}</button>
@@ -3087,10 +3163,14 @@ function renderTab(){
     let h = `<div class="hint">Per-weapon tuning. <b>Bolt ladder is by LEVEL</b> (not squad size): <b>1 bolt L1–9 · 2 bolts L10–19 · 3 bolts L20+</b>.
       Squad size still multiplies DPS (damage is shared across bolts). SPREAD = total fan angle. FIRE SFX = shot sample.
       Ion Cannon is locked until level 5+.</div>
-      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>SPREAD</th><th>FIRE SFX</th><th>TEST</th></tr>`;
+      <b>RECOIL</b> = how hard a hit shoves the enemy back up the corridor (px at enemy mass 1).
+      Actual pushback = RECOIL ÷ that enemy's WEIGHT on the ENTITIES tab, so a heavy xeno barely flinches
+      under the same gun. 0 = no bounce at all.</div>
+      <table><tr><th>WEAPON</th><th>ROF</th><th>DMG</th><th>SPREAD</th><th>RECOIL</th><th>FIRE SFX</th><th>TEST</th></tr>`;
     EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
       <td>${num('weapons.'+i+'.spread',0.02)}</td>
+      <td>${num('weapons.'+i+'.recoil',1)}</td>
       <td>${snd('weapons.'+i+'.sfx')}</td>
       <td><button data-give="${i}" title="equip this weapon right now">▶ GIVE</button></td></tr>`; });
     body.innerHTML = h + '</table>';
@@ -3242,7 +3322,18 @@ function renderTab(){
     body.querySelectorAll('input[data-p^="balance."]').forEach(i=>i.min=0);
   }
   else if (tab===5){ // WORLD: barriers + rolling hazards + per-level environment
-    let h = `<div class="hint" style="color:#f4f">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>
+    let h = `<div class="hint" style="color:#4ff">CORRIDOR — how far back the path runs and how fast the swarm closes</div>
+      <div class="row">PATH DEPTH (horizon, % down the screen) ${num('world.horizonPct',0.01,64)}
+        <span class="hint">0.407 = current look. <b>LOWER = the vanishing point sits higher up = a longer path
+        and more travel time.</b> 0.25 is the old deep corridor. Clamped 0.15-0.60; changes the road, walls,
+        barriers and rollers together.</span></div>
+      <div class="row">SPAWN LEAD-IN ${num('world.spawnBackPx',20,64)} px
+        <span class="hint">Extra distance above the screen the swarm starts from. They ride the vanishing point
+        until they cross the horizon, so this is a pure delay before they "appear" — the cheapest fix for
+        enemies showing up too fast, and it does not touch the look of the path at all.</span></div>
+      <div class="row">APPROACH SPEED × ${num('world.approachMul',0.05,64)}
+        <span class="hint">Scales every enemy's advance. 0.8 = 20% slower swarm without editing each SPEED row.</span></div>
+      <div class="hint" style="color:#f4f;margin-top:14px">BARRIERS — seconds between barrier pairs, per level (lower = more barriers)</div>
       <table><tr><th>LVL</th>`;
     for(let i=0;i<10;i++)h+=`<th>${i+1}</th>`; h+='</tr><tr><th>SEC</th>';
     for(let i=0;i<10;i++)h+=`<td>${num('gateInterval.'+i,0.5,40)}</td>`; h+='</tr></table>';
@@ -3367,7 +3458,7 @@ function renderTab(){
     body.querySelector('#fImp').onchange=e=>{ const f=e.target.files[0]; if(!f)return; const rd=new FileReader();
       rd.onload=async()=>{ try{ await applyPack(JSON.parse(rd.result)); renderTab(); }catch(err){alert('Bad JSON: '+err.message);} }; rd.readAsText(f); };
     body.querySelector('#fRstV').onclick=()=>{ if(confirm('Reset ALL edited values to defaults?')){
-      EDIT=editDefaults(); saveEdit(); applyEditWeapons(); renderTab(); } };
+      EDIT=editDefaults(); saveEdit(); applyEditWeapons(); applyHorizon(); renderTab(); } };
     body.querySelector('#fRstS').onclick=()=>{ if(confirm('Discard ALL edited sprites? (reload restores originals)')){
       mediaClear('sprite:').then(()=>{savedSprites={}; location.reload();}).catch(()=>alert('Could not clear sprites from IndexedDB.')); } };
   }
