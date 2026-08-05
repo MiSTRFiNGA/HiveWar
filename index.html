@@ -1138,7 +1138,13 @@ function spawnWave(dt) {
 function spawnBoss() {
   G.state = 'boss';
   const queen = G.level === CFG.levels, Q = BAL.queen;
-  codexSee(queen ? 'boss:queen' : 'boss:guardian', 0);
+  // G5: FORGE custom bosses use link "boss:<entityId>" (see addForgeBoss). The shipped
+  // guardian/queen pages keep their short keys. Without this branch a custom boss page
+  // can never unlock because nothing reported its link.
+  const customBoss = (EDIT.entities || []).find(e => e && e.class === 'boss' && e.id &&
+    String(e.id).indexOf('boss.custom') === 0 && Number(e.bossLevel) === G.level);
+  if (customBoss) codexSee('boss:' + customBoss.id, 0);
+  else codexSee(queen ? 'boss:queen' : 'boss:guardian', 0);
   AUDIO.sample(queen ? 'queenroar' : 'boss');
   if (EDIT.bossMusic[G.level - 1]) AUDIO.music(EDIT.bossMusic[G.level - 1]);   // boss track takes over if one is set
   G.boss = { x: CFG.W/2, y: -140,
