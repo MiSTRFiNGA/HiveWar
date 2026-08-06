@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.2.6';
+const GAME_VERSION = '0.2.7';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -524,19 +524,35 @@ function runSeed(level) { return 1000 + level * 777 + (telemetryBot ? telemetryS
 let dragX = null, testBot = /[?&]test=1/.test(location.search) || telemetryBot, debugCanvas=/[?&]dbg=1/.test(location.search);
 function px2game(e) { const r = cv.getBoundingClientRect(); return (e.clientX - r.left) / scale; }
 function py2game(e) { const r=cv.getBoundingClientRect(); return (e.clientY-r.top)/scale; }
+// W7 — phones fire touchstart AND a ghost mousedown ~300ms later. Both used to hit the
+// BEASTIARY / title buttons, so the button "changed on press AND on release". Swallow the
+// synthetic mouse event after a real touch; act only on the first press of a gesture.
+let _lastTouchDownAt = 0, _titleActionAt = 0;
 function down(e) {
   // clicks on the FORGE editor window / ⚒ button are UI, not gameplay — never let them
   // start a run from the title screen or steer the squad mid-game
   // clicks on FORGE or the HUD control buttons are UI, not gameplay — never let them start a run,
   // steer the squad, or (critically) trip the "tap anywhere to resume" path below
   if (e.target && e.target.closest && e.target.closest('#forge,#forgeBtn,#hud')) return;
+  const isTouch = !!(e.touches && e.touches.length) || e.type === 'touchstart';
+  if (isTouch) _lastTouchDownAt = performance.now();
+  else if (performance.now() - _lastTouchDownAt < 700) return;   // ghost mouse after touch
   botOff(e); const p=e.touches?e.touches[0]:e; dragX=px2game(p); const gy=py2game(p);
   // (restart / pause / music / sfx used to be canvas hit-tests in a `gy < 70` band here — they are
   // real DOM buttons in #hud now, handled by the delegated listener beside the HUD markup.)
   if (G.paused) { G.paused = false; return; }          // tap anywhere else while paused = resume
   if (G.state === 'title') {
-    if (gy > CODEX_BTN_Y && gy < CODEX_BTN_Y + 58) { G.state = 'codex'; G.codexPage = 0; return; }   // BEASTIARY
-    if (gy > SLOTS_BTN_Y && gy < SLOTS_BTN_Y + 58) { G.state = 'slots'; return; }                    // SAVE SLOTS
+    // debounce: one title action per press (covers BEASTIARY double-fire W7)
+    if (performance.now() - _titleActionAt < 350) return;
+    if (gy > CODEX_BTN_Y && gy < CODEX_BTN_Y + 58) {
+      _titleActionAt = performance.now();
+      G.state = 'codex'; G.codexPage = 0; return;   // BEASTIARY — press only
+    }
+    if (gy > SLOTS_BTN_Y && gy < SLOTS_BTN_Y + 58) {
+      _titleActionAt = performance.now();
+      G.state = 'slots'; return;
+    }
+    _titleActionAt = performance.now();
     if (G.meta.endless && gy > 530 && gy < 596) startRun('endless'); else startRun('campaign');
   }
   else if (G.state === 'slots') {
@@ -715,8 +731,9 @@ function startRun(mode='campaign') {
   bullets.each(b => bullets.release(b)); enemies.each(en => enemies.release(en));
   gates.length = 0; blastQueue.length = 0; blastDraining = false;
   G.scrollT = 0; G.layoutFired = {gates:[],hazards:[],spawns:[]};
-  // HW.8 — campaign L1 enters via startRun, not levelStart (shop deploy). Gift must spawn here too.
+  // HW.8 / W1 — campaign L1 enters via startRun, not levelStart (shop deploy). Gifts must spawn here too.
   spawnEarlySquadGift();
+  spawnEarlyWeaponGift();
 }
 // Free +N squad gate on level 1 inside the first ~10–15 s of scroll (HW.8).
 // Called from startRun (title → L1) and levelStart (FORGE jump / any L1 re-entry).
@@ -736,6 +753,29 @@ function spawnEarlySquadGift() {
     earlyGift: true,
   });
   // Hold the procedural barrier timer so the free gift is the first wall the player meets.
+  gateT = Math.max(gateT, targetSec + 4);
+}
+// W1 (Eric playtest 2026-08-05): level 1 felt weaponless — only the starter Blaster, no upgrade
+// walls in the first minute. Guarantee a dual-weapon barrier (~18 s in) with two DIFFERENT
+// L1-legal guns so the first impression is a real acquisition choice, not endless +N walls.
+function spawnEarlyWeaponGift() {
+  if (G.level !== 1) return;
+  if (gates.some(g => g.earlyWpn && g.live)) return;
+  const collectY = CFG.H - 150 - 46;
+  const targetSec = 18;
+  const earlyY = collectY - (CFG.scrollSpd || 170) * targetSec;
+  const pairId = ++gatePairSeq;
+  let a = clampWeaponToLevel(1, 1);                       // Twin Plasma (or best L1-legal ≥1)
+  let b = clampWeaponToLevel(2, 1);                       // Scatter Rail (or next)
+  if (a === b) b = clampWeaponToLevel((a + 1) % WEAPONS.length, 1);
+  if (a === b) { a = 0; b = Math.min(1, WEAPON_LAST); }   // last-ditch: Blaster vs next
+  const need = BAL.gates.hpStepWpn(1);
+  gates.push(
+    { lane: 'L', y: earlyY, h: 46, kind: 'wpn', val: 0, wpnId: a, weapon2: null,
+      shot: 0, need, live: true, locked: false, pairId, spent: false, earlyWpn: true },
+    { lane: 'R', y: earlyY, h: 46, kind: 'wpn', val: 0, wpnId: b, weapon2: null,
+      shot: 0, need, live: true, locked: false, pairId, spent: false, earlyWpn: true }
+  );
   gateT = Math.max(gateT, targetSec + 4);
 }
 function nextLevel() {
@@ -793,8 +833,9 @@ function levelStart() {
   rollers.length = 0; G.rollT = 5;
   // HW.5 — if a prior level left Ion equipped before it's unlocked, step down.
   G.weapon = clampWeaponToLevel(G.weapon, G.level);
-  // HW.8 — early squad ramp on level 1 (also spawned from startRun for campaign open)
+  // HW.8 / W1 — early squad + weapon ramp on level 1 (also spawned from startRun for campaign open)
   spawnEarlySquadGift();
+  spawnEarlyWeaponGift();
   // owner request 2026-07-30 (GAME EDITS.txt): weapon no longer rerolls between levels — it persists
   // as "last weapon used". EXCEPTION: the Queen finale still swaps away from a wide-spread weapon
   // (the same accuracy guard pickRandomWeapon always enforced there) since carrying one into that
@@ -866,11 +907,13 @@ function spawnGatePair() {
     // A "round" counts across loops: level 3 of endless loop 1 is round 13.
     const roundNo = G.level + (G.loop || 0) * CFG.levels;
     const mulAllowed = roundNo > MUL_UNLOCK_ROUND;
-    // Reference mix: negatives are COMMON red barriers, multipliers rare
+    // Reference mix: negatives are COMMON red barriers, multipliers rare.
+    // W1 — on level 1, widen the weapon-gate window so acquisition is not a 10% lottery.
+    const wpnHi = G.level === 1 ? 0.62 : 0.52;
     if (roll < 0.34) { kind = 'add'; const r = GB.plus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
     else if (roll < 0.42 && mulAllowed) { kind = 'mul'; const r = GB.mult[li]; val = Math.round(rr(r[0], r[1]) * 10) / 10; need = GB.hpStepMult(G.level); }
     else if (roll < 0.42) { kind = 'add'; const r = GB.plus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }   // pre-unlock: that slot becomes points
-    else if (roll < 0.52) { kind = 'wpn'; val = 0; need = GB.hpStepWpn(G.level); }
+    else if (roll < wpnHi) { kind = 'wpn'; val = 0; need = GB.hpStepWpn(G.level); }
     else { kind = 'add'; const r = GB.minus[li]; val = Math.round(rr(r[0], r[1])); need = GB.hpStepPlus(G.level); }
     // LOCKED gates are ALWAYS a big red negative, unshootable, DEVASTATING on contact.
     // Only one exists at a time — steer around it.
@@ -892,10 +935,15 @@ function spawnGatePair() {
   }
   const g1 = mk('L', !lockedLive);
   let g2 = mk('R', !lockedLive && !g1.locked);            // never two locked gates in one pair
-  // never a pair showing the identical number — forces an actual choice (owner request 2026-07-30).
-  // One bounded reroll, not a loop; the guards below still apply to whatever g2 ends up being.
-  if (!g1.locked && !g2.locked && g1.kind === g2.kind && g1.val === g2.val) {
-    g2 = mk('R', !lockedLive && !g1.locked);
+  // W2 (Eric playtest 2026-08-05 — still broken after a one-shot reroll): L/R MUST differ.
+  // Compare a real signature (kind+val+wpnId+locked), reroll hard, then mutate if still equal.
+  const gateSig = g => g.kind === 'wpn'
+    ? ('wpn:' + (g.wpnId != null ? g.wpnId : g.val) + (g.locked ? ':L' : ''))
+    : (g.kind + ':' + g.val + (g.locked ? ':L' : ''));
+  if (!g1.locked && !g2.locked) {
+    for (let attempt = 0; attempt < 14 && gateSig(g1) === gateSig(g2); attempt++) {
+      g2 = mk('R', !lockedLive && !g1.locked);
+    }
   }
   // HW.3 — if BOTH walls are weapon gates, force different guns (one weapon per wall, L vs R choice).
   if (g1.kind === 'wpn' && g2.kind === 'wpn' && g1.wpnId === g2.wpnId) {
@@ -911,8 +959,27 @@ function spawnGatePair() {
   // never a plain double-negative (both drain you): flip the right to a positive add
   if (isNeg(g1) && isNeg(g2) && !impassable(g1)) {
     const r = GB.plus[li];
-    g2 = { lane: 'R', y, h: 46, kind: 'add', val: Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1]))),
+    let pos = Math.min(CFG.gateAddMax, Math.round(rr(r[0], r[1])));
+    // still must not mirror the left wall after the flip (W2)
+    if (g1.kind === 'add' && g1.val === pos) pos = Math.min(CFG.gateAddMax, pos + Math.max(2, Math.abs(g1.val) || 2));
+    g2 = { lane: 'R', y, h: 46, kind: 'add', val: pos,
       wpnId: null, weapon2: null, shot: 0, need: GB.hpStepPlus(G.level), live: true, locked: false, pairId, spent: false };
+  }
+  // Final hard force if anything above left a twin pair (owner: "do not just reshuffle").
+  if (!g1.locked && !g2.locked && gateSig(g1) === gateSig(g2)) {
+    if (g1.kind === 'add') {
+      g2.kind = 'add'; g2.wpnId = null; g2.locked = false;
+      g2.val = g1.val >= 0 ? -Math.max(2, Math.abs(g1.val) + 2) : Math.max(3, Math.abs(g1.val) + 2);
+      g2.need = GB.hpStepPlus(G.level);
+    } else if (g1.kind === 'wpn') {
+      g2.kind = 'wpn'; g2.val = 0; g2.locked = false;
+      g2.wpnId = clampWeaponToLevel((g1.wpnId + 1) % WEAPONS.length, G.level);
+      if (g2.wpnId === g1.wpnId) g2.wpnId = clampWeaponToLevel((g1.wpnId + 2) % WEAPONS.length, G.level);
+      g2.need = GB.hpStepWpn(G.level);
+    } else {
+      g2.kind = 'add'; g2.val = Math.max(3, Math.round((g1.val || 1) + 3));
+      g2.wpnId = null; g2.locked = false; g2.need = GB.hpStepPlus(G.level);
+    }
   }
   gates.push(g1, g2);
 }
@@ -1406,7 +1473,10 @@ const ARMORY_COLS = [
   { title: 'WEAPONS', tint: '#fd4', hint: 'what you deploy with' },
   { title: 'SUPPORT', tint: '#c6f', hint: 'what backs you up' },
 ];
-const ARM_TOP = 250, ARM_ROW_H = 62, ARM_GAP = 8;
+// W4/W5 (playtest 2026-08-05): DEPLOY sat under the phone home bar; 8 guns × 62px overflowed the screen.
+// Deploy lives higher; row height shrinks to fit every cell above it.
+const ARM_TOP = 220, ARM_ROW_H_MAX = 54, ARM_GAP = 6;
+const ARM_DEPLOY_Y = 800;   // top of DEPLOY bar (was 886 — too low on phones)
 function armColX(c) { const w = (CFG.W - 2 * 24 - 2 * ARM_GAP) / 3; return 24 + c * (w + ARM_GAP); }
 function armColW() { return (CFG.W - 2 * 24 - 2 * ARM_GAP) / 3; }
 // Every tappable cell in one column, top to bottom: upgrades first, then (col 1) the gun list.
@@ -1415,7 +1485,16 @@ function armCells(c) {
   if (c === 1) for (let i = 0; i <= WEAPON_LAST; i++) cells.push({ type: 'gun', gun: i });
   return cells;
 }
-function shopRowH() { return ARM_ROW_H; }   // legacy callers
+function armMaxRows() {
+  let n = 1;
+  for (let c = 0; c < 3; c++) n = Math.max(n, armCells(c).length);
+  return n;
+}
+function armRowH() {
+  const avail = ARM_DEPLOY_Y - ARM_TOP - 12;
+  return Math.min(ARM_ROW_H_MAX, Math.max(34, Math.floor(avail / armMaxRows())));
+}
+function shopRowH() { return armRowH(); }   // legacy callers
 function shopTap(e) {
   const r = cv.getBoundingClientRect();
   const gy = ((e.touches ? e.touches[0].clientY : e.clientY) - r.top) / scale;
@@ -1424,12 +1503,12 @@ function shopTap(e) {
     if (ratingBannerTap(gx, gy, RATING_SHOP_Y, RATING_BANNER_H)) return;   // tap landed on the banner — consumed
     G.ratingPending = false;   // tapped elsewhere — dismiss quietly, doesn't count as "asked" (non-blocking)
   }
-  if (gy > 880) { levelStart(); return; }                     // DEPLOY
-  const w = armColW();
+  if (gy >= ARM_DEPLOY_Y) { levelStart(); return; }                     // DEPLOY (W4)
+  const w = armColW(), rowH = armRowH();
   for (let c = 0; c < 3; c++) {
     const x = armColX(c);
     if (gx < x || gx > x + w) continue;
-    const cells = armCells(c), idx = Math.floor((gy - ARM_TOP) / ARM_ROW_H);
+    const cells = armCells(c), idx = Math.floor((gy - ARM_TOP) / rowH);
     if (idx < 0 || idx >= cells.length) return;
     const cell = cells[idx];
     if (cell.type === 'gun') { buyStartWeapon(cell.gun); return; }
@@ -1441,55 +1520,53 @@ function shopTap(e) {
 function drawShop() {
   cx.fillStyle = 'rgba(5,2,15,0.90)'; cx.fillRect(0, 0, CFG.W, CFG.H);
   cx.textAlign = 'center';
-  cx.fillStyle = '#4ff'; cx.font = 'bold 34px Segoe UI'; cx.fillText('ARMORY', CFG.W / 2, 130);
-  cx.font = '15px Segoe UI'; cx.fillStyle = '#89a';
-  cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR  ·  spend before you deploy', CFG.W / 2, 158);
-  cx.font = 'bold 26px Segoe UI'; cx.fillStyle = '#fd4';
-  cx.fillText('₵ ' + G.credits, CFG.W / 2, 196);
+  cx.fillStyle = '#4ff'; cx.font = 'bold 30px Segoe UI'; cx.fillText('ARMORY', CFG.W / 2, 110);
+  cx.font = '14px Segoe UI'; cx.fillStyle = '#89a';
+  cx.fillText('LEVEL ' + (G.level - 1) + ' CLEAR  ·  spend before you deploy', CFG.W / 2, 136);
+  cx.font = 'bold 24px Segoe UI'; cx.fillStyle = '#fd4';
+  cx.fillText('₵ ' + G.credits, CFG.W / 2, 168);
   if (G.ratingPending) drawRatingBanner(RATING_SHOP_Y, RATING_BANNER_H);
-  const w = armColW();
+  const w = armColW(), rowH = armRowH(), cellH = Math.max(28, rowH - 4);
   ARMORY_COLS.forEach((col, c) => {
     const x = armColX(c);
-    cx.textAlign = 'center'; cx.fillStyle = col.tint; cx.font = 'bold 15px Segoe UI';
-    cx.fillText(col.title, x + w / 2, ARM_TOP - 18);
+    cx.textAlign = 'center'; cx.fillStyle = col.tint; cx.font = 'bold 13px Segoe UI';
+    cx.fillText(col.title, x + w / 2, ARM_TOP - 14);
     armCells(c).forEach((cell, i) => {
-      const y = ARM_TOP + i * ARM_ROW_H, h = ARM_ROW_H - 6;
+      const y = ARM_TOP + i * rowH, h = cellH;
       if (cell.type === 'gun') {
         const g = cell.gun, owned = weaponOwned(g), active = (G.meta.startWeapon || 0) === g;
         const price = startWeaponPrice(g), can = owned || G.credits >= price;
-        const locked = !weaponAllowed(g, CFG.levels);   // never sell a gun the campaign can't award
         cx.fillStyle = active ? 'rgba(255,212,68,.24)' : owned ? 'rgba(120,110,60,.20)' : can ? 'rgba(40,40,50,.85)' : 'rgba(30,30,34,.8)';
         cx.fillRect(x, y, w, h);
         cx.strokeStyle = active ? '#fd4' : owned ? '#a95' : can ? '#556' : '#444'; cx.strokeRect(x, y, w, h);
         cx.textAlign = 'left'; cx.fillStyle = active ? '#ffe' : owned ? '#eda' : can ? '#bbc' : '#777';
-        cx.font = 'bold 12px Segoe UI';
-        cx.fillText(WEAPONS[g].name, x + 7, y + 20);
-        cx.font = '11px Segoe UI'; cx.fillStyle = active ? '#fd4' : '#889';
-        cx.fillText(active ? '◄ DEPLOY WITH THIS' : owned ? 'owned — tap to equip' : '₵' + price, x + 7, y + 38);
+        cx.font = 'bold 11px Segoe UI';
+        cx.fillText(WEAPONS[g].name, x + 6, y + Math.min(16, h * 0.38));
+        cx.font = '10px Segoe UI'; cx.fillStyle = active ? '#fd4' : '#889';
+        cx.fillText(active ? '◄ DEPLOY' : owned ? 'owned' : '₵' + price, x + 6, y + h - 8);
         const ml = WEAPONS[g].minLvl || 1;
-        if (ml > 1) { cx.fillStyle = '#678'; cx.font = '10px Segoe UI'; cx.fillText('unlocks L' + ml + '+', x + 7, y + 52); }
+        if (ml > 1 && h > 40) { cx.fillStyle = '#678'; cx.font = '9px Segoe UI'; cx.fillText('L' + ml + '+', x + 6, y + h * 0.55); }
       } else {
         const it = cell.it, rank = G.meta[it.k] || 0, cost = shopPrice(it),
               maxed = rank >= it.max, can = !maxed && G.credits >= cost;
         cx.fillStyle = can ? 'rgba(20,70,66,0.85)' : 'rgba(38,38,44,0.8)';
         cx.fillRect(x, y, w, h);
         cx.strokeStyle = can ? ARMORY_COLS[c].tint : '#555'; cx.strokeRect(x, y, w, h);
-        cx.textAlign = 'left'; cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 12px Segoe UI';
-        // wrap the name onto two short lines so a narrow column stays readable
-        const words = it.name.split(' '); let line = '', ly = y + 20;
+        cx.textAlign = 'left'; cx.fillStyle = can ? '#cff' : '#777'; cx.font = 'bold 11px Segoe UI';
+        const words = it.name.split(' '); let line = '', ly = y + Math.min(15, h * 0.35);
         for (const wd of words) { const t = line + wd + ' ';
-          if (cx.measureText(t).width > w - 14) { cx.fillText(line, x + 7, ly); line = wd + ' '; ly += 14; } else line = t; }
-        cx.fillText(line, x + 7, ly);
-        cx.font = '11px Segoe UI'; cx.fillStyle = maxed ? '#6a6' : can ? '#fd4' : '#777';
-        cx.fillText(maxed ? 'MAX ' + rank + '/' + it.max : '₵' + cost + '   ' + rank + '/' + it.max, x + 7, y + h - 8);
+          if (cx.measureText(t).width > w - 12) { cx.fillText(line, x + 6, ly); line = wd + ' '; ly += 12; } else line = t; }
+        cx.fillText(line, x + 6, ly);
+        cx.font = '10px Segoe UI'; cx.fillStyle = maxed ? '#6a6' : can ? '#fd4' : '#777';
+        cx.fillText(maxed ? 'MAX ' + rank + '/' + it.max : '₵' + cost + '  ' + rank + '/' + it.max, x + 6, y + h - 7);
       }
     });
   });
   cx.textAlign = 'center';
-  cx.fillStyle = 'rgba(255,220,60,0.15)'; cx.fillRect(60, 886, CFG.W - 120, 60);
-  cx.strokeStyle = '#fd4'; cx.strokeRect(60, 886, CFG.W - 120, 60);
-  cx.fillStyle = '#ffd'; cx.font = 'bold 22px Segoe UI';
-  cx.fillText('▶ DEPLOY — LEVEL ' + G.level + '  ·  ' + WEAPONS[G.meta.startWeapon || 0].name, CFG.W / 2, 924);
+  cx.fillStyle = 'rgba(255,220,60,0.18)'; cx.fillRect(50, ARM_DEPLOY_Y, CFG.W - 100, 56);
+  cx.strokeStyle = '#fd4'; cx.strokeRect(50, ARM_DEPLOY_Y, CFG.W - 100, 56);
+  cx.fillStyle = '#ffd'; cx.font = 'bold 20px Segoe UI';
+  cx.fillText('▶ DEPLOY — L' + G.level + '  ·  ' + WEAPONS[G.meta.startWeapon || 0].name, CFG.W / 2, ARM_DEPLOY_Y + 36);
 }
 // ---------- update ----------
 function balanceMul(key){ const v=Number(EDIT.balance&&EDIT.balance[key]), fallback=key==='startCredits'?0:1; return Number.isFinite(v)?Math.max(0,v):fallback; }
@@ -3063,7 +3140,11 @@ function drawPerks() {
 // Rows reveal one at a time and each number counts UP, so clearing a level lands as an event
 // instead of an instant jump to a shop menu. Timeline is pure elapsed time (G.debriefT) so it
 // cannot desync from the frame rate.
-const DEBRIEF_ROW_DELAY = 0.55, DEBRIEF_COUNT_TIME = 0.45;
+// W3: content sits lower (phone status bar). W6: TOTAL KILLS does a huge centre count-up then
+// shrinks/drops into its row — the payoff moment.
+const DEBRIEF_ROW_DELAY = 0.50, DEBRIEF_COUNT_TIME = 0.42;
+const DEBRIEF_TITLE_Y = 170, DEBRIEF_ROW0_Y = 250, DEBRIEF_ROW_STEP = 42;
+const DEBRIEF_TOTAL_HERO = 1.05, DEBRIEF_TOTAL_FLY = 0.55;   // W6 phases for the TOTAL row
 function startDebrief() {
   G.state = 'debrief'; G.debriefT = 0; G.debriefDone = false; G.fireworks = [];
   if (!G.lvlKills) resetLevelStats();
@@ -3081,7 +3162,7 @@ function debriefRows() {
   return rows;
 }
 function fireworkBurst() {
-  const x = rr(90, CFG.W - 90), y = rr(180, 520);
+  const x = rr(90, CFG.W - 90), y = rr(220, 560);
   const hue = ['#4ff', '#f4f', '#ff4', '#6f9', '#f86'][(rng() * 5) | 0];
   for (let i = 0; i < 46; i++) {
     const a = rng() * 6.283, sp = rr(90, 340);
@@ -3092,7 +3173,11 @@ function fireworkBurst() {
 }
 function updateDebrief(dt) {
   G.debriefT += dt;
-  const rows = debriefRows(), full = rows.length * DEBRIEF_ROW_DELAY + 0.4;
+  const rows = debriefRows();
+  // TOTAL hero animation adds time after its row's normal slot
+  const ti = rows.findIndex(r => r.big);
+  const totalExtra = ti >= 0 ? (DEBRIEF_TOTAL_HERO + DEBRIEF_TOTAL_FLY - DEBRIEF_COUNT_TIME) : 0;
+  const full = rows.length * DEBRIEF_ROW_DELAY + 0.5 + totalExtra;
   if (!G.debriefDone && G.debriefT > full) { G.debriefDone = true; G.fireT = 0; }
   if (G.debriefDone) {                       // celebration: a burst every ~0.45s
     G.fireT = (G.fireT || 0) - dt;
@@ -3105,25 +3190,87 @@ function updateDebrief(dt) {
 function drawDebrief() {
   cx.fillStyle = 'rgba(4,2,12,0.90)'; cx.fillRect(0, 0, CFG.W, CFG.H);
   cx.textAlign = 'center';
-  cx.fillStyle = '#4ff'; cx.shadowColor = '#f4f'; cx.shadowBlur = 18; cx.font = 'bold 38px Segoe UI';
-  cx.fillText('LEVEL ' + (G.mode === 'endless' ? G.loop : G.level - 1) + ' CLEAR', CFG.W / 2, 130);
+  cx.fillStyle = '#4ff'; cx.shadowColor = '#f4f'; cx.shadowBlur = 18; cx.font = 'bold 36px Segoe UI';
+  cx.fillText('LEVEL ' + (G.mode === 'endless' ? G.loop : G.level - 1) + ' CLEAR', CFG.W / 2, DEBRIEF_TITLE_Y);
   cx.shadowBlur = 0;
   const rows = debriefRows();
+  const totalIdx = rows.findIndex(r => r.big);
   rows.forEach((r, i) => {
-    const shown = G.debriefT - i * DEBRIEF_ROW_DELAY;
+    const appearAt = i * DEBRIEF_ROW_DELAY;
+    const shown = G.debriefT - appearAt;
     if (shown <= 0) return;
-    const k = Math.min(1, shown / DEBRIEF_COUNT_TIME);
-    const val = Math.round(r.value * k * k);              // ease-out count-up
-    const y = 200 + i * 46;
-    const pop = shown < 0.16 ? 1.18 : 1;                  // brief scale pop as the row lands
+    const y = DEBRIEF_ROW0_Y + i * DEBRIEF_ROW_STEP;
+
+    // W6 — TOTAL KILLS: huge centre count-up, then shrink + drop into the row slot
+    if (r.big) {
+      const heroEnd = DEBRIEF_TOTAL_HERO, flyEnd = heroEnd + DEBRIEF_TOTAL_FLY;
+      if (shown < heroEnd) {
+        const k = Math.min(1, shown / DEBRIEF_COUNT_TIME);
+        const val = Math.round(r.value * k * k);
+        const pulse = 1 + 0.06 * Math.sin(shown * 14);
+        cx.save();
+        cx.textAlign = 'center';
+        cx.fillStyle = 'rgba(80,200,255,.18)';
+        cx.beginPath(); cx.arc(CFG.W / 2, CFG.H * 0.48, 110 * pulse, 0, 7); cx.fill();
+        cx.shadowColor = '#4ff'; cx.shadowBlur = 28;
+        cx.fillStyle = '#fff'; cx.font = '900 ' + Math.round(92 * pulse) + 'px Segoe UI';
+        cx.fillText(String(val), CFG.W / 2, CFG.H * 0.48 + 32);
+        cx.shadowBlur = 0;
+        cx.fillStyle = '#9ef'; cx.font = 'bold 22px Segoe UI';
+        cx.fillText('TOTAL KILLS', CFG.W / 2, CFG.H * 0.48 + 72);
+        cx.restore();
+        return;   // don't also draw the line yet
+      }
+      if (shown < flyEnd) {
+        const u = (shown - heroEnd) / DEBRIEF_TOTAL_FLY;   // 0→1
+        const ease = 1 - Math.pow(1 - u, 2.4);
+        const cx0 = CFG.W / 2, cy0 = CFG.H * 0.48;
+        const cx1 = CFG.W - 78, cy1 = y;
+        const x = cx0 + (cx1 - cx0) * ease;
+        const yy = cy0 + (cy1 - cy0) * ease;
+        const sc = 3.2 + (1 - 3.2) * ease;
+        cx.save();
+        cx.translate(x, yy); cx.scale(sc, sc); cx.translate(-x, -yy);
+        cx.textAlign = 'right'; cx.fillStyle = '#fff'; cx.font = 'bold 26px Segoe UI';
+        cx.fillText(String(r.value), x, yy);
+        cx.restore();
+        // label fades in at the row as the number lands
+        cx.globalAlpha = ease;
+        cx.textAlign = 'left'; cx.fillStyle = '#dff'; cx.font = 'bold 22px Segoe UI';
+        cx.fillText(r.label, 78, y);
+        cx.globalAlpha = 1;
+        return;
+      }
+      // settled in the line
+      cx.strokeStyle = 'rgba(120,220,255,.5)'; cx.beginPath();
+      cx.moveTo(70, y - 22); cx.lineTo(CFG.W - 70, y - 22); cx.stroke();
+      cx.textAlign = 'left'; cx.fillStyle = '#dff'; cx.font = 'bold 22px Segoe UI';
+      cx.fillText(r.label, 78, y);
+      cx.textAlign = 'right'; cx.fillStyle = '#fff'; cx.font = 'bold 26px Segoe UI';
+      cx.fillText(String(r.value), CFG.W - 78, y);
+      return;
+    }
+
+    // ordinary rows (skip drawing them while the TOTAL hero is still filling the centre
+    // if they appear after TOTAL — they already have their own delay so this is fine)
+    if (totalIdx >= 0 && i > totalIdx) {
+      // shift appear so footer rows wait for the hero animation
+      const wait = DEBRIEF_TOTAL_HERO + DEBRIEF_TOTAL_FLY - DEBRIEF_COUNT_TIME;
+      if (G.debriefT - appearAt - wait <= 0) return;
+    }
+    const rowShown = (totalIdx >= 0 && i > totalIdx)
+      ? (G.debriefT - appearAt - (DEBRIEF_TOTAL_HERO + DEBRIEF_TOTAL_FLY - DEBRIEF_COUNT_TIME))
+      : shown;
+    if (rowShown <= 0) return;
+    const k = Math.min(1, rowShown / DEBRIEF_COUNT_TIME);
+    const val = Math.round(r.value * k * k);
+    const pop = rowShown < 0.16 ? 1.14 : 1;
     cx.save(); cx.translate(CFG.W / 2, y); cx.scale(pop, pop); cx.translate(-CFG.W / 2, -y);
-    if (r.big) { cx.strokeStyle = 'rgba(120,220,255,.5)'; cx.beginPath();
-      cx.moveTo(70, y - 26); cx.lineTo(CFG.W - 70, y - 26); cx.stroke(); }
-    cx.textAlign = 'left'; cx.fillStyle = r.big ? '#dff' : (r.col || '#9cc');
-    cx.font = (r.big ? 'bold 24px' : '19px') + ' Segoe UI';
+    cx.textAlign = 'left'; cx.fillStyle = r.col || '#9cc';
+    cx.font = '18px Segoe UI';
     cx.fillText(r.label, 78, y);
-    cx.textAlign = 'right'; cx.fillStyle = r.big ? '#fff' : (r.col || '#dff');
-    cx.font = 'bold ' + (r.big ? 26 : 21) + 'px Segoe UI';
+    cx.textAlign = 'right'; cx.fillStyle = r.col || '#dff';
+    cx.font = 'bold 20px Segoe UI';
     cx.fillText((r.money ? '₵ ' : '') + val, CFG.W - 78, y);
     cx.restore();
   });
@@ -3136,10 +3283,10 @@ function drawDebrief() {
   if (G.debriefDone) {
     cx.textAlign = 'center'; cx.fillStyle = '#ffd';
     cx.font = 'bold 22px Segoe UI';
-    cx.fillText('TAP TO CONTINUE  ▶  ARMORY', CFG.W / 2, 880);
+    cx.fillText('TAP TO CONTINUE  ▶  ARMORY', CFG.W / 2, 860);
   } else {
     cx.textAlign = 'center'; cx.fillStyle = '#567'; cx.font = '15px Segoe UI';
-    cx.fillText('tap to skip', CFG.W / 2, 880);
+    cx.fillText('tap to skip', CFG.W / 2, 860);
   }
 }
 // Run controls are DOM buttons in #hud now (see the .ctrls row) — nothing to paint on the canvas.
@@ -3268,9 +3415,10 @@ function codexArt(id){
   return im;
 }
 function drawEndScreen(win){const elapsed=Math.max(0,G.endElapsed||0),score=endlessScore();   // frozen clock
-  cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'HIVE WON',CFG.W/2,280);
-  cx.fillStyle='#cdf';cx.font='20px Segoe UI';cx.fillText(`TIME ${elapsed.toFixed(1)}s  ·  KILLS ${G.kills}`,CFG.W/2,355);
-  cx.fillText(`CREDITS ${Math.max(0,G.credits-G.creditsStart)}  ·  SCORE ${score}`,CFG.W/2,395);
+  // W3 — victory tally sits lower so it clears the phone status-bar band
+  cx.textAlign='center';cx.fillStyle=win?'#8f8':'#f66';cx.font='bold 48px Segoe UI';cx.fillText(win?'HIVE PURGED':'HIVE WON',CFG.W/2,320);
+  cx.fillStyle='#cdf';cx.font='20px Segoe UI';cx.fillText(`TIME ${elapsed.toFixed(1)}s  ·  KILLS ${G.kills}`,CFG.W/2,400);
+  cx.fillText(`CREDITS ${Math.max(0,G.credits-G.creditsStart)}  ·  SCORE ${score}`,CFG.W/2,440);
   if(!win&&!G.reviveUsed){cx.fillStyle='rgba(80,180,255,.18)';cx.fillRect(90,620,CFG.W-180,90);cx.strokeStyle='#6df';cx.strokeRect(90,620,CFG.W-180,90);
     cx.fillStyle='#dff';cx.font='bold 22px Segoe UI';cx.fillText('WATCH AD TO REVIVE',CFG.W/2,675);}
   if(win&&G.ratingPending) drawRatingBanner(RATING_WIN_Y, RATING_BANNER_H);   // never shown on a loss — see Task 3 note in nextLevel()
