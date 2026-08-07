@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.3.2';
+const GAME_VERSION = '0.3.3';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -427,7 +427,9 @@ let EDIT = (() => { try { return mergeEdit(editDefaults(), migrateForgeValues(JS
                     catch (e) { return editDefaults(); } })();
 function saveEdit() { try { localStorage.setItem(EDIT_KEY, JSON.stringify(EDIT)); } catch (e) {} }
 function applyEditWeapons() {                    // WEAPONS is read all over — mutate it in place
-  EDIT.weapons.forEach((w, i) => { if (WEAPONS[i]) { WEAPONS[i].rof = w.rof; WEAPONS[i].dmg = w.dmg; WEAPONS[i].n = w.n; WEAPONS[i].spread = w.spread;
+  EDIT.weapons.forEach((w, i) => { if (WEAPONS[i]) {
+    if (w.name) WEAPONS[i].name = w.name;         // FORGE-rename shows on HUD / stage banner
+    WEAPONS[i].rof = w.rof; WEAPONS[i].dmg = w.dmg; WEAPONS[i].n = w.n; WEAPONS[i].spread = w.spread;
     if (Number.isFinite(w.recoil)) WEAPONS[i].recoil = w.recoil;   // FORGE-tunable knockback punch
     if (w.sfx) WEAPONS[i].sfx = w.sfx; } });   // fire-sound is FORGE-assignable too
 }
@@ -853,8 +855,11 @@ function levelStart() {
   if (G.level === CFG.levels && WEAPONS[G.weapon].spread > BOSS_MAX_SPREAD) G.weapon = pickRandomWeapon(G.weapon, G.level);
   loadEnv(G.level);
   AUDIO.music(EDIT.levelMusic[G.level - 1]);       // per-level track (blank = silence)
+  applyEditWeapons();   // pick up FORGE renames before the stage banner
   const nm = (EDIT.env[G.level - 1] || {}).name, wpnTag = '⚔ ' + WEAPONS[G.weapon].name.toUpperCase();
-  announce(nm ? '◆ ' + nm.toUpperCase() + '  ·  ' + wpnTag : wpnTag, '#9fd4ff');
+  // Keep title on-screen: short name + weapon; announce() clamps font below.
+  const title = nm ? ('◆ ' + String(nm).toUpperCase()) : ('LEVEL ' + G.level);
+  announce(title + '  ·  ' + wpnTag, '#9fd4ff');
 }
 function endlessScore(){return Math.floor(G.kills*10+G.runBosses*500+G.maxSquad*2+G.loop*2000+
   Math.max(0,G.credits-G.creditsStart)*.25+(G.weapon+1)*100);}
@@ -990,6 +995,22 @@ function spawnGatePair() {
       g2.wpnId = null; g2.locked = false; g2.need = GB.hpStepPlus(G.level);
     }
   }
+  // Eric 2026-08-07: one gate must be a hard decision — big value gap and/or higher HP so
+  // the player works for the juicy side instead of both walls reading the same.
+  if (!g1.locked && !g2.locked && g1.kind === 'add' && g2.kind === 'add') {
+    const hi = Math.abs(g1.val) >= Math.abs(g2.val) ? g1 : g2;
+    const lo = hi === g1 ? g2 : g1;
+    if (Math.abs(hi.val - lo.val) < Math.max(4, Math.abs(lo.val) * 0.8)) {
+      const boost = Math.max(6, Math.round(Math.abs(lo.val) * 1.8 + 4));
+      hi.val = hi.val >= 0 ? boost : -boost;
+    }
+    // Hard gate costs more shots to crack
+    hi.need = Math.max(hi.need, Math.round(GB.hpStepPlus(G.level) * 1.85));
+  } else if (!g1.locked && !g2.locked && g1.kind === 'wpn' && g2.kind === 'add') {
+    g2.need = Math.max(g2.need, Math.round(GB.hpStepPlus(G.level) * 1.5));
+  } else if (!g1.locked && !g2.locked && g2.kind === 'wpn' && g1.kind === 'add') {
+    g1.need = Math.max(g1.need, Math.round(GB.hpStepPlus(G.level) * 1.5));
+  }
   gates.push(g1, g2);
 }
 function gateHit(g, dmg) {           // shooting a gate improves it
@@ -1030,7 +1051,12 @@ function gatePass(g) {
 }
 
 // ---------- deploy cues (big center-screen banner: "TANK INBOUND" etc.) ----------
-function announce(text, col) { G.cueText = text; G.cueCol = col || '#ffd75e'; G.cueT = 2.2; }
+function announce(text, col) {
+  // Fit long stage titles: store raw; draw path shrinks font until it fits the banner width.
+  G.cueText = String(text || '');
+  G.cueCol = col || '#ffd75e';
+  G.cueT = 2.4;
+}
 
 // ---------- combat ----------
 let fireT = 0;
@@ -2929,12 +2955,16 @@ function draw() {
     cx.fillText('KILL STREAK', 0, 26); cx.restore();
   }
 
-  // deploy cue banner — "TANK INBOUND" / "<PERK> ONLINE": punch in, hold, fade out
+  // deploy cue banner — stage title / perk: punch in, hold, fade out; font auto-fits width
   if (G.cueT > 0 && G.cueText) {
-    const k = G.cueT / 2.2, aIn = Math.min(1, (1 - k) * 8), aOut = Math.min(1, k * 3);
+    const k = G.cueT / 2.4, aIn = Math.min(1, (1 - k) * 8), aOut = Math.min(1, k * 3);
     const pop = 1 + 0.25 * Math.max(0, (k - 0.88) / 0.12);
-    cx.save(); cx.translate(CFG.W / 2, 330); cx.scale(pop, pop); cx.globalAlpha = Math.min(aIn, aOut);
-    cx.textAlign = 'center'; cx.font = '900 40px Segoe UI'; cx.lineWidth = 8; cx.strokeStyle = '#130524';
+    const maxW = CFG.W - 48;
+    let fs = 40;
+    cx.save(); cx.font = '900 ' + fs + 'px Segoe UI';
+    while (fs > 18 && cx.measureText(G.cueText).width > maxW) { fs -= 2; cx.font = '900 ' + fs + 'px Segoe UI'; }
+    cx.translate(CFG.W / 2, 330); cx.scale(pop, pop); cx.globalAlpha = Math.min(aIn, aOut);
+    cx.textAlign = 'center'; cx.lineWidth = Math.max(5, fs * 0.2); cx.strokeStyle = '#130524';
     cx.strokeText(G.cueText, 0, 0);
     cx.shadowColor = G.cueCol; cx.shadowBlur = 22; cx.fillStyle = G.cueCol; cx.fillText(G.cueText, 0, 0);
     cx.restore(); cx.globalAlpha = 1;
@@ -3160,11 +3190,32 @@ function drawPerks() {
 // W3: content sits lower (phone status bar). W6: TOTAL KILLS does a huge centre count-up then
 // shrinks/drops into its row — the payoff moment.
 const DEBRIEF_ROW_DELAY = 0.50, DEBRIEF_COUNT_TIME = 0.42;
-const DEBRIEF_TITLE_Y = 170, DEBRIEF_ROW0_Y = 250, DEBRIEF_ROW_STEP = 42;
+// Centered panel (Eric 2026-08-07) — title mid-upper, rows stack through vertical center.
+const DEBRIEF_TITLE_Y = 0.22, DEBRIEF_ROW0_Y = 0.34, DEBRIEF_ROW_STEP = 44;
 const DEBRIEF_TOTAL_HERO = 1.05, DEBRIEF_TOTAL_FLY = 0.55;   // W6 phases for the TOTAL row
+function debriefTone(n) {
+  // Game-show blip per digit tick — pitch climbs with the count.
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!G._toneCtx) G._toneCtx = new AC();
+    const ctx = G._toneCtx, t0 = ctx.currentTime;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'square';
+    o.frequency.value = 420 + Math.min(900, Math.abs(n|0) * 3.5);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.09, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(t0); o.stop(t0 + 0.1);
+  } catch (_) {}
+}
 function startDebrief() {
   G.state = 'debrief'; G.debriefT = 0; G.debriefDone = false; G.fireworks = [];
+  G.debriefLastVal = {};   // row-index -> last drawn count (for per-tick tones)
   if (!G.lvlKills) resetLevelStats();
+  // Opening fanfare burst
+  for (let i = 0; i < 3; i++) setTimeout(() => { if (G.state === 'debrief') fireworkBurst(); }, i * 120);
 }
 function debriefRows() {
   const rows = [];
@@ -3179,14 +3230,16 @@ function debriefRows() {
   return rows;
 }
 function fireworkBurst() {
-  const x = rr(90, CFG.W - 90), y = rr(220, 560);
-  const hue = ['#4ff', '#f4f', '#ff4', '#6f9', '#f86'][(rng() * 5) | 0];
-  for (let i = 0; i < 46; i++) {
-    const a = rng() * 6.283, sp = rr(90, 340);
-    G.fireworks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rr(0.8, 1.8), col: hue, r: rr(2.2, 4.4) });
+  const x = rr(70, CFG.W - 70), y = rr(CFG.H * 0.25, CFG.H * 0.72);
+  const hue = ['#4ff', '#f4f', '#ff4', '#6f9', '#f86', '#fff'][(rng() * 6) | 0];
+  for (let i = 0; i < 72; i++) {
+    const a = rng() * 6.283, sp = rr(120, 420);
+    G.fireworks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rr(0.9, 2.1), col: hue, r: rr(2.4, 5.2) });
   }
-  G.fireworks.push({ x, y, vx: 0, vy: 0, life: 0.22, col: '#fff', r: 26, flash: 1 });   // muzzle flash of the shell
+  G.fireworks.push({ x, y, vx: 0, vy: 0, life: 0.28, col: '#fff', r: 38, flash: 1 });
+  G.fireworks.push({ x, y, vx: 0, vy: 0, life: 0.4, col: hue, r: 54, flash: 1 });
   AUDIO.sample('explosion');
+  G.flashT = Math.max(G.flashT || 0, 0.18);
 }
 function updateDebrief(dt) {
   G.debriefT += dt;
@@ -3205,18 +3258,29 @@ function updateDebrief(dt) {
     if (f.life <= 0) G.fireworks.splice(i, 1); }
 }
 function drawDebrief() {
-  cx.fillStyle = 'rgba(4,2,12,0.90)'; cx.fillRect(0, 0, CFG.W, CFG.H);
+  // Centered glass panel
+  cx.fillStyle = 'rgba(4,2,12,0.82)'; cx.fillRect(0, 0, CFG.W, CFG.H);
+  const panelW = Math.min(CFG.W - 40, 520), panelH = Math.min(CFG.H - 80, 560);
+  const px0 = (CFG.W - panelW) / 2, py0 = (CFG.H - panelH) / 2;
+  cx.fillStyle = 'rgba(12,24,40,0.94)'; cx.strokeStyle = '#4ff'; cx.lineWidth = 2;
+  cx.shadowColor = '#4ff'; cx.shadowBlur = 28;
+  cx.beginPath();
+  if (cx.roundRect) cx.roundRect(px0, py0, panelW, panelH, 16); else cx.rect(px0, py0, panelW, panelH);
+  cx.fill(); cx.stroke(); cx.shadowBlur = 0;
   cx.textAlign = 'center';
-  cx.fillStyle = '#4ff'; cx.shadowColor = '#f4f'; cx.shadowBlur = 18; cx.font = 'bold 36px Segoe UI';
-  cx.fillText('LEVEL ' + (G.mode === 'endless' ? G.loop : G.level - 1) + ' CLEAR', CFG.W / 2, DEBRIEF_TITLE_Y);
+  const titleY = py0 + panelH * DEBRIEF_TITLE_Y;
+  cx.fillStyle = '#4ff'; cx.shadowColor = '#f4f'; cx.shadowBlur = 22; cx.font = '900 38px Segoe UI';
+  const clearLbl = 'LEVEL ' + (G.mode === 'endless' ? G.loop : G.level - 1) + ' CLEAR';
+  cx.fillText(clearLbl, CFG.W / 2, titleY);
   cx.shadowBlur = 0;
   const rows = debriefRows();
   const totalIdx = rows.findIndex(r => r.big);
+  if (!G.debriefLastVal) G.debriefLastVal = {};
   rows.forEach((r, i) => {
     const appearAt = i * DEBRIEF_ROW_DELAY;
     const shown = G.debriefT - appearAt;
     if (shown <= 0) return;
-    const y = DEBRIEF_ROW0_Y + i * DEBRIEF_ROW_STEP;
+    const y = py0 + panelH * DEBRIEF_ROW0_Y + i * DEBRIEF_ROW_STEP;
 
     // W6 — TOTAL KILLS: huge centre count-up, then shrink + drop into the row slot
     if (r.big) {
@@ -3224,17 +3288,19 @@ function drawDebrief() {
       if (shown < heroEnd) {
         const k = Math.min(1, shown / DEBRIEF_COUNT_TIME);
         const val = Math.round(r.value * k * k);
+        if (G.debriefLastVal[i] !== val) { G.debriefLastVal[i] = val; debriefTone(val); }
         const pulse = 1 + 0.06 * Math.sin(shown * 14);
+        const cy = CFG.H * 0.48;
         cx.save();
         cx.textAlign = 'center';
-        cx.fillStyle = 'rgba(80,200,255,.18)';
-        cx.beginPath(); cx.arc(CFG.W / 2, CFG.H * 0.48, 110 * pulse, 0, 7); cx.fill();
-        cx.shadowColor = '#4ff'; cx.shadowBlur = 28;
-        cx.fillStyle = '#fff'; cx.font = '900 ' + Math.round(92 * pulse) + 'px Segoe UI';
-        cx.fillText(String(val), CFG.W / 2, CFG.H * 0.48 + 32);
+        cx.fillStyle = 'rgba(80,200,255,.22)';
+        cx.beginPath(); cx.arc(CFG.W / 2, cy, 120 * pulse, 0, 7); cx.fill();
+        cx.shadowColor = '#4ff'; cx.shadowBlur = 36;
+        cx.fillStyle = '#fff'; cx.font = '900 ' + Math.round(96 * pulse) + 'px Segoe UI';
+        cx.fillText(String(val), CFG.W / 2, cy + 34);
         cx.shadowBlur = 0;
         cx.fillStyle = '#9ef'; cx.font = 'bold 22px Segoe UI';
-        cx.fillText('TOTAL KILLS', CFG.W / 2, CFG.H * 0.48 + 72);
+        cx.fillText('TOTAL KILLS', CFG.W / 2, cy + 74);
         cx.restore();
         return;   // don't also draw the line yet
       }
@@ -3281,20 +3347,22 @@ function drawDebrief() {
     if (rowShown <= 0) return;
     const k = Math.min(1, rowShown / DEBRIEF_COUNT_TIME);
     const val = Math.round(r.value * k * k);
+    if (G.debriefLastVal[i] !== val) { G.debriefLastVal[i] = val; debriefTone(val); }
     const pop = rowShown < 0.16 ? 1.14 : 1;
+    const leftX = px0 + 28, rightX = px0 + panelW - 28;
     cx.save(); cx.translate(CFG.W / 2, y); cx.scale(pop, pop); cx.translate(-CFG.W / 2, -y);
     cx.textAlign = 'left'; cx.fillStyle = r.col || '#9cc';
     cx.font = '18px Segoe UI';
-    cx.fillText(r.label, 78, y);
+    cx.fillText(r.label, leftX, y);
     cx.textAlign = 'right'; cx.fillStyle = r.col || '#dff';
     cx.font = 'bold 20px Segoe UI';
-    cx.fillText((r.money ? '₵ ' : '') + val, CFG.W - 78, y);
+    cx.fillText((r.money ? '₵ ' : '') + val, rightX, y);
     cx.restore();
   });
   for (const f of G.fireworks) {                          // celebration
     cx.globalAlpha = Math.max(0, Math.min(1, f.life));
-    cx.fillStyle = f.col; cx.shadowColor = f.col; cx.shadowBlur = f.flash ? 40 : 14;
-    cx.beginPath(); cx.arc(f.x, f.y, (f.r || 3) * (f.flash ? Math.max(0.2, f.life / 0.22) : 1), 0, 7); cx.fill();
+    cx.fillStyle = f.col; cx.shadowColor = f.col; cx.shadowBlur = f.flash ? 56 : 18;
+    cx.beginPath(); cx.arc(f.x, f.y, (f.r || 3) * (f.flash ? Math.max(0.2, f.life / 0.28) : 1), 0, 7); cx.fill();
   }
   cx.globalAlpha = 1; cx.shadowBlur = 0;
   if (G.debriefDone) {
@@ -4089,13 +4157,18 @@ function renderTab(){
       <b>Testing note:</b> an enemy that dies to the shot cannot be seen recoiling — it is removed the same frame.
       Try it on an Eldritch Sponge, or raise the Xenoid's HP BASE on the ENTITIES tab first.</div>
       <table><tr><th>WEAPON</th><th${hlp('weapons.0.rof')}>ROF</th><th${hlp('weapons.0.dmg')}>DMG</th><th${hlp('weapons.0.spread')}>SPREAD</th><th${hlp('weapons.0.recoil')}>RECOIL</th><th${hlp('weapons.0.sfx')}>FIRE SFX</th><th>TEST</th></tr>`;
-    EDIT.weapons.forEach((w,i)=>{ h+=`<tr><td style="color:#4ff">${w.name}</td>
+    EDIT.weapons.forEach((w,i)=>{ h+=`<tr>
+      <td><input data-p="weapons.${i}.name" value="${(w.name||'').replace(/"/g,'&quot;')}" style="width:110px;background:#071215;color:#4ff;border:1px solid #426;border-radius:3px;padding:2px 4px" title="in-game display name"></td>
       <td>${num('weapons.'+i+'.rof',0.5)}</td><td>${num('weapons.'+i+'.dmg',0.05)}</td>
       <td>${num('weapons.'+i+'.spread',0.02)}</td>
       <td>${num('weapons.'+i+'.recoil',1)}</td>
       <td>${snd('weapons.'+i+'.sfx')}</td>
       <td><button data-give="${i}" title="equip this weapon right now">▶ GIVE</button></td></tr>`; });
     body.innerHTML = h + '</table>';
+    body.querySelectorAll('input[data-p]').forEach(inp=>{
+      inp.oninput=()=>{ const p=inp.dataset.p, parts=p.split('.'); let o=EDIT; for(let k=0;k<parts.length-1;k++) o=o[parts[k]];
+        o[parts[parts.length-1]]=inp.value; applyEditWeapons(); saveEdit(); };
+    });
     // Equip instantly for testing. Stays equipped across levels (levelStart no longer rerolls the
     // weapon), so you can carry it through a whole run to feel it out.
     body.querySelectorAll('[data-give]').forEach(b=>b.onclick=()=>{
