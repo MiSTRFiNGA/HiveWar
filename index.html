@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.2.9';
+const GAME_VERSION = '0.3.0';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -348,6 +348,10 @@ function editDefaults() { return {
     { name:'Runner',        hpBase:7,  hpLvl:1.6, spd:118, r:16, credits:2,  weight:10,  minLvl:2, mass:0.7, sfxAttack:'xenohit',      sfxDie:'xenohit' },
     { name:'Crawler',       hpBase:16, hpLvl:3.5, spd:88,  r:18, credits:2,  weight:8,   minLvl:3, mass:1.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
     { name:'Brute',         hpBase:48, hpLvl:11,  spd:36,  r:28, credits:5,  weight:4,   minLvl:5, mass:3.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Armored Dead',  hpBase:28, hpLvl:6.5, spd:50,  r:22, credits:4,  weight:5,   minLvl:4, mass:2.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Necro Node',    hpBase:90, hpLvl:18,  spd:0,   r:26, credits:8,  weight:1.5, minLvl:6, mass:4,   sfxAttack:'xenohit',      sfxDie:'eldritchdie' },
+    { name:'Mutant Enforcer',hpBase:55,hpLvl:12,  spd:58,  r:24, credits:7,  weight:2.5, minLvl:7, mass:2.8, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Zombie Colossus',hpBase:160,hpLvl:28, spd:28,  r:36, credits:15, weight:0.8, minLvl:8, mass:5,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
   ],
   // recoil = KNOCKBACK PUNCH (owner request 2026-08-02). px of pushback applied to a hit enemy at
   // mass 1; the enemy's own MASS divides it. 0 = no visible bounce, 60 = the Ion Cannon slam.
@@ -2124,7 +2128,7 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=11';                                // bump to bust the browser cache when sprites change
+  const V='?v=12';                                // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
   ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — idle/ooze
@@ -2136,6 +2140,10 @@ const ANIM={};
   ANIM[7]=load('assets/hive_runner_walk.png',4,10);   // HiVE SWARM runner
   ANIM[8]=load('assets/hive_crawler_walk.png',4,8);   // HiVE SWARM crawler
   ANIM[9]=load('assets/hive_brute_walk.png',4,6);     // HiVE SWARM brute
+  ANIM[10]=load('assets/hive_armored_dead_walk.png',4,7);
+  ANIM[11]=load('assets/hive_necro_node_walk.png',4,5);
+  ANIM[12]=load('assets/hive_mutant_enforcer_walk.png',4,8);
+  ANIM[13]=load('assets/hive_zombie_colossus_walk.png',4,5);
   const heroLoad=(src)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return im;};
   IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
   IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
