@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.2.8';
+const GAME_VERSION = '0.2.9';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -343,6 +343,11 @@ function editDefaults() { return {
     { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4, mass:0.5, sfxAttack:'xenopterahit', sfxDie:'xenopterahit' },
     { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6, mass:1.5, sfxAttack:'subterrahit',  sfxDie:'subterrahit' },
     { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3, mass:2,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    // HiVE SWARM cast (2026-08-07 art pass) — shared brand walk strips
+    { name:'Shambler',      hpBase:10, hpLvl:2.2, spd:62,  r:20, credits:1,  weight:18,  minLvl:1, mass:1,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Runner',        hpBase:7,  hpLvl:1.6, spd:118, r:16, credits:2,  weight:10,  minLvl:2, mass:0.7, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Crawler',       hpBase:16, hpLvl:3.5, spd:88,  r:18, credits:2,  weight:8,   minLvl:3, mass:1.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Brute',         hpBase:48, hpLvl:11,  spd:36,  r:28, credits:5,  weight:4,   minLvl:5, mass:3.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
   ],
   // recoil = KNOCKBACK PUNCH (owner request 2026-08-02). px of pushback applied to a hit enemy at
   // mass 1; the enemy's own MASS divides it. 0 = no visible bounce, 60 = the Ion Cannon slam.
@@ -2119,7 +2124,7 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=9';                                 // bump to bust the browser cache when sprites change
+  const V='?v=11';                                // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
   ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
   ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — idle/ooze
@@ -2127,6 +2132,10 @@ const ANIM={};
   ANIM[3]=load('assets/xenoptera_fly.png',4,9);   // xenoptera (winged) — flight loop
   ANIM[4]=load('assets/subterra_scan.png',5,6);   // subterra burrower — scan cycle
   ANIM[5]=load('assets/psychoid_swim.png',4,5);   // cephalo-psychoid — swim cycle
+  ANIM[6]=load('assets/hive_shambler_walk.png',4,8);  // HiVE SWARM shambler
+  ANIM[7]=load('assets/hive_runner_walk.png',4,10);   // HiVE SWARM runner
+  ANIM[8]=load('assets/hive_crawler_walk.png',4,8);   // HiVE SWARM crawler
+  ANIM[9]=load('assets/hive_brute_walk.png',4,6);     // HiVE SWARM brute
   const heroLoad=(src)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return im;};
   IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
   IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
