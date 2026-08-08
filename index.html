@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.3.3';
+const GAME_VERSION = '0.3.4';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -3765,6 +3765,14 @@ css.textContent = `
   repeating-conic-gradient(#222 0 25%,#333 0 50%) 0 0/16px 16px;touch-action:none;cursor:crosshair}
 #forge .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
 #forge .kthumb{width:40px;height:40px;image-rendering:pixelated;border:1px solid rgba(0,255,255,.3);border-radius:4px;background:#111}
+/* Single themed CSS tip — data-tip only (no native title= yellow dual-popup) */
+#forge [data-tip]{position:relative;cursor:help}
+#forge [data-tip]:hover::after,#forge label[data-tip]:hover::after{
+  content:attr(data-tip);position:absolute;left:0;top:calc(100% + 4px);z-index:80;
+  min-width:140px;max-width:280px;padding:7px 10px;white-space:normal;
+  background:#061018;border:1px solid #4ff;border-radius:6px;color:#cfe;font-size:11px;
+  font-weight:400;letter-spacing:0;line-height:1.35;text-align:left;text-transform:none;
+  box-shadow:0 0 14px rgba(0,255,255,.35),0 4px 16px rgba(0,0,0,.55);pointer-events:none}
 `;
 document.head.appendChild(css);
 const btn = document.createElement('div'); btn.id='forgeBtn'; btn.textContent='⚒'; btn.title='HiVE FORGE — Game Editor (F2)';
@@ -3842,8 +3850,9 @@ function refreshComputed(){
 }
 // ---- FORGE field help (owner request 2026-08-03: "if i hover over the title, it tells me what it does") ----
 // Keyed by EDIT path with array indices normalised to '*', so one entry covers all 6 enemies /
-// 10 levels / 6 weapons. Rendered as a native title= tooltip on every input AND on the column
-// headers of the entity and weapon tables.
+// 10 levels / 6 weapons. Rendered as a single themed CSS popover via data-tip (NOT title= —
+// native title causes the yellow browser tooltip / dual-popup). Applied on inputs, selects,
+// and column headers of the entity and weapon tables.
 const FORGE_HELP = {
   'player.rofMul':  'Global fire-rate multiplier. Stacks on top of the weapon ROF and any Overclock perk. 1 = unchanged.',
   'player.dmgMul':  'Global damage multiplier applied to every bullet, on top of weapon damage and tier bonuses. 1 = unchanged.',
@@ -3893,7 +3902,7 @@ function helpFor(path){
   const key = String(path || '').replace(/\.\d+/g, '.*');
   return FORGE_HELP[key] || '';
 }
-function hlp(path){ const t = helpFor(path); return t ? ' title="' + forgeEsc(t) + '"' : ''; }
+function hlp(path){ const t = helpFor(path); return t ? ' data-tip="' + forgeEsc(t) + '"' : ''; }
 function num(p,step,w,aria){
   let v = getP(p);
   // Never render non-finite / string-garbage into number inputs (HW.7 LENGTH bug class).
