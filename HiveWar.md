@@ -3,7 +3,7 @@ type: game-documentation
 title: HiVE WAR
 description: Canonical source of truth for HiVE WAR — status, spawn mix, developer rules, and APK/Pages.
 status: playable-in-development
-version: 0.3.8
+version: 0.3.9
 updated: 2026-08-22
 tags: [game, hivemind, webgame, documentation]
 ---
@@ -16,13 +16,13 @@ If they disagree with this file, this file wins. Update this file in place when 
 
 | | |
 |---|---|
-| **Version** | `0.3.8` · `sw.js` `CACHE_VERSION = v29` |
+| **Version** | `0.3.9` · `sw.js` `CACHE_VERSION = v30` |
 | **Master path** | `D:\Dev\HiveWar` — edit here only |
 | **Game file** | `index.html` — one file: engine, FORGE, HUD, run loop |
 | **Launcher** | `Launch HiVE War.bat` (never `file://`) |
 | **GitHub** | https://github.com/MiSTRFiNGA/HiveWar (public, Pages on `master`) |
 | **Pages** | https://mistrfinga.github.io/HiveWar/ |
-| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.8.apk`. Older War APKs are in `_APKs\Archive`. |
+| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.9.apk`. Older War APKs are in `_APKs\Archive`. |
 | **Genre** | Lane / corridor shooter (refs: Real War, Z Route). |
 | **Not** | HiVE SWARM (`D:\Dev\HiveSwarm`) is the 360° survivors-like. Borrow a *behaviour* from it; do not edit that repo from this lane. |
 
@@ -102,6 +102,10 @@ Queen stays out of the fodder roster. Praetorian stays the level guardian (`PRAE
 ---
 
 ## 4. Change record
+
+### 2026-08-22 — Grok · v0.3.9 · live-play colossus identity
+
+Played 0.3.8 locally. HUD guns match names. Lane-edge Colossus still used the skull-and-saw SE/SW sheets. Those walks now copy the front tank strip so every lane is the same giant.
 
 ### 2026-08-22 — Grok · v0.3.8 · 14 gun icons + leftover sprite frames
 

@@ -20,8 +20,8 @@ ENEMY_SFX = ["shambler_attack.mp3", "shambler_die.mp3", "slime_attack.mp3", "col
 
 class CastImportTests(unittest.TestCase):
     def test_version_pair(self):
-        self.assertIn("const GAME_VERSION = '0.3.8'", HTML)
-        self.assertIn("CACHE_VERSION = 'v29'", SW)
+        self.assertIn("const GAME_VERSION = '0.3.9'", HTML)
+        self.assertIn("CACHE_VERSION = 'v30'", SW)
 
     def test_pickkind_uses_full_roster(self):
         self.assertIn("function kindCount()", HTML)
