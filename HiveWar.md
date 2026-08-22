@@ -113,6 +113,7 @@ Owner: add Swarm characters to War, SW/S/SE only, give War enemies their anims, 
 - `FORGE_ENTITY_VERSION = 3` clears stale per-kind/weapon sfx on migrate.
 - Tests: `python qa/_verify_0_3_5_cast.py` 7/7. `node scripts/check_index_syntax.mjs` OK. `node _headless_harness.js` → `SIM ENDED clean` (L1 death with 1-soldier opener is the crash detector, not a campaign clear).
 - APK `HiveWar-0.3.5.apk` 33.65 MB. Unzip-read `GAME_VERSION = 0.3.5`. 42 swarm walks inside the package. 0.3.4 moved to `_APKs\Archive`.
+- Git **`8d8f779`** `feat: Swarm cast SW/S/SE walks, SFX, and spawn mix (v0.3.5)` pushed `origin/master`.
 
 ### Older
 
