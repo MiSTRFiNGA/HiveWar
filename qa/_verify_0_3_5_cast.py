@@ -20,8 +20,8 @@ ENEMY_SFX = ["shambler_attack.mp3", "shambler_die.mp3", "slime_attack.mp3", "col
 
 class CastImportTests(unittest.TestCase):
     def test_version_pair(self):
-        self.assertIn("const GAME_VERSION = '0.3.7'", HTML)
-        self.assertIn("CACHE_VERSION = 'v28'", SW)
+        self.assertIn("const GAME_VERSION = '0.3.8'", HTML)
+        self.assertIn("CACHE_VERSION = 'v29'", SW)
 
     def test_pickkind_uses_full_roster(self):
         self.assertIn("function kindCount()", HTML)
@@ -61,6 +61,13 @@ class CastImportTests(unittest.TestCase):
         self.assertIn("name:'Heat Seeker'", HTML)
         self.assertIn("sfx:'pulse'", HTML)
         self.assertIn("sfxAttack:'shamblerAtk'", HTML)
+
+    def test_fourteen_weapon_icons(self):
+        from PIL import Image
+        im = Image.open(ROOT / "assets" / "weapon_icons.png")
+        self.assertEqual(im.size, (1792, 128))
+        self.assertIn("WEAPON_LAST = 13", HTML)
+        self.assertIn("wrapImg(IMGS.weaponIcons, 14)", HTML)
 
 
 if __name__ == "__main__":

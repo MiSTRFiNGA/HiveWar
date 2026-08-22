@@ -26,7 +26,7 @@
   #hud .cash {color:#4dff86;text-shadow:0 0 4px #17d94f,0 0 12px #17d94f,0 0 22px #0a9e33}
   #hud .wpnName{color:#c46bff;text-shadow:0 0 4px #a03bff,0 0 8px #a03bff;font-size:26px}
   #hud .wpnIcon{display:inline-block;width:38px;height:38px;background-repeat:no-repeat;
-    background-size:500% 100%;vertical-align:middle;filter:drop-shadow(0 0 4px #a03bff)}
+    background-size:1400% 100%;vertical-align:middle;filter:drop-shadow(0 0 4px #a03bff)}
   #hud .sep  {opacity:.35}
   /* Run controls live in the DOM, BELOW the score rows. They used to be canvas-drawn at a fixed
      y=42 and collided with the cash readout at some canvas scales; as a flex row they can never
@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.3.7';
+const GAME_VERSION = '0.3.8';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -2287,7 +2287,7 @@ const ANIM={};
   IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
   IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
   IMGS.perkIcons=heroLoad('assets/perk_icons.png');    // 5 square power-up icons (128px cells)
-  IMGS.weaponIcons=heroLoad('assets/weapon_icons.png');// 5 gun icons (128px cells) for weapon gates
+  IMGS.weaponIcons=heroLoad('assets/weapon_icons.png');// 14 gun icons (128px cells) — War 0-7 + Swarm ports 8-13
   // Praetorian mini-boss animations: idle loop / attack / death sequence
   window.PRAET={idle:load('assets/praet_idle.png',4,4), attack:load('assets/praet_attack.png',5,10), death:load('assets/praet_death.png',5,9)};
 })();
@@ -3140,7 +3140,7 @@ function draw() {
       `<span class="cash">💰 ${G.credits}</span>` +
     `</div>` +
     `<div class="row2">` +
-      `<span class="wpnIcon" style="background-image:url('${wpnIconSrc}');background-position-x:${G.weapon * 25}%"></span>` +
+      `<span class="wpnIcon" style="background-image:url('${wpnIconSrc}');background-size:${Math.max(1, WEAPONS.length) * 100}% 100%;background-position-x:${WEAPONS.length > 1 ? (G.weapon * 100 / (WEAPONS.length - 1)) : 0}%"></span>` +
       `<span class="wpnName">${WEAPONS[G.weapon].name}</span>` +
     `</div>` +
     `<div class="ctrls">` +
@@ -3798,7 +3798,7 @@ const REG = [
   // ITEMS
   { key:'tank',     cat:'ITEMS',   unit:'Ironclad Tank',   action:'Idle',   h: wrapImg(IMGS.tank, 1) },
   { key:'perkIcons',cat:'ITEMS',   unit:'Power-up Icons',  action:'Icons',  h: wrapImg(IMGS.perkIcons, 5) },
-  { key:'wpnIcons', cat:'ITEMS',   unit:'Weapon Icons',    action:'Icons',  h: wrapImg(IMGS.weaponIcons, 5) },
+  { key:'wpnIcons', cat:'ITEMS',   unit:'Weapon Icons',    action:'Icons',  h: wrapImg(IMGS.weaponIcons, 14) },
   { key:'rollerB',  cat:'ITEMS',   unit:'Roller (Breakable)', action:'Idle', h: null, cell:96, xitem:'rollerB' },
   { key:'rollerA',  cat:'ITEMS',   unit:'Roller (Armored)',   action:'Idle', h: null, cell:96, xitem:'rollerA' },
 ];

@@ -3,7 +3,7 @@ type: game-documentation
 title: HiVE WAR
 description: Canonical source of truth for HiVE WAR — status, spawn mix, developer rules, and APK/Pages.
 status: playable-in-development
-version: 0.3.7
+version: 0.3.8
 updated: 2026-08-22
 tags: [game, hivemind, webgame, documentation]
 ---
@@ -16,13 +16,13 @@ If they disagree with this file, this file wins. Update this file in place when 
 
 | | |
 |---|---|
-| **Version** | `0.3.7` · `sw.js` `CACHE_VERSION = v28` |
+| **Version** | `0.3.8` · `sw.js` `CACHE_VERSION = v29` |
 | **Master path** | `D:\Dev\HiveWar` — edit here only |
 | **Game file** | `index.html` — one file: engine, FORGE, HUD, run loop |
 | **Launcher** | `Launch HiVE War.bat` (never `file://`) |
 | **GitHub** | https://github.com/MiSTRFiNGA/HiveWar (public, Pages on `master`) |
 | **Pages** | https://mistrfinga.github.io/HiveWar/ |
-| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.7.apk`. Older War APKs are in `_APKs\Archive`. |
+| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.8.apk`. Older War APKs are in `_APKs\Archive`. |
 | **Genre** | Lane / corridor shooter (refs: Real War, Z Route). |
 | **Not** | HiVE SWARM (`D:\Dev\HiveSwarm`) is the 360° survivors-like. Borrow a *behaviour* from it; do not edit that repo from this lane. |
 
@@ -78,6 +78,8 @@ Facing: `e.lane < -0.16` → SW, `> 0.16` → SE, else S. Sheets live in `assets
 
 War guns keep rifle/MG/lightning/grenade. Swarm ports (Pulse Carbine, Heat Seeker, Breach Laser, Storm Arc, Nova Shell, Toxin Injector) use Swarm `pulse/seeker/beam/chain/nova/poison` samples. Flamethrower uses `flame_loop`. FORGE v5 refreshes saved weapon sfx.
 
+`assets/weapon_icons.png` is a **14-cell** 128px strip (1792×128, magenta keyed). Cells 0–4 are the original pixel guns; 5–13 are the missing ladder art (Flamethrower through Toxin). HUD `wpnIcon` sizes itself from `WEAPONS.length` (`1400%` strip, position `i * 100 / 13`). FORGE wrap is 14 frames. Gate draw already sliced by `width/height`.
+
 Queen stays out of the fodder roster. Praetorian stays the level guardian (`PRAET` idle/attack/death).
 
 ---
@@ -100,6 +102,14 @@ Queen stays out of the fodder roster. Praetorian stays the level guardian (`PRAE
 ---
 
 ## 4. Change record
+
+### 2026-08-22 — Grok · v0.3.8 · 14 gun icons + leftover sprite frames
+
+- Generated + keyed nine missing weapon icons and appended them to `assets/weapon_icons.png` (cells 5–13: Flame, Rail, Rocket, Pulse, Seeker, Breach, Storm, Nova, Toxin). HUD/FORGE now treat the strip as 14 cells.
+- Runner `walk_s` frame 0 had a headless torso — replaced with a full-body opposite-contact pose.
+- Colossus `walk_s` frame 1 was cropped at the waist — replaced with a full-body mid-step. SE/SW frame 3 were half-bodies — replaced.
+- Recopied Swarm `runner` / `zombie_colossus` SW/S/SE walks into `assets/swarm/`.
+- Honest leftovers: War colossus **S** is the tank giant; **SE/SW** are still the skull-and-saw body (same name, two silhouettes on the lane edges). New icons 5–13 are painted vs pixel 0–4. Necro Node frame 0 is a smaller pulse, not a crop.
 
 ### 2026-08-22 — Grok · v0.3.7 · Swarm weapon port
 
