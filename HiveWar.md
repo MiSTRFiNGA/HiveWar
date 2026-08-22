@@ -3,8 +3,8 @@ type: game-documentation
 title: HiVE WAR
 description: Canonical source of truth for HiVE WAR — status, spawn mix, developer rules, and APK/Pages.
 status: playable-in-development
-version: 0.3.5
-updated: 2026-08-21
+version: 0.3.7
+updated: 2026-08-22
 tags: [game, hivemind, webgame, documentation]
 ---
 
@@ -16,13 +16,13 @@ If they disagree with this file, this file wins. Update this file in place when 
 
 | | |
 |---|---|
-| **Version** | `0.3.6` · `sw.js` `CACHE_VERSION = v27` |
+| **Version** | `0.3.7` · `sw.js` `CACHE_VERSION = v28` |
 | **Master path** | `D:\Dev\HiveWar` — edit here only |
 | **Game file** | `index.html` — one file: engine, FORGE, HUD, run loop |
 | **Launcher** | `Launch HiVE War.bat` (never `file://`) |
 | **GitHub** | https://github.com/MiSTRFiNGA/HiveWar (public, Pages on `master`) |
 | **Pages** | https://mistrfinga.github.io/HiveWar/ |
-| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.6.apk`. Older War APKs are in `_APKs\Archive`. |
+| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.7.apk`. Older War APKs are in `_APKs\Archive`. |
 | **Genre** | Lane / corridor shooter (refs: Real War, Z Route). |
 | **Not** | HiVE SWARM (`D:\Dev\HiveSwarm`) is the 360° survivors-like. Borrow a *behaviour* from it; do not edit that repo from this lane. |
 
@@ -76,7 +76,7 @@ Bump `GAME_VERSION` **and** `sw.js CACHE_VERSION` together.
 
 Facing: `e.lane < -0.16` → SW, `> 0.16` → SE, else S. Sheets live in `assets/swarm/{stem}_walk_{s,se,sw}.png`.
 
-Weapon SFX (from Swarm): Pulse Carbine → Blaster/Twin; Nova → Scatter/Heavy/Rocket; Beam → Ion/Rail; Flame loop → Flamethrower. Per-enemy attack/die samples in `assets/SFX/*_{attack,die}.mp3`. FORGE v3 drops old saved `xenohit`/`grenade` names so these defaults win.
+War guns keep rifle/MG/lightning/grenade. Swarm ports (Pulse Carbine, Heat Seeker, Breach Laser, Storm Arc, Nova Shell, Toxin Injector) use Swarm `pulse/seeker/beam/chain/nova/poison` samples. Flamethrower uses `flame_loop`. FORGE v5 refreshes saved weapon sfx.
 
 Queen stays out of the fodder roster. Praetorian stays the level guardian (`PRAET` idle/attack/death).
 
@@ -100,6 +100,10 @@ Queen stays out of the fodder roster. Praetorian stays the level guardian (`PRAE
 ---
 
 ## 4. Change record
+
+### 2026-08-22 — Grok · v0.3.7 · Swarm weapon port
+
+Added Pulse Carbine, Heat Seeker (homing), Breach Laser (pierce), Storm Arc (chain jumps), Nova Shell (blast), Toxin Injector (DoT) to the corridor ladder with Swarm SFX. Flamethrower uses flame_loop. Twin Plasma `rof:10` is **10 volleys per second** (2 pellets each), not a “10 rounds” card. No Giant Rounds.
 
 ### 2026-08-22 — Grok · v0.3.6 · crop blanks, revert gun SFX
 

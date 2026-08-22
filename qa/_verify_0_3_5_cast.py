@@ -20,8 +20,8 @@ ENEMY_SFX = ["shambler_attack.mp3", "shambler_die.mp3", "slime_attack.mp3", "col
 
 class CastImportTests(unittest.TestCase):
     def test_version_pair(self):
-        self.assertIn("const GAME_VERSION = '0.3.6'", HTML)
-        self.assertIn("CACHE_VERSION = 'v27'", SW)
+        self.assertIn("const GAME_VERSION = '0.3.7'", HTML)
+        self.assertIn("CACHE_VERSION = 'v28'", SW)
 
     def test_pickkind_uses_full_roster(self):
         self.assertIn("function kindCount()", HTML)
@@ -58,6 +58,8 @@ class CastImportTests(unittest.TestCase):
         self.assertIn("load3('shambler'", HTML)
         self.assertIn("function animFace(", HTML)
         self.assertIn("sfx:'gun'", HTML)
+        self.assertIn("name:'Heat Seeker'", HTML)
+        self.assertIn("sfx:'pulse'", HTML)
         self.assertIn("sfxAttack:'shamblerAtk'", HTML)
 
 

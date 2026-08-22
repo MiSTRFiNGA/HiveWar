@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.3.6';
+const GAME_VERSION = '0.3.7';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -153,7 +153,7 @@ const WEAPONS = [
   // sets enemies BURNING (a damage-over-time that keeps ticking after the stream moves off).
   // Deliberately weak knockback: a gout of flame shouldn't shove like a slug.
   {name:'Flamethrower',rof:16,   dmg: 0.22, n:3, spread:0.62, col:'#f93',
-   sfx:'grenade',     sfxRate:0.55, sfxVol:.16, sfxMinGap:0.10,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
+   sfx:'flame',       sfxRate:1.0,  sfxVol:.18, sfxMinGap:0.10,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
    spd:0.45, life:0.42, burn:2.4},
   // HW.20 (owner request 2026-08-03) — two new gates at the top of the ladder.
   // RAIL GUN: a single hyper-velocity slug that PIERCES the whole column. Low rate, high per-hit
@@ -167,6 +167,24 @@ const WEAPONS = [
   {name:'Rocket Launcher', rof: 1.1, dmg: 9.0, n:1, spread:0.06, col:'#fc6',
    sfx:'grenade',     sfxRate:0.80, sfxVol:.30, sfxMinGap:0.08,  shape:'rocket', len:34, wid:5,  minLvl:4, recoil:55,
    rocket:true, aoe:95, spd:0.72},
+  // Swarm ports (2026-08-22). Same names/SFX as HiVE SWARM; fire along the corridor.
+  {name:'Pulse Carbine', rof: 6.2, dmg: 1.6, n:1, spread:0,    col:'#5dfff0',
+   sfx:'pulse',       sfxRate:1.0,  sfxVol:.28, sfxMinGap:0,     shape:'bolt',   len:22, wid:4,  minLvl:1, recoil:16},
+  {name:'Heat Seeker',   rof: 2.6, dmg: 3.4, n:1, spread:0,    col:'#ff6b3d',
+   sfx:'seeker',      sfxRate:1.0,  sfxVol:.30, sfxMinGap:0.08,  shape:'orb',    len:18, wid:8,  minLvl:2, recoil:12,
+   homing:true, turn:7.5, spd:0.85},
+  {name:'Breach Laser',  rof:12,   dmg: 0.55, n:1, spread:0,    col:'#6ea8ff',
+   sfx:'beam',        sfxRate:1.0,  sfxVol:.22, sfxMinGap:0.04,  shape:'rail',   len:40, wid:6,  minLvl:4, recoil:8,
+   pierce:true, spd:1.2},
+  {name:'Storm Arc',     rof: 3.1, dmg: 4.2, n:1, spread:0,    col:'#d7a6ff',
+   sfx:'chain',       sfxRate:1.0,  sfxVol:.32, sfxMinGap:0.10,  shape:'bolt',   len:20, wid:3,  minLvl:5, recoil:10,
+   chain:true, jumps:4},
+  {name:'Nova Shell',    rof: 1.8, dmg: 6.5, n:1, spread:0.04, col:'#ffe066',
+   sfx:'nova',        sfxRate:1.0,  sfxVol:.34, sfxMinGap:0.08,  shape:'rocket', len:30, wid:8,  minLvl:3, recoil:40,
+   rocket:true, aoe:88, spd:0.78},
+  {name:'Toxin Injector',rof: 2.0, dmg: 1.4, n:1, spread:0,    col:'#7cff4f',
+   sfx:'poison',      sfxRate:1.0,  sfxVol:.28, sfxMinGap:0.08,  shape:'pellet', len:16, wid:4,  minLvl:3, recoil:6,
+   poison:2.4, spd:0.9},
 ];
 // HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
 function weaponAllowed(i, lvl) {
@@ -188,7 +206,7 @@ function clampWeaponToLevel(i, lvl) {
 // randomly rerolling, and now also persistently upgrade.
 // Both start at tier 1 = multiplier 1.0 exactly, so baseline balance (incl. the CG KPI tune
 // and Queen kill-time) is unchanged until the player actually buys a tier in the shop.
-const WEAPON_LAST = 7;   // highest WEAPONS index — bump whenever WEAPONS grows (Rail Gun + Rocket Launcher, HW.20)
+const WEAPON_LAST = 13;  // 0-7 War ladder + 8-13 Swarm ports (Pulse..Toxin)
 const SOLDIER_TIER_MAX = 5, WEAPON_TIER_MAX = 5, TIER_MULT_STEP = 0.12;   // +12%/tier, modest per SHOP economy notes
 // Damage-side squad contribution. Squad COUNT still scales bullets/coverage/survivability
 // linearly — this only softens the DAMAGE stack (see the HW.21 note on EDIT.player).
@@ -274,7 +292,7 @@ const CODEX = [
 // so Eric can tweak + test without touching code. Persisted per-browser.
 // ============================================================
 const EDIT_KEY = 'hiveswarm_forge_v1';
-const FORGE_ENTITY_VERSION = 4;
+const FORGE_ENTITY_VERSION = 5;
 const ENEMY_ENTITY_IDS = ['enemy.xenoid','enemy.eldritchSponge','enemy.cyberMutant','enemy.xenoptera','enemy.subterra','enemy.psychoid','enemy.shambler','enemy.runner','enemy.crawler','enemy.brute','enemy.armoredDead','enemy.necroNode','enemy.mutantEnforcer','enemy.zombieColossus','enemy.slime','enemy.nodeSpawn','enemy.rotter'];
 // Custom enemies added in the FORGE live in EDIT.entities; this re-derives the index bridge from
 // them on load, otherwise a custom enemy would lose its kinds[] mapping on the next refresh.
@@ -436,7 +454,7 @@ function migrateForgeValues(saved) {
   if ((next.forgeEntityVersion || 0) < 3) {
     if (Array.isArray(next.kinds)) next.kinds.forEach(k => { if (k) { delete k.sfxAttack; delete k.sfxDie; } });
   }
-  if ((next.forgeEntityVersion || 0) < 4) {
+  if ((next.forgeEntityVersion || 0) < 5) {
     if (Array.isArray(next.weapons)) next.weapons.forEach(w => { if (w) delete w.sfx; });
   }
   // Preserve FORGE-authored entities (custom enemies/bosses) that the defaults don't know about.
@@ -1123,6 +1141,24 @@ function fire(dt) {
   if (fireT > 0) return;
   fireT = 1 / rof;
   AUDIO.sample(w.sfx || 'gun', {rate: w.sfxRate, vol: w.sfxVol, minGap: w.sfxMinGap});  // per-weapon report, one per volley
+  if (w.chain) {
+    const origin = {x: G.px, y: muzzleY()};
+    const dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * squadPower(G.squad) * EDIT.player.dmgMul * soldierTierMult(G.meta.soldierTier) * weaponTierMult(G.meta.weaponTier);
+    let from = origin; const seen = new Set(); const jumps = w.jumps || 4;
+    for (let j = 0; j < jumps; j++) {
+      const r2 = (j === 0 ? 170 : 230) * (j === 0 ? 170 : 230);
+      let best = null, bestD = r2;
+      enemies.each(e => { if (seen.has(e._pi) || e.mode === 1) return;
+        const d = (e.x - from.x) * (e.x - from.x) + (e.y - from.y) * (e.y - from.y);
+        if (d < bestD) { bestD = d; best = e; } });
+      if (!best) break;
+      seen.add(best._pi);
+      arcs.push({x1: from.x, y1: from.y, x2: best.x, y2: best.y, t: 0.2});
+      damageEnemy(best, dmg * (1 - j * 0.12), best.x, best.y);
+      from = best;
+    }
+    return;
+  }
   // HW.18 (owner correction 2026-08-03): the bolt ladder is keyed to SQUAD SIZE, not level —
   // 1 bolt under 10 troops, 2 at 10-19, 3 at 20+. Squad size still multiplies DPS via the
   // damage-share below; the ladder only controls how many firing LANES are visible.
@@ -1138,6 +1174,7 @@ function fire(dt) {
     // The 1/2/3 ladder limits visible projectiles, never the soldiers contributing to DPS.
     b.dmg = w.dmg * 1.1 * (1 + 0.08 * G.meta.dmg) * squadPower(G.squad) * EDIT.player.dmgMul * tierDmgMult;
     b.r = 26; b.aoe = 0; b.grenade = false; b.purple = false; b.laneKeep = false; b.arc = 0; b.rocketArt = false;
+    b.homing = false; b.poison = 0;
     return;
   }
   // HW.18 — LANES and PELLETS are separate axes again. The old code set `pellets = cols`, which
@@ -1174,6 +1211,7 @@ function fire(dt) {
       // life > 0 = a RANGE-LIMITED projectile (flamethrower). Pooled objects must always be reset:
       // leaving a stale life on a recycled bullet would make normal bolts vanish mid-flight.
       b.life = w.life || 0; b.burn = w.burn || 0;
+      b.homing = !!w.homing; b.turn = w.turn || 0; b.poison = w.poison || 0;
     }
   }
 }
@@ -1285,7 +1323,7 @@ function spawnWave(dt) {
     e.maxhp = e.hp = kindHp(e.kind, lvl);                 // FORGE: HP = base + perLvl × level, all editable
     e.maxhp=e.hp*=G.mode==='endless'?Math.pow(1.10,G.loop):1;
     const sc = (enemyRow(e.kind) || {}).scale; e.r = (K && K.r ? K.r : 14) * (Number.isFinite(sc) ? sc : 1);
-    e.t = 0; e.acidT = 0; e.buffed = 0; e.kb = 0; e.burnT = 0; e.burnDps = 0;
+    e.t = 0; e.acidT = 0; e.poisonT = 0; e.poisonDps = 0; e.buffed = 0; e.kb = 0; e.burnT = 0; e.burnDps = 0;
     codexSee('enemy:' + e.kind, 0);   // beastiary unlocks when you SEE it, not when you kill it
   }
 }
@@ -1778,6 +1816,17 @@ function update(dt) {
       b.life -= dt;
       if (b.life <= 0) { fx(b.x, b.y, '#f83'); bullets.release(b); return; }
     }
+    if (b.homing) {
+      let best = null, bestD = 1e12;
+      enemies.each(e => { const d = (e.x - b.x) * (e.x - b.x) + (e.y - b.y) * (e.y - b.y); if (d < bestD) { bestD = d; best = e; } });
+      if (best) {
+        const desired = Math.atan2(best.y - b.y, best.x - b.x), cur = Math.atan2(b.vy, b.vx);
+        let diff = ((desired - cur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        const maxTurn = (b.turn || 7) * dt; diff = Math.max(-maxTurn, Math.min(maxTurn, diff));
+        const sp = Math.hypot(b.vx, b.vy) || 400, na = cur + diff;
+        b.vx = Math.cos(na) * sp; b.vy = Math.sin(na) * sp;
+      }
+    }
     b.x += b.vx * dt; b.y += b.vy * dt;
     // Tank shells (and any other laneKeep projectile): stay inside the perspective road so they
     // never drift over the wall edge into empty space where no enemies exist (task 2.5).
@@ -1816,6 +1865,7 @@ function update(dt) {
   enemies.each(e => {
     e.t += dt;
     if (e.acidT > 0) { e.acidT -= dt; e.hp -= dt * 3 * (G.perks['Acid Rounds'] || 0); if (e.hp <= 0) { damageEnemy(e, 0, e.x, e.y); return; } }
+    if (e.poisonT > 0) { e.poisonT -= dt; e.hp -= dt * (e.poisonDps || 8); if (rng() < 0.2) fx(e.x, e.y, '#7cff4f'); if (e.hp <= 0) { damageEnemy(e, 0, e.x, e.y); return; } }
     // Flamethrower burn: keeps ticking after the stream has moved on, and throws embers so you can
     // SEE which enemies are alight rather than having to read a health bar.
     if (e.burnT > 0) {
@@ -1905,6 +1955,7 @@ function update(dt) {
         else bullets.release(b);
         damageEnemy(e, b.dmg, b.x, b.y);
         if (b.burn > 0) e.burnT = Math.max(e.burnT || 0, 1.6), e.burnDps = b.burn;   // flamethrower ignition
+        if (b.poison) { e.poisonT = Math.max(e.poisonT || 0, b.poison); e.poisonDps = Math.max(e.poisonDps || 0, 9); }
         knockBack(e, WEAPONS[G.weapon] && WEAPONS[G.weapon].recoil);
         if (b.aoe) aoe(e.x, e.y, b.aoe, b.dmg * .55);
         const cl = G.perks['Chain Lightning'] || 0;
@@ -2777,7 +2828,9 @@ function draw() {
       // HW.3 — one icon per wall (split dual-pick render removed).
       const wi = g.wpnId != null ? g.wpnId : Math.min(WEAPON_LAST, G.weapon + 1 + g.val);
       const cs = IMGS.weaponIcons.height, s = 56 + 40 * z;
-      cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
+      const nIcons = Math.max(1, Math.round(IMGS.weaponIcons.width / cs));
+      if (wi < nIcons) cx.drawImage(IMGS.weaponIcons, wi * cs, 0, cs, cs, cxm - s / 2, topY + wallH * 0.10, s, s);
+      else { const Wpn = WEAPONS[wi] || WEAPONS[0]; cx.fillStyle = Wpn.col || '#6ff'; cx.beginPath(); cx.arc(cxm, topY + wallH * 0.22, s * 0.28, 0, 7); cx.fill(); }
       cx.font = 'bold ' + Math.round(12 + 6 * z) + 'px Segoe UI';
       cx.fillText('WEAPON ↑', cxm, baseY - 6);
     } else {
