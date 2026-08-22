@@ -1,5 +1,8 @@
 # HiVE WAR — Status & Roadmap
 
+> **LIVE FILE is [`HiveWar.md`](HiveWar.md).** This document is 2026-07 history.
+> Current version, spawn mix, APK, and rules live there. Do not treat the “next steps” below as the queue.
+
 Single-file web game at `D:\Dev\HiveWar\index.html`. Portal builds via `build.py`
 (CrazyGames + Poki). Reference look: [LOOK_REFERENCE_LASTZ.md](LOOK_REFERENCE_LASTZ.md).
 

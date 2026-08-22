@@ -1,9 +1,10 @@
 # HiVE WAR — Resume Brief (compact context)
 
-**Current build: `v0.2.5beta`** (was `2.5`; renumbered 2026-08-03 to a pre-1.0 beta scheme at
-Eric's request). `GAME_VERSION` in `index.html`, `sw.js` `CACHE_VERSION = 'v14'` — bump together.
-Signed APK: `Desktop\My Games\_APKs\HiveWar-0.2.5beta.apk` (25.5 MB).
-Rebuild: `powershell -File D:\Dev\_mobile/build_apk.ps1 -Game HiveWar -Version 0.2.5beta`
+> **LIVE FILE is [`HiveWar.md`](HiveWar.md).** This brief froze at `v0.2.5beta`. Current ship is **`0.3.5` / `sw.js` v26**.
+
+**Current build: see HiveWar.md** (`GAME_VERSION` + `CACHE_VERSION` bump together).
+Signed APK: `Desktop\My Games\_APKs\HiveWar-0.3.5.apk`.
+Rebuild: `powershell -File D:\Dev\_mobile\build_apk.ps1 -Game HiveWar -Version 0.3.5`
 
 ## HW.20 / HW.21 — 2026-08-03 combat pass
 - **Two new weapons** (ladder is now 8): **Rail Gun** (slot 6, `minLvl 3`) — single piercing slug

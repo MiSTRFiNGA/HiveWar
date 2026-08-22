@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.3.4';
+const GAME_VERSION = '0.3.5';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -132,40 +132,40 @@ const G = {
 // original effect) and gets a distinct bullet silhouette so it's identifiable on sight.
 const WEAPONS = [
   {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,    col:'#5ef',   // slow single shots until powerups
-   sfx:'gun',         sfxRate:1.0,  sfxVol:.22, sfxMinGap:0,     shape:'bolt',   len:22, wid:4,  recoil:18},
+   sfx:'pulse',       sfxRate:1.0,  sfxVol:.28, sfxMinGap:0,     shape:'bolt',   len:22, wid:4,  recoil:18},
   // spread is a FAN ANGLE IN RADIANS across the weapon's n pellets (owner request 2026-07-30:
   // "what happened to the cone style shooting?" — the old 0.06-0.22 values were pixel-jitter
   // leftovers and read as ~3-12 degrees, i.e. no visible cone at all).
   {name:'Twin Plasma',  rof:10,   dmg: 0.62, n:2, spread:0.45, col:'#4cf',
-   sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3,  recoil:7},
+   sfx:'pulse',       sfxRate:1.18, sfxVol:.20, sfxMinGap:0.04,  shape:'twin',   len:16, wid:3,  recoil:7},
   {name:'Scatter Rail',rof:12,   dmg: 0.38, n:4, spread:0.70, col:'#c6f',
-   sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2, recoil:4},
+   sfx:'nova',        sfxRate:1.25, sfxVol:.22, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2, recoil:4},
   {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.30, col:'#f80',
-   sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8,  recoil:26},
+   sfx:'nova',        sfxRate:0.92, sfxVol:.28, sfxMinGap:0.10,  shape:'orb',    len:20, wid:8,  recoil:26},
   // Ion Cannon = capital-ship gun: charges a growing ball, then releases ONE big slow-ish beam
   // that PIERCES everything in its column. n:1/spread:0 — it doesn't fan, it punches through.
   // HW.5 (Eric 2026-08-02): slower charge (0.55/s) and locked until level 5+ (see weaponAllowed).
   {name:'Ion Cannon',  rof: 0.55, dmg:14.0, n:1, spread:0,    col:'#ff4',
-   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5, recoil:60},
+   sfx:'beam',        sfxRate:0.85, sfxVol:.38, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5, recoil:60},
   // HW.19 (owner request 2026-08-03): close-range flamethrower. Unlike every other gun this one is
   // RANGE-LIMITED — `spd` slows the puffs down and `life` kills them after a fixed time, so the
   // cone reaches ~200px and no further. Low per-puff damage, very high rate, wide fan, and it
   // sets enemies BURNING (a damage-over-time that keeps ticking after the stream moves off).
   // Deliberately weak knockback: a gout of flame shouldn't shove like a slug.
   {name:'Flamethrower',rof:16,   dmg: 0.22, n:3, spread:0.62, col:'#f93',
-   sfx:'grenade',     sfxRate:0.55, sfxVol:.16, sfxMinGap:0.10,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
+   sfx:'flame',       sfxRate:1.0,  sfxVol:.18, sfxMinGap:0.12,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
    spd:0.45, life:0.42, burn:2.4},
   // HW.20 (owner request 2026-08-03) — two new gates at the top of the ladder.
   // RAIL GUN: a single hyper-velocity slug that PIERCES the whole column. Low rate, high per-hit
   // damage, no fan. `arc:1` turns on the electric bolt that wraps around the slug as it flies
   // ("rail gun needs an electric bolt wrapping around it as it shoots").
   {name:'Rail Gun',    rof: 1.6,  dmg: 6.5, n:1, spread:0,    col:'#9df',
-   sfx:'lightning02', sfxRate:0.75, sfxVol:.30, sfxMinGap:0.05,  shape:'rail',   len:40, wid:5,  minLvl:3, recoil:34,
+   sfx:'beam',        sfxRate:1.15, sfxVol:.32, sfxMinGap:0.05,  shape:'rail',   len:40, wid:5,  minLvl:3, recoil:34,
    pierce:true, arc:1, spd:1.35},
   // ROCKET LAUNCHER: slow arcing warheads that detonate on contact for splash. Reuses the tank
   // shell's detonation path (b.grenade), so it inherits the blast, shake and lane clamp.
   {name:'Rocket Launcher', rof: 1.1, dmg: 9.0, n:1, spread:0.06, col:'#fc6',
-   sfx:'grenade',     sfxRate:0.80, sfxVol:.30, sfxMinGap:0.08,  shape:'rocket', len:34, wid:5,  minLvl:4, recoil:55,
+   sfx:'nova',        sfxRate:0.72, sfxVol:.34, sfxMinGap:0.08,  shape:'rocket', len:34, wid:5,  minLvl:4, recoil:55,
    rocket:true, aoe:95, spd:0.72},
 ];
 // HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
@@ -255,6 +255,17 @@ const CODEX = [
   {name:'Xenoptera',        cls:'Skirmisher Tier', tip:'Winged xenoid — fast, erratic swoops with a green core. Do not chase; hold your lane and let it cross your fire stream.'},
   {name:'Burrower',         cls:'Ambush Tier', tip:'Erupts from beneath the squad. Watch for the ground tell and slide off the mark before it surfaces.'},
   {name:'Cephalo-Psychoid', cls:'Command Node', tip:'A coordination node — its psychic aura makes every nearby xeno surge faster. KILL IT FIRST and the swarm around it slows right back down.'},
+  {name:'Shambler',         cls:'Fodder Tier', tip:'HiVE SWARM walker. Slow, lots of them. Treat as xenoid-plus — they soak a second shot.'},
+  {name:'Runner',           cls:'Skirmisher Tier', tip:'Sprints the corridor. Miss the first burst and it is already at the line.'},
+  {name:'Crawler',          cls:'Skirmisher Tier', tip:'Low silhouette, fast. Sweeps under a high stream if you tunnel on brutes.'},
+  {name:'Brute',            cls:'Bulwark Tier', tip:'Heavy zombie. Hold fire on it and the fodder behind it will eat the squad.'},
+  {name:'Armored Dead',     cls:'Bulwark Tier', tip:'Plate soaks small arms. Scatter and Ion punch through; Blaster ticks it down.'},
+  {name:'Necro Node',       cls:'Command Node', tip:'Drifts the corridor slowly. Kill it or it keeps the back-line packed.'},
+  {name:'Mutant Enforcer',  cls:'Hazard Tier', tip:'Mid-late bruiser. Recoil barely moves it — break it with rockets or Ion.'},
+  {name:'Zombie Colossus',  cls:'Siege Tier', tip:'Campaign closer. Huge mass, tiny knockback. Do not let it latch.'},
+  {name:'Hive Slime',       cls:'Bulwark Tier', tip:'Ooze from the swarm. Slow, fat HP. Acid helps; ignore it and it reaches the line.'},
+  {name:'Node Spawn',       cls:'Hazard Tier', tip:'Hatched from necro stock. Medium HP, mean bite. Appears once nodes are in the mix.'},
+  {name:'Rotter',           cls:'Fodder Tier', tip:'Late leftover walker. Not a tank — it just shows up when the roster is already ugly.'},
 ];
 
 // ============================================================
@@ -263,8 +274,8 @@ const CODEX = [
 // so Eric can tweak + test without touching code. Persisted per-browser.
 // ============================================================
 const EDIT_KEY = 'hiveswarm_forge_v1';
-const FORGE_ENTITY_VERSION = 2;
-const ENEMY_ENTITY_IDS = ['enemy.xenoid','enemy.eldritchSponge','enemy.cyberMutant','enemy.xenoptera','enemy.subterra','enemy.psychoid'];
+const FORGE_ENTITY_VERSION = 3;
+const ENEMY_ENTITY_IDS = ['enemy.xenoid','enemy.eldritchSponge','enemy.cyberMutant','enemy.xenoptera','enemy.subterra','enemy.psychoid','enemy.shambler','enemy.runner','enemy.crawler','enemy.brute','enemy.armoredDead','enemy.necroNode','enemy.mutantEnforcer','enemy.zombieColossus','enemy.slime','enemy.nodeSpawn','enemy.rotter'];
 // Custom enemies added in the FORGE live in EDIT.entities; this re-derives the index bridge from
 // them on load, otherwise a custom enemy would lose its kinds[] mapping on the next refresh.
 function syncEnemyIds(entities) {
@@ -280,6 +291,17 @@ function entityDefaults(){ return [
   {id:'enemy.xenoptera', class:'enemy', label:'Xenoptera', scale:1},
   {id:'enemy.subterra', class:'enemy', label:'Subterra', scale:1},
   {id:'enemy.psychoid', class:'enemy', label:'Psychoid', scale:1},
+  {id:'enemy.shambler', class:'enemy', label:'Shambler', scale:1},
+  {id:'enemy.runner', class:'enemy', label:'Runner', scale:1},
+  {id:'enemy.crawler', class:'enemy', label:'Crawler', scale:1},
+  {id:'enemy.brute', class:'enemy', label:'Brute', scale:1},
+  {id:'enemy.armoredDead', class:'enemy', label:'Armored Dead', scale:1},
+  {id:'enemy.necroNode', class:'enemy', label:'Necro Node', scale:1},
+  {id:'enemy.mutantEnforcer', class:'enemy', label:'Mutant Enforcer', scale:1},
+  {id:'enemy.zombieColossus', class:'enemy', label:'Zombie Colossus', scale:1},
+  {id:'enemy.slime', class:'enemy', label:'Hive Slime', scale:1},
+  {id:'enemy.nodeSpawn', class:'enemy', label:'Node Spawn', scale:1},
+  {id:'enemy.rotter', class:'enemy', label:'Rotter', scale:1},
   {id:'boss.praetorian', class:'boss', label:'Praetorian', scale:1},
   {id:'boss.alienQueen', class:'boss', label:'Alien Queen', scale:1},
   {id:'hazard.rollerBreakable', class:'hazard', label:'Roller (Breakable)', scale:1},
@@ -337,21 +359,24 @@ function editDefaults() { return {
   // weapon RECOIL ÷ mass, so mass 0.5 flies back twice as far as mass 1, and mass 3 barely budges.
   // This is what makes a big enemy "feel" heavy under the same gun. Defaults roughly track body size.
   kinds: [
-    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:60,  minLvl:1, mass:1,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:20,  minLvl:1, mass:3,   sfxAttack:'xenohit',      sfxDie:'eldritchdie' },
-    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:12,  minLvl:2, mass:2.5, sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Xenoid',        hpBase:8,  hpLvl:2.0, spd:70,  r:22, credits:1,  weight:48,  minLvl:1, mass:1,   sfxAttack:'biomorphAtk',  sfxDie:'biomorphDie' },
+    { name:'Eldritch Sponge',hpBase:38, hpLvl:9.5, spd:26,  r:24, credits:4,  weight:12,  minLvl:2, mass:3,   sfxAttack:'slimeAtk',     sfxDie:'eldritchdie' },
+    { name:'Cyber-Mutant',  hpBase:20, hpLvl:4.5, spd:44,  r:32, credits:3,  weight:10,  minLvl:2, mass:2.5, sfxAttack:'cyberAtk',     sfxDie:'cyberDie' },
     { name:'Xenoptera',     hpBase:30, hpLvl:7,   spd:105, r:18, credits:6,  weight:4.5, minLvl:4, mass:0.5, sfxAttack:'xenopterahit', sfxDie:'xenopterahit' },
     { name:'Subterra',      hpBase:45, hpLvl:10,  spd:38,  r:13, credits:6,  weight:2.5, minLvl:6, mass:1.5, sfxAttack:'subterrahit',  sfxDie:'subterrahit' },
-    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3, mass:2,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    // HiVE SWARM cast (2026-08-07 art pass) — shared brand walk strips
-    { name:'Shambler',      hpBase:10, hpLvl:2.2, spd:62,  r:20, credits:1,  weight:18,  minLvl:1, mass:1,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Runner',        hpBase:7,  hpLvl:1.6, spd:118, r:16, credits:2,  weight:10,  minLvl:2, mass:0.7, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Crawler',       hpBase:16, hpLvl:3.5, spd:88,  r:18, credits:2,  weight:8,   minLvl:3, mass:1.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Brute',         hpBase:48, hpLvl:11,  spd:36,  r:28, credits:5,  weight:4,   minLvl:5, mass:3.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Armored Dead',  hpBase:28, hpLvl:6.5, spd:50,  r:22, credits:4,  weight:5,   minLvl:4, mass:2.2, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Necro Node',    hpBase:90, hpLvl:18,  spd:0,   r:26, credits:8,  weight:1.5, minLvl:6, mass:4,   sfxAttack:'xenohit',      sfxDie:'eldritchdie' },
-    { name:'Mutant Enforcer',hpBase:55,hpLvl:12,  spd:58,  r:24, credits:7,  weight:2.5, minLvl:7, mass:2.8, sfxAttack:'xenohit',      sfxDie:'xenohit' },
-    { name:'Zombie Colossus',hpBase:160,hpLvl:28, spd:28,  r:36, credits:15, weight:0.8, minLvl:8, mass:5,   sfxAttack:'xenohit',      sfxDie:'xenohit' },
+    { name:'Psychoid',      hpBase:40, hpLvl:14,  spd:30,  r:28, credits:14, weight:1,   minLvl:3, mass:2,   sfxAttack:'psychoidAtk',  sfxDie:'psychoidDie' },
+    // HiVE SWARM cast — SW/S/SE walks, minLvl gates the reveal as the campaign advances
+    { name:'Shambler',      hpBase:10, hpLvl:2.2, spd:62,  r:20, credits:1,  weight:22,  minLvl:1, mass:1,   sfxAttack:'shamblerAtk',  sfxDie:'shamblerDie' },
+    { name:'Runner',        hpBase:7,  hpLvl:1.6, spd:118, r:16, credits:2,  weight:10,  minLvl:2, mass:0.7, sfxAttack:'runnerAtk',    sfxDie:'runnerDie' },
+    { name:'Crawler',       hpBase:16, hpLvl:3.5, spd:88,  r:18, credits:2,  weight:8,   minLvl:3, mass:1.2, sfxAttack:'crawlerAtk',   sfxDie:'crawlerDie' },
+    { name:'Brute',         hpBase:48, hpLvl:11,  spd:36,  r:28, credits:5,  weight:4,   minLvl:5, mass:3.2, sfxAttack:'bruteAtk',     sfxDie:'bruteDie' },
+    { name:'Armored Dead',  hpBase:28, hpLvl:6.5, spd:50,  r:22, credits:4,  weight:5,   minLvl:4, mass:2.2, sfxAttack:'armoredAtk',   sfxDie:'armoredDie' },
+    { name:'Necro Node',    hpBase:90, hpLvl:18,  spd:22,  r:26, credits:8,  weight:1.5, minLvl:6, mass:4,   sfxAttack:'necroAtk',     sfxDie:'necroDie' },
+    { name:'Mutant Enforcer',hpBase:55,hpLvl:12,  spd:58,  r:24, credits:7,  weight:2.5, minLvl:7, mass:2.8, sfxAttack:'mutantAtk',    sfxDie:'mutantDie' },
+    { name:'Zombie Colossus',hpBase:160,hpLvl:28, spd:28,  r:36, credits:15, weight:0.8, minLvl:8, mass:5,   sfxAttack:'colossusAtk',  sfxDie:'colossusDie' },
+    { name:'Hive Slime',    hpBase:34, hpLvl:8,   spd:30,  r:22, credits:4,  weight:6,   minLvl:3, mass:2.6, sfxAttack:'slimeAtk',     sfxDie:'slimeDie' },
+    { name:'Node Spawn',    hpBase:22, hpLvl:5,   spd:78,  r:18, credits:3,  weight:4,   minLvl:5, mass:1.4, sfxAttack:'nodeAtk',      sfxDie:'nodeDie' },
+    { name:'Rotter',        hpBase:14, hpLvl:3,   spd:58,  r:20, credits:2,  weight:5,   minLvl:7, mass:1.1, sfxAttack:'shamblerAtk',  sfxDie:'shamblerDie' },
   ],
   // recoil = KNOCKBACK PUNCH (owner request 2026-08-02). px of pushback applied to a hit enemy at
   // mass 1; the enemy's own MASS divides it. 0 = no visible bounce, 60 = the Ion Cannon slam.
@@ -390,6 +415,7 @@ function entityById(entities, id) { return (entities || []).find(e => e && e.id 
 // Runtime-facing lookup. The fallback keeps a partially imported legacy pack playable.
 function ENT(id) { return entityById(EDIT && EDIT.entities, id) || entityById(entityDefaults(), id) || {scale:1}; }
 function enemyRow(kind) { return Object.assign({}, ((EDIT && EDIT.kinds) || [])[kind] || {}, ENT(ENEMY_ENTITY_IDS[kind] || ENEMY_ENTITY_IDS[0])); }
+function kindCount() { return (EDIT && EDIT.kinds && EDIT.kinds.length) || ENEMY_ENTITY_IDS.length; }
 function migrateForgeValues(saved) {
   if (!saved || typeof saved !== 'object') return saved || {};
   const next = Object.assign({}, saved), entities = entityDefaults();
@@ -406,6 +432,11 @@ function migrateForgeValues(saved) {
     // Copying them here would make the compatibility controls appear to save while ENT shadows them.
   });
   if (!hasExplicitEntities && next.vehicles && Number.isFinite(next.vehicles.spread)) entityById(entities, 'vehicle.tank').range = next.vehicles.spread;
+  // v3: take Swarm SFX defaults instead of the old shared xenohit/grenade names.
+  if ((next.forgeEntityVersion || 0) < 3) {
+    if (Array.isArray(next.kinds)) next.kinds.forEach(k => { if (k) { delete k.sfxAttack; delete k.sfxDie; } });
+    if (Array.isArray(next.weapons)) next.weapons.forEach(w => { if (w) delete w.sfx; });
+  }
   // Preserve FORGE-authored entities (custom enemies/bosses) that the defaults don't know about.
   if (Array.isArray(saved.entities))
     saved.entities.forEach(row => { if (row && row.id && !entityById(entities, row.id)) entities.push(row); });
@@ -435,10 +466,11 @@ function applyEditWeapons() {                    // WEAPONS is read all over —
 }
 applyEditWeapons();
 function pickKind(lvl) {                          // weighted spawn pick from editor weights (minLvl-gated)
-  let tot = 0; for (let k = 0; k < 6; k++) if (lvl >= enemyRow(k).minLvl) tot += enemyRow(k).weight;
+  const n = kindCount();
+  let tot = 0; for (let k = 0; k < n; k++) if (lvl >= enemyRow(k).minLvl) tot += enemyRow(k).weight;
   if (tot <= 0) return 0;
   let r = rng() * tot;
-  for (let k = 0; k < 6; k++) { const row=enemyRow(k); if (lvl < row.minLvl) continue; r -= row.weight; if (r <= 0) return k; }
+  for (let k = 0; k < n; k++) { const row=enemyRow(k); if (lvl < row.minLvl) continue; r -= row.weight; if (r <= 0) return k; }
   return 0;
 }
 function kindHp(k, lvl) { const row=enemyRow(k); return Math.max(1, row.hpBase + row.hpLvl * lvl); }
@@ -638,6 +670,24 @@ const AUDIO = (() => {
     // dedicated weapon-fire pools (separate from 'lightning', which the Chain Lightning perk
     // already hammers) so per-weapon pitch/volume tuning never fights other SFX for voices
     lightning01:[SFX+'lightning01.mp3',.35,3], lightning02:[SFX+'lightning02.mp3',.32,3],
+    pulse:[SFX+'pulse_fire.mp3',.28,6], seeker:[SFX+'seeker_fire.mp3',.28,4],
+    flame:[SFX+'flame_loop.mp3',.18,2], beam:[SFX+'beam_fire.mp3',.34,4],
+    chain:[SFX+'chain_fire.mp3',.30,4], nova:[SFX+'nova_fire.mp3',.30,4],
+    poison:[SFX+'poison_fire.mp3',.26,4],
+    biomorphAtk:[SFX+'biomorph_attack.mp3',.4,3], biomorphDie:[SFX+'biomorph_die.mp3',.45,3],
+    slimeAtk:[SFX+'slime_attack.mp3',.4,3], slimeDie:[SFX+'slime_die.mp3',.5,2],
+    cyberAtk:[SFX+'cyber_attack.mp3',.4,3], cyberDie:[SFX+'cyber_die.mp3',.5,3],
+    psychoidAtk:[SFX+'psychoid_attack.mp3',.42,3], psychoidDie:[SFX+'psychoid_die.mp3',.48,2],
+    shamblerAtk:[SFX+'shambler_attack.mp3',.4,4], shamblerDie:[SFX+'shambler_die.mp3',.45,3],
+    runnerAtk:[SFX+'runner_attack.mp3',.4,4], runnerDie:[SFX+'runner_die.mp3',.45,3],
+    crawlerAtk:[SFX+'crawler_attack.mp3',.4,3], crawlerDie:[SFX+'crawler_die.mp3',.48,2],
+    bruteAtk:[SFX+'brute_attack.mp3',.45,3], bruteDie:[SFX+'brute_die.mp3',.5,2],
+    armoredAtk:[SFX+'armored_attack.mp3',.42,3], armoredDie:[SFX+'armored_die.mp3',.5,2],
+    necroAtk:[SFX+'necro_attack.mp3',.42,2], necroDie:[SFX+'necro_die.mp3',.5,2],
+    mutantAtk:[SFX+'mutant_attack.mp3',.42,3], mutantDie:[SFX+'mutant_die.mp3',.5,2],
+    colossusAtk:[SFX+'colossus_attack.mp3',.5,2], colossusDie:[SFX+'colossus_die.mp3',.55,2],
+    nodeAtk:[SFX+'node_attack.mp3',.4,3], nodeDie:[SFX+'node_die.mp3',.48,2],
+    praetAtk:[SFX+'praetorian_attack.mp3',.55,2], praetDie:[SFX+'praetorian_die.mp3',.6,2],
   };
   const pool={}, lastPlay={};
   function sample(name, opt){
@@ -1394,7 +1444,8 @@ function shatterPalette(kind) {
   if (SHATTER_COLS[kind]) return SHATTER_COLS[kind];
   const fallback = kind === 0 ? ['#4f5','#7fa','#2c3'] : ['#9ab','#cde','#68a','#456'];
   let pal = fallback;
-  const w = XANIM[kind+':Walk'], a = (w && w.img.ok) ? w : ANIM[kind];
+  const w = XANIM[kind+':Walk'], raw = ANIM[kind];
+  const a = (w && w.img && w.img.ok) ? w : (raw && raw.img ? raw : (raw && raw.s));
   if (a && a.img && a.img.ok) {
     try {
       const cs = a.img.height, c = document.createElement('canvas');
@@ -1801,7 +1852,7 @@ function update(dt) {
       e.y += ((playerY() - 120 + lunge - (e.kb || 0)) - e.y) * Math.min(1, 8 * dt);
       e.atkT -= dt;
       if (e.atkT <= 0) { e.atkT = 0.85;
-        const loss = Math.max(1, Math.round(([4,16,8,9,8,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
+        const loss = Math.max(1, Math.round(([4,16,8,9,8,6,5,4,7,12,8,10,11,18,10,6,6][e.kind] || 4) / 3));   // steady bites, not one mega-hit
         // throttled like the death cue — a latched swarm would otherwise machine-gun the attack sample
         if (G.t - (G.atkSfxT || 0) > 0.25) { G.atkSfxT = G.t;
           AUDIO.sample(enemyRow(e.kind).sfxAttack || 'xenohit'); }
@@ -2154,22 +2205,31 @@ const IMGS={};
 // ---------- animated enemy sprite strips (sliced by slice_enemies.py, 128px square cells) ----------
 const ANIM={};
 (function(){
-  const V='?v=12';                                // bump to bust the browser cache when sprites change
+  const V='?v=13';                                // bump to bust the browser cache when sprites change
   const load=(src,frames,fps)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return {img:im,frames,fps};};
-  ANIM[0]=load('assets/xeno_walk.png',4,8);       // biomorph swarmer — walk cycle
-  ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — idle/ooze
-  ANIM[2]=load('assets/cyber_idle.png',4,4);      // cyber-mutant — malfunction idle (slower, matches sheet)
+  const load3=(stem,frames,fps)=>({
+    s: load('assets/swarm/'+stem+'_walk_s.png', frames, fps),
+    se:load('assets/swarm/'+stem+'_walk_se.png',frames, fps),
+    sw:load('assets/swarm/'+stem+'_walk_sw.png',frames, fps),
+    frames, fps
+  });
+  ANIM[0]=load3('biomorph',4,8);                  // xenoid — Swarm biomorph SW/S/SE
+  ANIM[1]=load('assets/eldritch_ooze.png',4,4);   // eldritch sponge — unique War ooze
+  ANIM[2]=load3('cyber_mutant',4,6);              // cyber-mutant walk (was idle-only)
   ANIM[3]=load('assets/xenoptera_fly.png',4,9);   // xenoptera (winged) — flight loop
   ANIM[4]=load('assets/subterra_scan.png',5,6);   // subterra burrower — scan cycle
-  ANIM[5]=load('assets/psychoid_swim.png',4,5);   // cephalo-psychoid — swim cycle
-  ANIM[6]=load('assets/hive_shambler_walk.png',4,8);  // HiVE SWARM shambler
-  ANIM[7]=load('assets/hive_runner_walk.png',4,10);   // HiVE SWARM runner
-  ANIM[8]=load('assets/hive_crawler_walk.png',4,8);   // HiVE SWARM crawler
-  ANIM[9]=load('assets/hive_brute_walk.png',4,6);     // HiVE SWARM brute
-  ANIM[10]=load('assets/hive_armored_dead_walk.png',4,7);
-  ANIM[11]=load('assets/hive_necro_node_walk.png',4,5);
-  ANIM[12]=load('assets/hive_mutant_enforcer_walk.png',4,8);
-  ANIM[13]=load('assets/hive_zombie_colossus_walk.png',4,5);
+  ANIM[5]=load3('psychoid',4,6);                  // psychoid SW/S/SE
+  ANIM[6]=load3('shambler',4,8);
+  ANIM[7]=load3('runner',4,10);
+  ANIM[8]=load3('crawler',4,8);
+  ANIM[9]=load3('brute',4,6);
+  ANIM[10]=load3('armored_dead',4,7);
+  ANIM[11]=load3('necro_node',4,5);
+  ANIM[12]=load3('mutant_enforcer',4,8);
+  ANIM[13]=load3('zombie_colossus',4,5);
+  ANIM[14]=load3('slime',3,5);
+  ANIM[15]=load3('node_spawn',4,8);
+  ANIM[16]=load3('rotter',4,7);
   const heroLoad=(src)=>{const im=new Image();im.onload=()=>im.ok=true;im.onerror=()=>im.ok=false;im.src=src+V;return im;};
   IMGS.queen=heroLoad('assets/queen_hero.png');        // alien queen boss
   IMGS.soldierAnim=heroLoad('assets/soldier_fire.png');// squad rear-view fire loop (4 frames)
@@ -2373,10 +2433,25 @@ function drawRollers() {
     }
   }
 }
+function animFace(e){
+  const lane = Number(e.lane);
+  if (!Number.isFinite(lane) || Math.abs(lane) < 0.16) return 's';
+  return lane < 0 ? 'sw' : 'se';
+}
+function animSheet(kind, face){
+  const w = XANIM[kind+':Walk'];
+  if (w && w.img && w.img.ok) return w;
+  const a = ANIM[kind];
+  if (!a) return null;
+  if (a.img) return a;                          // legacy single strip (eldritch / xenoptera / subterra)
+  const d = a[face] || a.s;
+  return (d && d.img && d.img.ok) ? d : (a.s || null);
+}
 function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
-  const w=XANIM[e.kind+':Walk'];               // user-made Walk strip wins over the default anim
-  const a=(w&&w.img.ok)?w:ANIM[e.kind]; if(!a||!a.img.ok) return false;
-  const cs=a.img.height, f=Math.floor(e.t*a.fps)%a.frames;
+  const a = animSheet(e.kind, animFace(e));
+  if (!a || !a.img || !a.img.ok) return false;
+  const cs=a.img.height, frames=Math.max(1, a.frames || 4);
+  const f=Math.floor(e.t*(a.fps||8))%frames;
   cx.drawImage(a.img, f*cs, 0, cs, cs, px-size/2, py-size/2, size, size);
   return true;
 }
@@ -3597,8 +3672,9 @@ async function replaceMediaNow(prefix, entries){
 }
 
 // ---- sprite registry: everything paintable, one uniform wrapper ----
-function wrapAnim(a){ return { get img(){return a.img;}, get frames(){return a.frames;}, set frames(v){a.frames=v;},
-                              get fps(){return a.fps;}, set fps(v){a.fps=v;} }; }
+function wrapAnim(a){ const src = a && a.img ? a : (a && a.s) || a;
+  return { get img(){return src.img;}, get frames(){return src.frames;}, set frames(v){src.frames=v;},
+                              get fps(){return src.fps;}, set fps(v){src.fps=v;} }; }
 function wrapImg(im, defFrames){ return { get img(){return im;}, get frames(){return im.frames||defFrames;}, set frames(v){im.frames=v;} }; }
 // cat/unit/action grid: every unit shows ALL action slots; empty slot (h:null) = no
 // asset yet — the game simply ignores it, and FORGE shows it greyed as a placeholder.
@@ -3842,7 +3918,7 @@ tabsEl.addEventListener('keydown', e => { if (!['ArrowLeft','ArrowRight','Home',
 
 function hpPreview(k){ // compact one-line preview so ENTITIES rows stay uniform height (HW.1)
   return [1,5,10].map(L => `L${L}:${Math.round(kindHp(k,L))}`).join(' '); }
-function pctShare(k){ let tot=0; for(let i=0;i<6;i++) tot+=EDIT.kinds[i].weight;
+function pctShare(k){ const n=kindCount(); let tot=0; for(let i=0;i<n;i++) tot+=EDIT.kinds[i].weight;
   return tot>0 ? (100*EDIT.kinds[k].weight/tot).toFixed(1)+'%' : '—'; }
 function refreshComputed(){
   body.querySelectorAll('[data-hp]').forEach(el=>el.textContent=hpPreview(+el.dataset.hp));
