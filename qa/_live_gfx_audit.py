@@ -54,6 +54,27 @@ def main() -> None:
         print("placed", info)
         page.wait_for_timeout(400)
         page.screenshot(path=str(OUT / "01_all_kinds.png"))
+        # crawler close-up: kind 8 across lanes
+        page.evaluate(
+            """() => {
+              enemies.each(e => enemies.release(e));
+              const specs = [
+                {k:8, x:120, y:620, lane:-0.6},
+                {k:8, x:270, y:620, lane:0},
+                {k:8, x:420, y:620, lane:0.6},
+              ];
+              for (const s of specs) {
+                const e = enemies.alloc(); if (!e) continue;
+                const K = enemyRow(s.k);
+                e.kind = s.k; e.lane = s.lane; e.x = s.x; e.y = s.y;
+                e.vx = 0; e.vy = 0; e.hp = e.maxhp = 9999;
+                e.r = K.r; e.t = 0.25;
+              }
+              draw();
+            }"""
+        )
+        page.wait_for_timeout(200)
+        page.screenshot(path=str(OUT / "03_crawler.png"))
         # runner + colossus close-up: kinds 7 and 13
         page.evaluate(
             """() => {
