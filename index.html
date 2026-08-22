@@ -55,7 +55,7 @@
 
 // Player-facing build version. Bump this AND sw.js CACHE_VERSION together — the service worker
 // serves the shell from cache, so a version bump without a cache bump ships nothing to players.
-const GAME_VERSION = '0.3.5';
+const GAME_VERSION = '0.3.6';
 const CFG = {
   W: 540, H: 960,                 // logical portrait playfield
   // road is full-screen-width at the bottom now (see roadHalfWidth) — the player only needs
@@ -132,40 +132,40 @@ const G = {
 // original effect) and gets a distinct bullet silhouette so it's identifiable on sight.
 const WEAPONS = [
   {name:'Blaster',     rof: 4.5, dmg: 2.0, n:1, spread:0,    col:'#5ef',   // slow single shots until powerups
-   sfx:'pulse',       sfxRate:1.0,  sfxVol:.28, sfxMinGap:0,     shape:'bolt',   len:22, wid:4,  recoil:18},
+   sfx:'gun',         sfxRate:1.0,  sfxVol:.22, sfxMinGap:0,     shape:'bolt',   len:22, wid:4,  recoil:18},
   // spread is a FAN ANGLE IN RADIANS across the weapon's n pellets (owner request 2026-07-30:
   // "what happened to the cone style shooting?" — the old 0.06-0.22 values were pixel-jitter
   // leftovers and read as ~3-12 degrees, i.e. no visible cone at all).
   {name:'Twin Plasma',  rof:10,   dmg: 0.62, n:2, spread:0.45, col:'#4cf',
-   sfx:'pulse',       sfxRate:1.18, sfxVol:.20, sfxMinGap:0.04,  shape:'twin',   len:16, wid:3,  recoil:7},
+   sfx:'mg',          sfxRate:1.15, sfxVol:.20, sfxMinGap:0,     shape:'twin',   len:16, wid:3,  recoil:7},
   {name:'Scatter Rail',rof:12,   dmg: 0.38, n:4, spread:0.70, col:'#c6f',
-   sfx:'nova',        sfxRate:1.25, sfxVol:.22, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2, recoil:4},
+   sfx:'lightning02', sfxRate:1.3,  sfxVol:.26, sfxMinGap:0.05,  shape:'pellet', len:10, wid:2.2, recoil:4},
   {name:'Heavy Plasma',rof:11,   dmg: 0.82, n:3, spread:0.30, col:'#f80',
-   sfx:'nova',        sfxRate:0.92, sfxVol:.28, sfxMinGap:0.10,  shape:'orb',    len:20, wid:8,  recoil:26},
+   sfx:'grenade',     sfxRate:1.4,  sfxVol:.20, sfxMinGap:0.12,  shape:'orb',    len:20, wid:8,  recoil:26},
   // Ion Cannon = capital-ship gun: charges a growing ball, then releases ONE big slow-ish beam
   // that PIERCES everything in its column. n:1/spread:0 — it doesn't fan, it punches through.
   // HW.5 (Eric 2026-08-02): slower charge (0.55/s) and locked until level 5+ (see weaponAllowed).
   {name:'Ion Cannon',  rof: 0.55, dmg:14.0, n:1, spread:0,    col:'#ff4',
-   sfx:'beam',        sfxRate:0.85, sfxVol:.38, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5, recoil:60},
+   sfx:'lightning01', sfxRate:0.9,  sfxVol:.34, sfxMinGap:0.05,  shape:'ion',    len:34, wid:14, minLvl:5, recoil:60},
   // HW.19 (owner request 2026-08-03): close-range flamethrower. Unlike every other gun this one is
   // RANGE-LIMITED — `spd` slows the puffs down and `life` kills them after a fixed time, so the
   // cone reaches ~200px and no further. Low per-puff damage, very high rate, wide fan, and it
   // sets enemies BURNING (a damage-over-time that keeps ticking after the stream moves off).
   // Deliberately weak knockback: a gout of flame shouldn't shove like a slug.
   {name:'Flamethrower',rof:16,   dmg: 0.22, n:3, spread:0.62, col:'#f93',
-   sfx:'flame',       sfxRate:1.0,  sfxVol:.18, sfxMinGap:0.12,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
+   sfx:'grenade',     sfxRate:0.55, sfxVol:.16, sfxMinGap:0.10,  shape:'flame',  len:26, wid:15, minLvl:2, recoil:3,
    spd:0.45, life:0.42, burn:2.4},
   // HW.20 (owner request 2026-08-03) — two new gates at the top of the ladder.
   // RAIL GUN: a single hyper-velocity slug that PIERCES the whole column. Low rate, high per-hit
   // damage, no fan. `arc:1` turns on the electric bolt that wraps around the slug as it flies
   // ("rail gun needs an electric bolt wrapping around it as it shoots").
   {name:'Rail Gun',    rof: 1.6,  dmg: 6.5, n:1, spread:0,    col:'#9df',
-   sfx:'beam',        sfxRate:1.15, sfxVol:.32, sfxMinGap:0.05,  shape:'rail',   len:40, wid:5,  minLvl:3, recoil:34,
+   sfx:'lightning02', sfxRate:0.75, sfxVol:.30, sfxMinGap:0.05,  shape:'rail',   len:40, wid:5,  minLvl:3, recoil:34,
    pierce:true, arc:1, spd:1.35},
   // ROCKET LAUNCHER: slow arcing warheads that detonate on contact for splash. Reuses the tank
   // shell's detonation path (b.grenade), so it inherits the blast, shake and lane clamp.
   {name:'Rocket Launcher', rof: 1.1, dmg: 9.0, n:1, spread:0.06, col:'#fc6',
-   sfx:'nova',        sfxRate:0.72, sfxVol:.34, sfxMinGap:0.08,  shape:'rocket', len:34, wid:5,  minLvl:4, recoil:55,
+   sfx:'grenade',     sfxRate:0.80, sfxVol:.30, sfxMinGap:0.08,  shape:'rocket', len:34, wid:5,  minLvl:4, recoil:55,
    rocket:true, aoe:95, spd:0.72},
 ];
 // HW.5 — weapons with minLvl cannot be awarded by gates/picks until that campaign level.
@@ -274,7 +274,7 @@ const CODEX = [
 // so Eric can tweak + test without touching code. Persisted per-browser.
 // ============================================================
 const EDIT_KEY = 'hiveswarm_forge_v1';
-const FORGE_ENTITY_VERSION = 3;
+const FORGE_ENTITY_VERSION = 4;
 const ENEMY_ENTITY_IDS = ['enemy.xenoid','enemy.eldritchSponge','enemy.cyberMutant','enemy.xenoptera','enemy.subterra','enemy.psychoid','enemy.shambler','enemy.runner','enemy.crawler','enemy.brute','enemy.armoredDead','enemy.necroNode','enemy.mutantEnforcer','enemy.zombieColossus','enemy.slime','enemy.nodeSpawn','enemy.rotter'];
 // Custom enemies added in the FORGE live in EDIT.entities; this re-derives the index bridge from
 // them on load, otherwise a custom enemy would lose its kinds[] mapping on the next refresh.
@@ -432,9 +432,11 @@ function migrateForgeValues(saved) {
     // Copying them here would make the compatibility controls appear to save while ENT shadows them.
   });
   if (!hasExplicitEntities && next.vehicles && Number.isFinite(next.vehicles.spread)) entityById(entities, 'vehicle.tank').range = next.vehicles.spread;
-  // v3: take Swarm SFX defaults instead of the old shared xenohit/grenade names.
+  // v3: Swarm enemy attack/die names. v4: revert gun samples to the War pool (pulse/nova/beam were too harsh).
   if ((next.forgeEntityVersion || 0) < 3) {
     if (Array.isArray(next.kinds)) next.kinds.forEach(k => { if (k) { delete k.sfxAttack; delete k.sfxDie; } });
+  }
+  if ((next.forgeEntityVersion || 0) < 4) {
     if (Array.isArray(next.weapons)) next.weapons.forEach(w => { if (w) delete w.sfx; });
   }
   // Preserve FORGE-authored entities (custom enemies/bosses) that the defaults don't know about.
@@ -2447,12 +2449,35 @@ function animSheet(kind, face){
   const d = a[face] || a.s;
   return (d && d.img && d.img.ok) ? d : (a.s || null);
 }
+function sheetUnion(img){
+  if (img._union) return img._union;
+  const cs = img.height || 1;
+  try {
+    const frames = Math.max(1, Math.round((img.width || cs) / cs));
+    const c = document.createElement('canvas'); c.width = cs; c.height = cs;
+    const g = c.getContext('2d', {willReadFrequently:true});
+    let x = cs, y = cs, r = 0, b = 0, hit = 0;
+    for (let i = 0; i < frames; i++) {
+      g.clearRect(0, 0, cs, cs); g.drawImage(img, i * cs, 0, cs, cs, 0, 0, cs, cs);
+      const d = g.getImageData(0, 0, cs, cs).data;
+      for (let py = 0; py < cs; py++) for (let px = 0; px < cs; px++) {
+        if (d[(py * cs + px) * 4 + 3] > 12) {
+          hit = 1; if (px < x) x = px; if (py < y) y = py; if (px > r) r = px; if (py > b) b = py;
+        }
+      }
+    }
+    img._union = hit ? {x, y, w: r - x + 1, h: b - y + 1, cs} : {x: 0, y: 0, w: cs, h: cs, cs};
+  } catch (e) { img._union = {x: 0, y: 0, w: cs, h: cs, cs}; }
+  return img._union;
+}
 function drawEnemyAnim(e,px,py,size){          // draw current animated frame; returns true if drawn
   const a = animSheet(e.kind, animFace(e));
   if (!a || !a.img || !a.img.ok) return false;
   const cs=a.img.height, frames=Math.max(1, a.frames || 4);
   const f=Math.floor(e.t*(a.fps||8))%frames;
-  cx.drawImage(a.img, f*cs, 0, cs, cs, px-size/2, py-size/2, size, size);
+  const u=sheetUnion(a.img);
+  const sc=size/Math.max(u.w,u.h,1), dw=u.w*sc, dh=u.h*sc;
+  cx.drawImage(a.img, f*cs+u.x, u.y, u.w, u.h, px-dw/2, py-dh/2, dw, dh);
   return true;
 }
 function drawDeathFx(dt){                      // FORGE 'Die' anims: play once, then vanish

@@ -16,13 +16,13 @@ If they disagree with this file, this file wins. Update this file in place when 
 
 | | |
 |---|---|
-| **Version** | `0.3.5` · `sw.js` `CACHE_VERSION = v26` |
+| **Version** | `0.3.6` · `sw.js` `CACHE_VERSION = v27` |
 | **Master path** | `D:\Dev\HiveWar` — edit here only |
 | **Game file** | `index.html` — one file: engine, FORGE, HUD, run loop |
 | **Launcher** | `Launch HiVE War.bat` (never `file://`) |
 | **GitHub** | https://github.com/MiSTRFiNGA/HiveWar (public, Pages on `master`) |
 | **Pages** | https://mistrfinga.github.io/HiveWar/ |
-| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.5.apk`. Older War APKs are in `_APKs\Archive`. |
+| **APK (one only)** | `C:\Users\MiSTRFiNGA\Desktop\My Games\_APKs\HiveWar-0.3.6.apk`. Older War APKs are in `_APKs\Archive`. |
 | **Genre** | Lane / corridor shooter (refs: Real War, Z Route). |
 | **Not** | HiVE SWARM (`D:\Dev\HiveSwarm`) is the 360° survivors-like. Borrow a *behaviour* from it; do not edit that repo from this lane. |
 
@@ -100,6 +100,11 @@ Queen stays out of the fodder roster. Praetorian stays the level guardian (`PRAE
 ---
 
 ## 4. Change record
+
+### 2026-08-22 — Grok · v0.3.6 · crop blanks, revert gun SFX
+
+- Draw crops each walk sheet to the opaque union so 256px cell padding (and leftover scrap on cyber_mutant) does not render as empty glass. Packed Swarm `walk/idle/attack` sources, recopied SW/S/SE into `assets/swarm/`.
+- Weapon fire samples reverted to the pre-0.3.5 War pool (`gun` / `mg` / `lightning01|02` / `grenade`). `FORGE_ENTITY_VERSION = 4` clears saved pulse/nova/beam names. Enemy attack/die SFX stay Swarm.
 
 ### 2026-08-21 — Grok · v0.3.5 · Swarm cast + SFX on the corridor
 
